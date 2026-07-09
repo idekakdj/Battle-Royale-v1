@@ -1,0 +1,175 @@
+/*
+ * Base styles (BLUEPRINT §12). Reset, full-viewport layout, the WebGL canvas
+ * behind a DOM UI layer, and the shared gold/stone palette + font stacks. Screen
+ * skins (ui.css) come from WP-F and layer on top of these custom properties.
+ */
+
+/* ── Palette & type tokens ─────────────────────────────────────────────────── */
+:root {
+  /* Gold trim */
+  --gk-gold: #d9a441;
+  --gk-gold-bright: #f0c368;
+  --gk-gold-deep: #a87a26;
+
+  /* Stone (dark → light) */
+  --gk-stone-900: #14110d;
+  --gk-stone-800: #1d1913;
+  --gk-stone-700: #2a241b;
+  --gk-stone-600: #3a3225;
+  --gk-stone-500: #4d4432;
+  --gk-stone-400: #6d6149;
+  --gk-stone-300: #9a8c6e;
+  --gk-stone-200: #c8bda2;
+
+  /* Accents */
+  --gk-blood: #8f2118;
+  --gk-blood-bright: #c8402f;
+  --gk-sand: #e8d8b0;
+  --gk-torch: #ff9a3c;
+  --gk-block: #6db3ff; /* blocked-hit spark tint (FX reference) */
+
+  /* Surfaces / text */
+  --gk-bg: var(--gk-stone-900);
+  --gk-panel: rgba(29, 25, 19, 0.86);
+  --gk-panel-border: rgba(217, 164, 65, 0.35);
+  --gk-text: #ece3d0;
+  --gk-text-dim: #a99e85;
+
+  /* Type stacks (§12): serif display w/ letter-spacing, clean sans body. */
+  --gk-font-display: 'Cinzel', 'Trajan Pro', 'Times New Roman', serif;
+  --gk-font-body: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  color-scheme: dark;
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--gk-bg);
+  color: var(--gk-text);
+  font-family: var(--gk-font-body);
+  font-size: 16px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* ── Layout: canvas behind, UI layer in front ──────────────────────────────── */
+#gk-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 0;
+  background: var(--gk-bg);
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  /* The UI layer is transparent so the canvas shows through; individual screens
+     opt in to pointer events on their own interactive elements. */
+  pointer-events: none;
+}
+
+#app > * {
+  pointer-events: auto;
+}
+
+/* ── Display headings ──────────────────────────────────────────────────────── */
+.gk-display {
+  font-family: var(--gk-font-display);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gk-gold);
+}
+
+/* ── Placeholder lobby (WP-A shell; real lobby comes from WP-F) ─────────────── */
+.gk-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  text-align: center;
+  background: radial-gradient(circle at 50% 30%, rgba(217, 164, 65, 0.08), transparent 60%),
+    linear-gradient(180deg, var(--gk-stone-800), var(--gk-stone-900));
+}
+
+.gk-placeholder__title {
+  font-family: var(--gk-font-display);
+  font-size: clamp(2rem, 6vw, 4.5rem);
+  letter-spacing: 0.16em;
+  color: var(--gk-gold);
+  text-shadow: 0 2px 24px rgba(217, 164, 65, 0.35);
+}
+
+.gk-placeholder__subtitle {
+  font-family: var(--gk-font-display);
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  font-size: clamp(0.7rem, 1.6vw, 1rem);
+  color: var(--gk-text-dim);
+}
+
+.gk-placeholder__play {
+  margin-top: 0.5rem;
+  padding: 0.9rem 3rem;
+  font-family: var(--gk-font-display);
+  font-size: 1.25rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--gk-stone-900);
+  background: linear-gradient(180deg, var(--gk-gold-bright), var(--gk-gold-deep));
+  border: 1px solid var(--gk-gold);
+  border-radius: 4px;
+  opacity: 0.55;
+}
+
+.gk-placeholder__note {
+  font-size: 0.8rem;
+  color: var(--gk-text-dim);
+  max-width: 32rem;
+}
+
+/* ── Generic demo host (for ?demo=… before a WP mounts its own UI) ─────────── */
+.gk-demo-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+  color: var(--gk-text-dim);
+  font-family: var(--gk-font-display);
+  letter-spacing: 0.1em;
+}

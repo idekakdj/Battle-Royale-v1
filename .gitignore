@@ -1,0 +1,8 @@
+node_modules
+dist
+desktop.ini
+
+# Editor / OS cruft
+.DS_Store
+*.log
+.vite
