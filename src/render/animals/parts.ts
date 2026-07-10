@@ -140,3 +140,25 @@ export function pivot(x = 0, y = 0, z = 0): THREE.Group {
   g.position.set(x, y, z);
   return g;
 }
+
+/**
+ * A simple limb hanging straight down (−Y) from its pivot: tapered cylinder of
+ * length `len`, with an optional foot blob at the end. Rotate the returned
+ * group's pivot to swing the limb.
+ */
+export function leg(
+  mat: THREE.Material,
+  rTop: number,
+  rBot: number,
+  len: number,
+  footMat?: THREE.Material,
+): THREE.Group {
+  const g = new THREE.Group();
+  g.add(mesh(cylGeo(rTop, rBot, len, 6), mat, 0, -len / 2, 0));
+  if (footMat !== undefined) {
+    const foot = mesh(sphGeo(rBot * 1.4, 6, 4), footMat, 0, -len, rBot * 0.5);
+    foot.scale.set(1, 0.7, 1.25);
+    g.add(foot);
+  }
+  return g;
+}

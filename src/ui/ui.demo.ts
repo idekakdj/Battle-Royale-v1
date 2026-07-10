@@ -129,9 +129,14 @@ function hudStation(withPause: boolean): Station {
       later(() => hud.setSpectate(null), 38000);
 
       // Animated fake sim: hp drains, ult fills, guard dips, buffs pulse.
+      // Driven by rAF with an interval fallback so hidden/throttled tabs still
+      // advance (rAF pauses entirely when a tab is not visible).
       const start = performance.now();
       let raf = 0;
+      let lastTick = 0;
       const tick = (now: number): void => {
+        cancelAnimationFrame(raf); // dedupe when the interval fallback fires
+        lastTick = now;
         const t = (now - start) / 1000;
         snapshot.time = t;
         const cyc = t % 40;
@@ -160,6 +165,10 @@ function hudStation(withPause: boolean): Station {
         raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
+      const fallback = window.setInterval(() => {
+        const now = performance.now();
+        if (now - lastTick > 250) tick(now);
+      }, 250);
 
       // Optional pause overlay on top of the animated HUD.
       let pause: PauseMenu | null = null;
@@ -173,6 +182,7 @@ function hudStation(withPause: boolean): Station {
 
       return () => {
         cancelAnimationFrame(raf);
+        window.clearInterval(fallback);
         window.clearInterval(feed);
         for (const id of timers) window.clearTimeout(id);
         pause?.unmount();
