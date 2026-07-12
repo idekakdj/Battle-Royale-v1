@@ -1,20 +1,35 @@
 /**
- * Boot + screen-flow shell (BLUEPRINT §14, WP-A).
+ * Boot + screen flow (BLUEPRINT §3/§14, WP-A shell integrated by WP-I).
  *
  * Responsibilities:
  *  1. Create the full-screen WebGL canvas behind the DOM UI layer (#app).
  *  2. If `?demo=<name>` is present, load demo-registration modules and run the
  *     matching demo, then stop (BLUEPRINT §14 demo-flag convention).
- *  3. Otherwise mount a placeholder lobby via {@link ScreenManager}. Real screens
- *     (lobby, select, HUD, results…) arrive from WP-F; the wiring points here are
- *     intentionally obvious and typed so later packages slot in cleanly.
+ *  3. Otherwise run the real game flow:
+ *     Lobby → CharacterSelect → DifficultySelect → Match → Results, with
+ *     REMATCH (same settings, fresh seed) / CHANGE GLADIATOR / LOBBY loops.
  *
  * Demo convention: any module named `*.demo.ts` that calls `registerDemo(...)`
  * is auto-discovered — packages never edit this file to add a demo.
  */
 
-import { ScreenManager, type Screen } from './core/ScreenManager';
+import { ScreenManager } from './core/ScreenManager';
 import { getDemo, demoNames } from './core/demos';
+import type { AnimalId, Difficulty } from './core/types';
+import { AudioEngine } from './audio/AudioEngine';
+import { createPreview } from './render/preview';
+import {
+  Lobby,
+  CharacterSelect,
+  DifficultySelect,
+  Results,
+  type MatchResults,
+  type GkSettings,
+  setPreviewFactory,
+  loadAnimal,
+  loadDifficulty,
+} from './ui';
+import { MatchController } from './match/MatchController';
 
 /** Create (once) the canvas the renderer will draw into, behind the UI. */
 function ensureCanvas(): HTMLCanvasElement {
@@ -38,37 +53,6 @@ function ensureAppRoot(): HTMLElement {
   return root;
 }
 
-/**
- * Placeholder lobby shown until WP-F supplies the real one. Plain DOM only,
- * implementing the shared {@link Screen} contract so it drops straight into the
- * {@link ScreenManager}.
- */
-class PlaceholderLobbyScreen implements Screen {
-  private el: HTMLElement | null = null;
-
-  mount(root: HTMLElement): void {
-    const el = document.createElement('div');
-    el.className = 'gk-placeholder';
-    el.innerHTML = `
-      <h1 class="gk-placeholder__title">Gladiator Kingdom</h1>
-      <p class="gk-placeholder__subtitle">Under Construction</p>
-      <button class="gk-placeholder__play" type="button" disabled>Play</button>
-      <p class="gk-placeholder__note">
-        Foundation shell is live. Lobby, character select, and the arena are
-        delivered by later work packages. Append <code>?demo=&lt;name&gt;</code>
-        to preview a package once its demo is registered.
-      </p>
-    `;
-    root.appendChild(el);
-    this.el = el;
-  }
-
-  unmount(): void {
-    this.el?.remove();
-    this.el = null;
-  }
-}
-
 /** Render a minimal fallback when `?demo=<name>` matched no registered demo. */
 function showDemoFallback(root: HTMLElement, requested: string): void {
   const names = demoNames();
@@ -79,8 +63,85 @@ function showDemoFallback(root: HTMLElement, requested: string): void {
   root.appendChild(el);
 }
 
+/** The full game flow: menus ↔ match ↔ results around one ScreenManager. */
+function runGame(canvas: HTMLCanvasElement, root: HTMLElement): void {
+  // UI previews render through WP-E's procedural rigs (never a direct import).
+  setPreviewFactory(createPreview);
+
+  // One AudioEngine for the whole app (installs its own gesture unlock).
+  const audio = new AudioEngine();
+  const applySettings = (s: GkSettings): void => {
+    audio.setVolumes({ master: s.master, music: s.music, sfx: s.sfx });
+    audio.setMuted(s.muted);
+  };
+
+  const screens = new ScreenManager(root);
+
+  const showLobby = (): void => {
+    audio.playLobbyMusic();
+    screens.transition(
+      new Lobby({
+        onPlay: () => showCharacterSelect(),
+        getSelectedAnimal: () => loadAnimal(),
+        onSettingsChange: applySettings,
+      }),
+    );
+  };
+
+  const showCharacterSelect = (): void => {
+    audio.playLobbyMusic();
+    screens.transition(
+      new CharacterSelect({
+        initialAnimal: loadAnimal(),
+        onConfirm: (animal) => showDifficultySelect(animal),
+        onBack: () => showLobby(),
+      }),
+    );
+  };
+
+  const showDifficultySelect = (animal: AnimalId): void => {
+    screens.transition(
+      new DifficultySelect({
+        initialDifficulty: loadDifficulty(),
+        onStart: (difficulty) => startMatch(animal, difficulty),
+        onBack: () => showCharacterSelect(),
+      }),
+    );
+  };
+
+  const startMatch = (animal: AnimalId, difficulty: Difficulty): void => {
+    audio.stopMusic();
+    screens.transition(
+      new MatchController({
+        canvas,
+        audio,
+        animal,
+        difficulty,
+        seed: Date.now(),
+        onMatchEnd: (results) => showResults(results),
+        onQuitToLobby: () => showLobby(),
+      }),
+    );
+  };
+
+  const showResults = (results: MatchResults): void => {
+    audio.playResultsFanfare(results.victory);
+    screens.transition(
+      new Results({
+        results,
+        // REMATCH: same animal + difficulty, fresh seed inside startMatch.
+        onRematch: () => startMatch(results.animal, results.difficulty),
+        onChangeGladiator: () => showCharacterSelect(),
+        onLobby: () => showLobby(),
+      }),
+    );
+  };
+
+  showLobby();
+}
+
 async function boot(): Promise<void> {
-  ensureCanvas();
+  const canvas = ensureCanvas();
   const root = ensureAppRoot();
 
   const params = new URLSearchParams(window.location.search);
@@ -101,9 +162,7 @@ async function boot(): Promise<void> {
     return;
   }
 
-  // Normal path: mount the screen shell. WP-F/WP-I replace this with real screens.
-  const screens = new ScreenManager(root);
-  screens.transition(new PlaceholderLobbyScreen());
+  runGame(canvas, root);
 }
 
 void boot();

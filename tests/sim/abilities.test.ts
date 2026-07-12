@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { liveWorld, neutral, DT } from './helpers';
+import { liveWorld, neutral, disablePickups, DT } from './helpers';
 import { getBuff } from '../../src/sim/StatusEffects';
 import type { World } from '../../src/sim/World';
 import type { AnimalId } from '../../src/core/types';
@@ -20,6 +20,7 @@ interface Fixture {
 
 function fixture(caster: AnimalId, targetDist: number): Fixture {
   const { world } = liveWorld([caster, 'hippo'], 7);
+  disablePickups(world); // a knocked-back target must not land on a heal pad
   const c = world.fighters[0];
   const t = world.fighters[1];
   c.state.pos = { x: 0, y: 0, z: 0 };
@@ -109,6 +110,7 @@ describe('specials — signature effects (§8)', () => {
 
   it('mole Burrow goes untargetable then erupts on emerge', () => {
     const { world } = liveWorld(['mole', 'hippo'], 7);
+    disablePickups(world);
     const c = world.fighters[0];
     const t = world.fighters[1];
     c.state.pos = { x: 0, y: 0, z: 0 };

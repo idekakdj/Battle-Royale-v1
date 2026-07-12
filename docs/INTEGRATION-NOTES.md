@@ -51,8 +51,23 @@ Maintained by the architect as work packages complete. WP-I must read this file.
 - Stealth opacity constant STEALTH_OPACITY=0.22 (readability deviation, approved). Mole underground = `burrowed` action; emerge pose = `special` with burrowT>0.
 - Demo `?demo=animals`; keys 1..0 select, Q/W/E/R/T/Y/U/I/O/P actions, A auto-cycle.
 
-## From WP-B (Simulation) — pending
-## From WP-C (Bot AI) — pending
+## From WP-B (Simulation) — COMPLETE, 59/59 vitest green (verified independently), tsc clean repo-wide
+- Public API: `new World(cfg: MatchConfig, seed, bus)` / `setIntent(id, intent)` / `step(dt)` / `snapshot()`.
+- **Countdown**: `snapshot().time` is NEGATIVE during the 3 s frozen countdown (−seconds remaining), 0 at FIGHT, counts up. Convenience `world.countdown` (seconds remaining, 0 once live). Drive HUD 3-2-1-FIGHT from this.
+- Roster order = fighter id = spawn slot; player at index 0, spawns south (270°), facing center.
+- Grabbed fighters: `action:'grabbed'`, `grabbedById` set, position-slaved to grabber (render both via states; rigs have grab/grabbed poses).
+- Burrowed mole / soaring eagle are untargetable; stealth is NOT untargetable (AI perception handles losing stealthed targets).
+- Per-fighter `kills/damageDealt/damageBlocked/ultsUsed` live in FighterState → Results screen.
+- Aimed ground-point abilities place the point at max range along aimYaw (intent has no aim distance).
+- Grab ults deal continuous unblockable drain (croc 260/2.5 s, python 240/3 s). Basic swings damage crates within range+0.5 m.
+- Movers' unspecified speeds documented in `src/sim/simTuning.ts` (dash 14 m/s, stampede 12 m/s, etc.).
+
+## From WP-C (Bot AI) — COMPLETE, 65/65 vitest green repo-wide (verified independently), L4-vs-L1 win rate 100%
+- `new BotManager(bus, difficulty, seed)` — MUST share the World's EventBus and be constructed BEFORE stepping. `setDifficulty(fighterId, d)` per-fighter override exists.
+- Each tick: `botManager.update(snapshot, dt)` FIRST, then `world.setIntent(id, botManager.getIntent(id))` for every bot id. `getIntent` returns a reused object; neutral intent for player ids.
+- Brains auto-create for `!isPlayer` roster entries on first update. Safe to drive from tick 0 (bots idle during countdown, time < 0).
+- Match durations observed: L1 ~40 s, L2 ~38–51 s, L3/L4 ~160 s, always < 240 s.
+- Sim quirk: `comboIndex` is the LAST swing's step and goes stale; `comboWindow > 0` is the live chain signal.
 ## From WP-D (Stadium & FX) — pending
 ## From WP-E (Animals & Animation) — pending
 ## From WP-F (UI) — pending

@@ -10,7 +10,7 @@ import { EventBus } from '../../src/core/EventBus';
 import { ANIMALS } from '../../src/config/animals';
 import { mulberry32 } from '../../src/core/math';
 import type { Obstacle } from '../../src/config/arena';
-import type { AnimalId, FighterIntent, GameEvent, MatchConfig } from '../../src/core/types';
+import type { AnimalId, FighterIntent, GameEvent, MatchConfig, PickupState } from '../../src/core/types';
 
 export const DT = 1 / 60;
 
@@ -66,4 +66,16 @@ export function liveWorld(animals: AnimalId[], seed = 42, events: GameEvent[] = 
   for (let i = 0; i < 190; i++) world.step(DT); // 3 s countdown = 180 ticks
   events.length = 0; // discard countdown/no-op events
   return { world, events };
+}
+
+/**
+ * Deactivate every pickup pad so ability fixtures aren't contaminated by heal
+ * pads (a knocked-back target can land on one and heal the damage away).
+ */
+export function disablePickups(world: World): void {
+  const pads = (world as unknown as { pickups: PickupState[] }).pickups;
+  for (const p of pads) {
+    p.active = false;
+    p.respawnT = 1e9;
+  }
 }

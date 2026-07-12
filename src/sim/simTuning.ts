@@ -18,6 +18,10 @@ export const DASH_SPEED = 14;
 // DEVIATION: §8 gives no airtime for lion Pounce / gorilla Silverback Leap.
 export const LEAP_DURATION = 0.35;
 
+// DEVIATION: leap arc peak height (m) for lion Pounce / gorilla Silverback
+// Leap; §8 gives no leap height.
+export const LEAP_PEAK = 1.8;
+
 // DEVIATION: §8 gives rhino Seismic Stampede duration/turn-rate but no speed;
 // reuse the Lockdown Charge speed (12 m/s).
 export const STAMPEDE_SPEED = 12;

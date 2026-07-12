@@ -61,20 +61,25 @@ export function resolveObstacles(sim: Sim, f: Fighter, ignoreObstacles: boolean)
 }
 
 function pushOutCircle(f: Fighter, ox: number, oz: number, minDist: number): void {
-  let dx = f.state.pos.x - ox;
-  let dz = f.state.pos.z - oz;
-  let d = Math.sqrt(dx * dx + dz * dz);
+  const dx = f.state.pos.x - ox;
+  const dz = f.state.pos.z - oz;
+  const d = Math.sqrt(dx * dx + dz * dz);
   if (d >= minDist) return;
+  let ux: number;
+  let uz: number;
   if (d < 1e-6) {
-    dx = 1;
-    dz = 0;
-    d = 1;
+    // Degenerate: exactly at the centre — push out along +X by the full radius.
+    ux = 1;
+    uz = 0;
+  } else {
+    ux = dx / d;
+    uz = dz / d;
   }
-  const push = (minDist - d) / d;
-  f.state.pos.x += dx * push;
-  f.state.pos.z += dz * push;
-  RESULT.corrX += dx * push;
-  RESULT.corrZ += dz * push;
+  const push = minDist - d;
+  f.state.pos.x += ux * push;
+  f.state.pos.z += uz * push;
+  RESULT.corrX += ux * push;
+  RESULT.corrZ += uz * push;
 }
 
 function pushOutSegment(f: Fighter, ax: number, az: number, bx: number, bz: number, minDist: number): void {

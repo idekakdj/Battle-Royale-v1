@@ -47,7 +47,10 @@ describe('pickups (§9)', () => {
   it('respawns after the respawn delay', () => {
     const f = makeFighter(0, 'lion', 100, 100); // off the pad
     const sim = makeSim([f]);
+    // 0.02 s remaining needs two 1/60 s ticks to elapse.
     const pickups: PickupState[] = [{ id: 0, kind: 'heal', pos: { x: pad.x, y: 0, z: pad.z }, active: false, respawnT: 0.02 }];
+    updatePickups(sim, pickups, DT);
+    expect(pickups[0].active).toBe(false); // 0.0033 s still remaining
     updatePickups(sim, pickups, DT);
     expect(pickups[0].active).toBe(true);
   });

@@ -12,12 +12,10 @@ import { isTargetable } from './hitbox';
 import { chargeStep, clampToWall, groundHeightAt } from './MovementSystem';
 import { lerp } from '../core/math';
 import { MOVE } from '../config/balance';
-import { DASH_SPEED, LEAP_DURATION, LAND_RECOVER, CONTACT_PAD } from './simTuning';
+import { DASH_SPEED, LEAP_DURATION, LEAP_PEAK, LAND_RECOVER, CONTACT_PAD } from './simTuning';
 import { beginAbility, emitCastEvents, endAbility, hitArea, aimX, aimZ, updateUlt } from './abilities2';
 
 export { startUlt } from './abilities2';
-
-const LEAP_PEAK = 1.8;
 
 /** Begin a special (cooldown already validated by World). */
 export function startSpecial(sim: Sim, f: Fighter): void {
