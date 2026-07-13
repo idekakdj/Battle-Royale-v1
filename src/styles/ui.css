@@ -867,7 +867,11 @@
 }
 
 /* ── HUD ──────────────────────────────────────────────────────────────────── */
-.gk-hud {
+.gk-hud,
+#app > .gk-hud {
+  /* The #app > * "opt-in" rule in base.css outranks a bare class; without the
+     id-qualified selector the full-screen HUD eats canvas clicks and pointer
+     lock can never be (re)acquired mid-match. */
   position: absolute;
   inset: 0;
   pointer-events: none;

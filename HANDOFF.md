@@ -31,6 +31,11 @@ A browser PvE battle royale: 10 real-animal gladiators (player picks 1, bots pla
 - `vite.config.ts`: manualChunks splits three.js into its own cacheable chunk (game code 228 kB / three 500 kB); build verified.
 - All re-verified: tsc 0, game boots clean. Strafe FEEL confirmation pending from the user (pointer lock unavailable in the agent environment). If the user reports mouse-look or other mirroring, audit the same yaw-basis convention at the reported site.
 
+**Architect QA sweep (2026-07-13), two gameplay bugs found & fixed:**
+1. `src/styles/ui.css` — the full-screen `.gk-hud` (direct child of #app) was forced to `pointer-events:auto` by base.css's higher-specificity `#app > *` rule, eating every click → pointer lock could never be (re)acquired mid-match. Fixed with an id-qualified `#app > .gk-hud` selector. Verified live: HUD computes `none`, `elementFromPoint(center)` = #gk-canvas, pause menu still clickable (Esc→Resume cycle works).
+2. `src/input/InputManager.ts` onMouseDown — the pointer-lock-acquiring click also fired an attack edge; mouse buttons are now ignored while unlocked (LMB's job unlocked = capture). Spectate LMB-cycling unaffected (lock persists through death).
+Also swept & found sound: rematch teardown (no bus/rig/WebGL leaks), resize (SceneManager self-subscribes), countdown/spectate/pause edge cases, results plumbing, main.ts flow/seeding/music. Post-sweep: tsc 0, 65/65 tests, build OK, zero console errors through lobby→match→pause→resume.
+
 Whole-repo checks last run by the architect (before WP-C files landed): `npx tsc --noEmit` exit 0, `npm run build` OK, `npx vitest run tests/sim` 59/59.
 
 ## 3. Immediate next steps (in order)

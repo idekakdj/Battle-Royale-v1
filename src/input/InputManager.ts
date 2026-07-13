@@ -276,6 +276,9 @@ export class InputManager {
 
   private readonly onMouseDown = (e: MouseEvent): void => {
     if (!this.enabled) return;
+    // Without pointer capture, LMB's job is acquiring the lock (onCanvasClick) —
+    // swallowing buttons here stops the capture click from also swinging.
+    if (!this.pointerLocked) return;
     if (e.button === 0) {
       this.attackEdge = true; // LMB → basic attack (edge)
     } else if (e.button === 2) {
