@@ -7,5 +7,14 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // three.js dwarfs the app code; isolating it lets the browser cache
+          // it across game updates and silences the chunk-size warning.
+          three: ['three'],
+        },
+      },
+    },
   },
 });

@@ -159,13 +159,13 @@ export class InputManager {
     }
 
     // Camera-relative movement basis on the XZ plane.
-    // forward = (sin yaw, cos yaw); right = (cos yaw, −sin yaw).
+    // forward = (sin yaw, cos yaw); right = forward × up = (−cos yaw, sin yaw).
     const inputForward = (this.keyW ? 1 : 0) - (this.keyS ? 1 : 0);
     const inputRight = (this.keyD ? 1 : 0) - (this.keyA ? 1 : 0);
     const sin = Math.sin(cameraYaw);
     const cos = Math.cos(cameraYaw);
-    let mx = sin * inputForward + cos * inputRight;
-    let mz = cos * inputForward - sin * inputRight;
+    let mx = sin * inputForward - cos * inputRight;
+    let mz = cos * inputForward + sin * inputRight;
     const lenSq = mx * mx + mz * mz;
     if (lenSq > 1) {
       const inv = 1 / Math.sqrt(lenSq);

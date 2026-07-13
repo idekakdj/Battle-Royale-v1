@@ -23,7 +23,13 @@ A browser PvE battle royale: 10 real-animal gladiators (player picks 1, bots pla
 | C | Bot AI `src/ai` + `tests/ai` | ✅ complete, 65/65 vitest green repo-wide (verified independently), L4-vs-L1 100% |
 | I | Integration `src/match/MatchController.ts`, main.ts wiring, deploy workflow, README | ✅ complete — 4 full matches played through in-browser, zero console errors; architect re-verified tsc 0 / 65-65 / build OK |
 
-**PROJECT BUILD COMPLETE (2026-07-13).** Remaining: human playtest (audio mix, pointer-lock feel, player-landed hitmarker, LMB spectate cycle), then — only with the user's explicit go-ahead — commit + push to publish via GitHub Pages (repo Settings → Pages → Source = "GitHub Actions" must be set once). Optional polish: vite manualChunks to split the 729 kB three.js chunk.
+**PROJECT BUILD COMPLETE (2026-07-13).** Remaining: human playtest (audio mix, pointer-lock feel, player-landed hitmarker, LMB spectate cycle), then — only with the user's explicit go-ahead — commit + push to publish via GitHub Pages (repo Settings → Pages → Source = "GitHub Actions" must be set once).
+
+**Post-completion fixes (2026-07-13, architect):**
+- User-reported A/D strafe inversion fixed in `src/input/InputManager.ts` — camera-right basis was negated; correct right = forward × up = (−cos yaw, sin yaw). W/S were already correct.
+- Same wrong basis fixed in `src/render/CameraRig.ts` shoulder offset (was left-shoulder framing; now right-shoulder per Fortnite-style intent).
+- `vite.config.ts`: manualChunks splits three.js into its own cacheable chunk (game code 228 kB / three 500 kB); build verified.
+- All re-verified: tsc 0, game boots clean. Strafe FEEL confirmation pending from the user (pointer lock unavailable in the agent environment). If the user reports mouse-look or other mirroring, audit the same yaw-basis convention at the reported site.
 
 Whole-repo checks last run by the architect (before WP-C files landed): `npx tsc --noEmit` exit 0, `npm run build` OK, `npx vitest run tests/sim` 59/59.
 

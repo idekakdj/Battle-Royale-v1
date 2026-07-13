@@ -138,8 +138,8 @@ export class CameraRig {
     _pivot.y += head;
     const cosYaw = Math.cos(this.yaw);
     const sinYaw = Math.sin(this.yaw);
-    _pivot.x += cosYaw * this.shoulder; // camera-right = (cos yaw, 0, −sin yaw)
-    _pivot.z += -sinYaw * this.shoulder;
+    _pivot.x += -cosYaw * this.shoulder; // camera-right = forward × up = (−cos yaw, 0, sin yaw)
+    _pivot.z += sinYaw * this.shoulder;
 
     // Orbit direction from pivot toward the camera.
     const cp = Math.cos(this.pitch);
