@@ -356,7 +356,11 @@
   display: block;
 }
 
-.gk-preview.is-live .gk-preview__fallback {
+.gk-preview.is-live .gk-preview__fallback,
+.gk-preview.is-live .gk-preview__pedestal {
+  /* The live 3D scene draws its own pedestal; the DOM ellipse sits later in the
+     DOM than the canvas, so leaving it visible painted a black disc over the
+     rotating model's feet (lobby + character select). */
   display: none;
 }
 

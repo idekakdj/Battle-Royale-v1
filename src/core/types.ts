@@ -108,6 +108,15 @@ export interface FighterState {
   airborne: boolean;
   glideT: number;
   burrowT: number;
+  /**
+   * v1.3 ultimate progress for the renderer (all optional; absent = not casting an
+   * ultimate). `ultPhase` is the runtime phase, `ultStage` counts discrete beats
+   * inside the active phase (nth maul strike / slam / blink…, 0-based), and
+   * `ultTargetId` is the locked victim (-1 when the ultimate has no single target).
+   */
+  ultPhase?: 'windup' | 'active' | 'recovery';
+  ultStage?: number;
+  ultTargetId?: number;
 }
 
 export interface PickupState {
@@ -116,6 +125,27 @@ export interface PickupState {
   pos: Vec3;
   active: boolean;
   respawnT: number;
+}
+
+/**
+ * How an ultimate picks what it hits (v1.3). Config (`ANIMALS[a].ultimate.targeting`)
+ * declares it; the sim resolves it at cast time from `aimYaw`; HUD/renderer preview it.
+ *  - lock:   one enemy inside `range` and the aim cone (needs a valid target or the cast fizzles)
+ *  - line:   a straight path along aimYaw (`range` long, `width` wide), possibly steerable/homing
+ *  - ground: a ground point within `range` along aimYaw with an `radius` zone
+ *  - self:   no targeting
+ */
+export type UltTargetKind = 'lock' | 'line' | 'ground' | 'self';
+
+/** A projectile in flight (v1.3: gorilla Boulder Hurl). */
+export interface ProjectileState {
+  id: number;
+  kind: 'boulder';
+  pos: Vec3;
+  vel: Vec3;
+  /** Collision radius (m). */
+  radius: number;
+  ownerId: number;
 }
 
 /** Arena hazard flavours (v1.2). */
@@ -149,6 +179,8 @@ export interface WorldSnapshot {
   crates: { id: number; pos: Vec3; hp: number; alive: boolean }[];
   /** Arena traps; empty when the match difficulty places none. */
   traps: TrapState[];
+  /** v1.3: projectiles in flight (absent/empty when none). */
+  projectiles?: ProjectileState[];
   bloodlustMult: number;
   matchOver: boolean;
   winnerId: number;
@@ -182,6 +214,32 @@ export type GameEvent =
    * draws the real hitbox rather than a guess.
    */
   | { type: 'swingImpact'; fighterId: number; pos: Vec3; yaw: number; range: number; arcDeg: number; step: 0 | 1 | 2 }
+  /**
+   * v1.3: an ultimate resolved its target and is starting. `from`/`to` are the
+   * path endpoints (lock: caster → victim; line: start → end; ground: caster →
+   * zone centre), `range`/`width` the targeting numbers (width = zone radius×2
+   * for ground), `windup` the seconds until it goes active.
+   */
+  | {
+      type: 'ultimateTarget';
+      fighterId: number;
+      animal: AnimalId;
+      kind: UltTargetKind;
+      targetId: number;
+      from: Vec3;
+      to: Vec3;
+      range: number;
+      width: number;
+      windup: number;
+    }
+  /** v1.3: the ultimate key was pressed with a full bar but no valid target; nothing was spent. */
+  | { type: 'ultimateFizzle'; fighterId: number; reason: 'noTarget' }
+  /** v1.3: a discrete beat of a multi-stage ultimate (each maul strike, slam, blink…). */
+  | { type: 'ultimateStage'; fighterId: number; animal: AnimalId; stage: number; targetId: number; pos: Vec3 }
+  /** v1.3: instantaneous relocation (panther shadow-step). Renderers must not interpolate across it. */
+  | { type: 'blink'; fighterId: number; from: Vec3; to: Vec3 }
+  /** v1.3: a projectile landed (boulder). */
+  | { type: 'projectileImpact'; kind: ProjectileState['kind']; pos: Vec3; radius: number; ownerId: number; hitId: number }
   /** A fighter stepped on an armed plate; the hazard is now up. */
   | { type: 'trapTriggered'; trapId: number; kind: TrapKind; pos: Vec3; fighterId: number }
   /** Trap damage to one fighter (aggregated ~2x/s; unblockable, never negated by blocking). */
