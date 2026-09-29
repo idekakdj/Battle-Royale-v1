@@ -168,6 +168,7 @@ describe('crocodile Ambush Lunge stops on contact (v1.1 fix)', () => {
     }
     const d = Math.hypot(t.state.pos.x - c.state.pos.x, t.state.pos.z - c.state.pos.z);
     expect(c.state.pos.z).toBeLessThan(t.state.pos.z); // did not plough through
-    expect(d).toBeLessThanOrEqual(ANIMALS.crocodile.range); // Snap reaches
+    // Snap reaches (v1.2: basic reach is measured to the target's body).
+    expect(d).toBeLessThanOrEqual(ANIMALS.crocodile.range + ANIMALS.hippo.radius);
   });
 });

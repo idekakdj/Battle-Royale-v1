@@ -73,6 +73,7 @@ function makeSnapshot(playerAnimal: AnimalId): WorldSnapshot {
     fighters: roster.map((animal, i) => makeFighter(i, animal, i === 0)),
     pickups: [],
     crates: [],
+    traps: [],
     bloodlustMult: 1,
     matchOver: false,
     winnerId: -1,

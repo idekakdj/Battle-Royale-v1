@@ -5,6 +5,7 @@
  * (BLUEPRINT §4). Not a Screen — a mountable sub-component.
  * WP-M added Graphics quality (Auto/Low/Medium/High via render/quality.ts)
  * and mouse sensitivity (`gk-settings.sensitivity`), shown in both places.
+ * v1.2 adds Combat → "Attack range indicator" (`gk-settings.rangeIndicator`).
  */
 
 import { el, button } from './dom';
@@ -90,7 +91,7 @@ export class SettingsPanel {
       el('div', { class: 'gk-settings__muterow' }, [this.muteBtn]),
     ]);
 
-    const children: HTMLElement[] = [audio, this.graphicsGroup(), this.mouseGroup()];
+    const children: HTMLElement[] = [audio, this.graphicsGroup(), this.mouseGroup(), this.combatGroup()];
     if (this.opts.showControls === true && window.gkDesktop !== undefined) children.push(this.desktopGroup());
     if (this.opts.showControls === true) children.push(this.controlsTable());
 
@@ -200,6 +201,27 @@ export class SettingsPanel {
         input,
         value,
       ]),
+    ]);
+  }
+
+  /** v1.2: attack-range indicator toggle (`rangeIndicator`, default on; applied live). */
+  private combatGroup(): HTMLElement {
+    const input = el('input', { class: 'gk-settings__check', attrs: { type: 'checkbox' } });
+    input.checked = this.settings.rangeIndicator;
+    input.addEventListener('change', () => {
+      this.settings = { ...this.settings, rangeIndicator: input.checked };
+      this.commit();
+    });
+    return el('div', { class: 'gk-settings__group' }, [
+      el('h3', { class: 'gk-settings__heading gk-display', text: 'Combat' }),
+      el('label', { class: 'gk-settings__toggle' }, [
+        input,
+        el('span', { class: 'gk-settings__label', text: 'Attack range indicator' }),
+      ]),
+      el('p', {
+        class: 'gk-settings__hint',
+        text: 'A faint ground wedge shows your basic-attack reach when a rival is close. Anyone whose body touches it gets hit.',
+      }),
     ]);
   }
 

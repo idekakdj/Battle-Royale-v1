@@ -13,6 +13,9 @@ import { COMBO } from '../config/balance';
 import { rotateToward, dirToYaw, clamp } from '../core/math';
 import { speedMult, fearFleeYaw } from './StatusEffects';
 
+/** Soar altitude controller gain (1/s): target climb speed = gain × altitude error, capped. */
+const SOAR_ALT_GAIN = 4;
+
 /** Ground height under (x,z): the dais top where applicable, else 0 (§7.8). */
 export function groundHeightAt(x: number, z: number): number {
   const d = Math.sqrt(x * x + z * z);
@@ -182,7 +185,7 @@ export function locomote(sim: Sim, f: Fighter, dt: number): void {
     const fy = fearFleeYaw(f);
     dvx = Math.sin(fy) * baseSpeed;
     dvz = Math.cos(fy) * baseSpeed;
-  } else if (!disabled && f.rootTimer <= 0 && f.hitstunTimer <= 0) {
+  } else if (!disabled && f.rootTimer <= 0 && f.hitstunTimer <= 0 && f.landRecoverT <= 0) {
     let mx = f.intent.moveX;
     let mz = f.intent.moveZ;
     let mag = Math.sqrt(mx * mx + mz * mz);
@@ -235,7 +238,8 @@ export function locomote(sim: Sim, f: Fighter, dt: number): void {
     !f.blocking &&
     !f.swinging &&
     f.ability === null &&
-    f.rootTimer <= 0
+    f.rootTimer <= 0 &&
+    f.landRecoverT <= 0
   ) {
     s.vel.y = MOVE.jumpVelocity;
     s.airborne = true;
@@ -246,12 +250,16 @@ export function locomote(sim: Sim, f: Fighter, dt: number): void {
   if (s.airborne || s.pos.y > gy + 1e-4) {
     s.airborne = true;
     s.vel.y -= MOVE.gravity * dt;
+    // v1.2 controlled descent after an eagle flight.
+    const soar = f.def.perks.soar;
+    if (f.soarDescending && soar !== undefined && s.vel.y < -soar.descentMaxSpeed) s.vel.y = -soar.descentMaxSpeed;
     s.pos.y += s.vel.y * dt;
+    if (f.soarDescending) f.soarPeak = Math.max(f.soarPeak, s.pos.y - gy);
     if (s.pos.y <= gy && s.vel.y <= 0) {
       s.pos.y = gy;
       s.vel.y = 0;
       s.airborne = false;
-      maybeStartGlide(f); // no-op unless eagle holding jump — handled at apex normally
+      onTouchdown(f);
     }
   } else {
     s.pos.y = gy;
@@ -291,12 +299,53 @@ function maybeStartGlide(f: Fighter): void {
   if (f.def.id !== 'eagle') return;
   const glide = f.def.perks.glide;
   if (glide === undefined) return;
-  if (f.state.glideT > 0) return;
+  if (f.state.glideT > 0 || f.soarDescending || f.landRecoverT > 0) return;
   if (f.state.airborne && f.intent.jump && f.glideCd <= 0 && f.state.vel.y <= MOVE.jumpVelocity * 0.4) {
     f.state.glideT = glide.duration;
+    f.flightT = 0;
+    f.soarPeak = Math.max(0, f.state.pos.y - groundHeightAt(f.state.pos.x, f.state.pos.z));
   }
 }
 
+/** Flight over (released / out of time / disabled): fall under a capped descent. */
+function endFlight(f: Fighter): void {
+  f.state.glideT = 0;
+  f.state.airborne = true;
+  f.soarDescending = true;
+}
+
+/**
+ * Abort any eagle flight state without a landing slam (the eagle cast an
+ * ability, or was grabbed/carried). The flight counts as used: cooldown starts.
+ */
+export function cancelFlight(f: Fighter): void {
+  if (f.state.glideT <= 0 && !f.soarDescending && f.soarPeak <= 0) return;
+  f.state.glideT = 0;
+  f.soarDescending = false;
+  f.soarPeak = 0;
+  f.flightT = 0;
+  const glide = f.def.perks.glide;
+  if (glide !== undefined) f.glideCd = Math.max(f.glideCd, glide.cooldown);
+}
+
+/** Touchdown bookkeeping: flight cooldown starts, slam queued if the eagle flew high. */
+function onTouchdown(f: Fighter): void {
+  if (!f.soarDescending && f.soarPeak <= 0) return;
+  const glide = f.def.perks.glide;
+  const soar = f.def.perks.soar;
+  if (glide !== undefined) f.glideCd = Math.max(f.glideCd, glide.cooldown);
+  if (soar !== undefined && f.soarPeak >= soar.landMinHeight) f.pendingLandingPeak = f.soarPeak;
+  f.soarDescending = false;
+  f.soarPeak = 0;
+  f.flightT = 0;
+}
+
+/**
+ * Eagle glide + soar (§7.8, v1.2). Holding Space glides at `glideHeight`;
+ * after `climbDelay` the eagle climbs at `climbRate` toward `maxHeight`
+ * (eased by `climbAccel`), always moving at glide speed. `state.pos.y` /
+ * `state.vel.y` carry altitude / climb rate for the renderer.
+ */
 function updateGlide(sim: Sim, f: Fighter, dt: number): void {
   const glide = f.def.perks.glide;
   const s = f.state;
@@ -304,17 +353,36 @@ function updateGlide(sim: Sim, f: Fighter, dt: number): void {
     s.glideT = 0;
     return;
   }
-  // End conditions: released jump or ran out of glide time.
+  // End conditions: released jump, ran out of flight time, or hard CC.
   if (!f.intent.jump || s.glideT <= 0 || f.isDisabled()) {
-    s.glideT = 0;
-    f.glideCd = glide.cooldown;
-    s.airborne = true; // fall next tick under gravity
+    endFlight(f);
     return;
   }
   s.glideT = Math.max(0, s.glideT - dt);
-  s.pos.y = GLIDE_HEIGHT;
+  f.flightT += dt;
   s.airborne = true;
-  s.vel.y = 0;
+  const soar = f.def.perks.soar;
+  if (soar !== undefined) {
+    const gy = groundHeightAt(s.pos.x, s.pos.z);
+    const alt = s.pos.y - gy;
+    const want = f.flightT < soar.climbDelay ? soar.glideHeight : soar.maxHeight;
+    const vyTarget = clamp((want - alt) * SOAR_ALT_GAIN, -soar.climbRate, soar.climbRate);
+    const dv = vyTarget - s.vel.y;
+    const maxDv = soar.climbAccel * dt;
+    s.vel.y += Math.abs(dv) <= maxDv ? dv : Math.sign(dv) * maxDv;
+    s.pos.y += s.vel.y * dt;
+    if (s.pos.y > gy + soar.maxHeight) {
+      s.pos.y = gy + soar.maxHeight;
+      if (s.vel.y > 0) s.vel.y = 0;
+    } else if (s.pos.y < gy) {
+      s.pos.y = gy;
+      if (s.vel.y < 0) s.vel.y = 0;
+    }
+    f.soarPeak = Math.max(f.soarPeak, s.pos.y - gy);
+  } else {
+    s.pos.y = GLIDE_HEIGHT;
+    s.vel.y = 0;
+  }
   // Horizontal glide toward intent direction at glide speed.
   let mx = f.intent.moveX;
   let mz = f.intent.moveZ;
@@ -334,9 +402,7 @@ function updateGlide(sim: Sim, f: Fighter, dt: number): void {
   // Glide crosses low walls/crates but not pillars/wall (y high enough).
   resolveObstacles(sim, f, false);
   clampToWall(f);
-  if (s.glideT <= 0) {
-    f.glideCd = glide.cooldown;
-  }
+  if (s.glideT <= 0) endFlight(f);
 }
 
 /** Global soft fighter↔fighter push-out pass (§7.8). Order: id-ascending pairs. */

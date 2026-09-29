@@ -5,6 +5,7 @@
  */
 
 import type { Difficulty } from '../core/types';
+import { TRAP_COUNT_BY_DIFFICULTY } from './traps';
 
 /** How a bot decides to spend its per-animal special. */
 export type SpecialUseMode =
@@ -32,6 +33,25 @@ export type TargetPolicy =
   | 'nearest' // Cub & Fighter
   | 'lowestHpInRangeElseNearest' // Veteran: lowest HP within {@link BotProfile.targetScanRangeM}
   | 'weighted'; // Apex: low HP, isolated, staggered; avoids clusters
+
+/**
+ * v1.2 arena-trap handling (bots read `snapshot.traps`; plates are visible to
+ * everyone, so this is not cheating):
+ *  - `ignore`  Cub: walks straight over plates and stands in fire.
+ *  - `soft`    Fighter: steps out of active hazards, sidesteps plates squarely ahead.
+ *  - `route`   Veteran: routes around armed plates, never lingers in a hazard.
+ *  - `exploit` Apex: as `route`, and stops chasing a target into an active hazard
+ *              (lets the hazard do the work instead).
+ */
+export type TrapAwareness = 'ignore' | 'soft' | 'route' | 'exploit';
+
+/**
+ * v1.2 eagle soar use:
+ *  - `none`       no deliberate soar (the hit-and-run hop still glides).
+ *  - `defensive`  Veteran/Apex: soars over incoming telegraphs and when hurt,
+ *                 then releases over an enemy to land the slam.
+ */
+export type SoarUse = 'none' | 'defensive';
 
 /** Retreat / kite behavior. */
 export type RetreatMode = 'never' | 'healSeek' | 'kite' | 'kiteAdvanced';
@@ -111,6 +131,18 @@ export interface BotProfile {
   targetScanRangeM: number;
   /** Strafe / orbit skill, 0 (never) … 1 (orbits at max range with spacing). */
   strafeSkill: number;
+
+  // v1.2.
+  /** How the bot handles arena traps. */
+  trapAwareness: TrapAwareness;
+  /** Eagle only: deliberate soar use. */
+  soarUse: SoarUse;
+}
+
+/** "N arena traps - ..." difficulty-card line. */
+function trapLine(d: Difficulty, how: string): string {
+  const n = TRAP_COUNT_BY_DIFFICULTY[d];
+  return `${n} arena trap${n === 1 ? '' : 's'}: ${how}`;
 }
 
 export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
@@ -119,12 +151,13 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     label: 'CUB',
     displayName: 'Cub',
     tagline: 'Learns to walk',
-    description: 'Wanders toward the nearest foe and swings. Slow to react, hesitant between swings, wild aim, ignores pickups and never retreats.',
+    description: `Wanders toward the nearest foe and swings. Slow to react, hesitant between swings, wild aim, ignores pickups and never retreats. The arena hides ${TRAP_COUNT_BY_DIFFICULTY[1]} traps, and Cubs blunder straight into them.`,
     behaviors: [
       'Chases the nearest fighter',
       'Slow reactions (600 ms), wild aim',
       'Hesitant single swings, rarely blocks',
       'Never retreats or grabs pickups',
+      trapLine(1, 'Cubs walk right over them'),
     ],
     reactionMs: 600,
     aimErrorDeg: 25,
@@ -146,18 +179,21 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     targetPolicy: 'nearest',
     targetScanRangeM: 0,
     strafeSkill: 0.0,
+    trapAwareness: 'ignore',
+    soarUse: 'none',
   },
   2: {
     difficulty: 2,
     label: 'FIGHTER',
     displayName: 'Fighter',
     tagline: 'Blocks and chases',
-    description: 'Blocks telegraphed hits, chains short combos, uses specials to close, and seeks heals when hurt.',
+    description: `Blocks telegraphed hits, chains short combos, uses specials to close, and seeks heals when hurt. ${TRAP_COUNT_BY_DIFFICULTY[2]} arena traps; Fighters step out of fire and spikes but don't plan around the plates.`,
     behaviors: [
       'Blocks telegraphs (25%)',
       '2-hit combos',
       'Gap-closer specials, ult when in range',
       'Heal-seeks below 40% HP; grabs nearby pickups',
+      trapLine(2, 'steps out of active hazards'),
     ],
     reactionMs: 400,
     aimErrorDeg: 15,
@@ -179,18 +215,21 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     targetPolicy: 'nearest',
     targetScanRangeM: 0,
     strafeSkill: 0.3,
+    trapAwareness: 'soft',
+    soarUse: 'none',
   },
   3: {
     difficulty: 3,
     label: 'VETERAN',
     displayName: 'Veteran',
     tagline: 'Combos, kites, times ultimates',
-    description: 'Full combos, times ultimates after finishers or on clusters, kites when low, punishes whiffs, and works pickups proactively.',
+    description: `Full combos, times ultimates after finishers or on clusters, kites when low, punishes whiffs, and works pickups proactively. ${TRAP_COUNT_BY_DIFFICULTY[3]} arena traps, and Veterans route around the plates.`,
     behaviors: [
       'Blocks telegraphs (55%), reads spacing',
       'Full 3-hit combos, punishes whiffs',
       'Specials to close, escape and peel',
       'Kites below 35% HP; targets lowest HP within 14 m',
+      trapLine(3, 'routes around plates, never lingers in a hazard'),
     ],
     reactionMs: 250,
     aimErrorDeg: 8,
@@ -212,18 +251,21 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     targetPolicy: 'lowestHpInRangeElseNearest',
     targetScanRangeM: 14,
     strafeSkill: 0.7,
+    trapAwareness: 'route',
+    soarUse: 'defensive',
   },
   4: {
     difficulty: 4,
     label: 'APEX',
     displayName: 'Apex',
     tagline: 'Reads you. Punishes everything.',
-    description: 'Reads the player: near-instant reactions, perfect-block attempts, feints, full per-animal ability scripts, optimal ults on helpless targets, and retreat-heal-reengage loops that avoid 2v1s.',
+    description: `Reads the player: near-instant reactions, perfect-block attempts, feints, full per-animal ability scripts, optimal ults on helpless targets, and retreat-heal-reengage loops that avoid 2v1s. ${TRAP_COUNT_BY_DIFFICULTY[4]} arena traps, and Apex bots are happy to let you chase them into the fire.`,
     behaviors: [
       'Near-instant reactions (150 ms), pinpoint aim',
       'Perfect-block counters, feints, baits blocks',
       'Full per-animal special/ult scripts on optimal windows',
       'Retreat-heal-reengage loops; avoids 2v1s; contests & denies pickups',
+      trapLine(4, 'dodged with ease and used against you'),
     ],
     reactionMs: 150,
     aimErrorDeg: 3,
@@ -245,6 +287,8 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     targetPolicy: 'weighted',
     targetScanRangeM: 14,
     strafeSkill: 1.0,
+    trapAwareness: 'exploit',
+    soarUse: 'defensive',
   },
 };
 
@@ -285,4 +329,21 @@ export const AI_TUNING = {
   smashS: 0.9,
   /** Stuck elsewhere: sidestep (and hop) for this long (s). */
   unstickS: 0.7,
+  /**
+   * v1.2 eagle soar (Veteran/Apex, `soarUse: 'defensive'`). A telegraph with
+   * at least this windup (s) covering the eagle triggers a soar — jump +
+   * climb above ground reach takes ≈ 0.65 s plus reaction, so only long
+   * windups (Colossal Chomp, Sinkhole, Death From Above) are dodgeable.
+   */
+  soarDodgeMinWindupS: 0.8,
+  /** Soar when below this HP fraction with a foe within 4 m. */
+  soarHurtHp: 0.35,
+  /** Apex only: soar out of a pile-up of at least this many foes within 5 m. */
+  soarMobbedCount: 4,
+  /** Seconds spent flying away from the threat before homing onto a foe. */
+  soarEscapeS: 1.2,
+  /** Release Space when within this horizontal distance (m) of the landing target. */
+  soarReleaseDistM: 2.2,
+  /** Release this long (s) before the flight time runs out (never hover to the limit). */
+  soarReleaseMarginS: 0.4,
 } as const;

@@ -14,11 +14,13 @@
  *    spectate bar variant after player death.
  */
 
-import type { AnimalId, BuffState, WorldSnapshot } from '../core/types';
+import type { AnimalId, BuffState, PickupState, TrapKind, WorldSnapshot } from '../core/types';
 import { ANIMALS } from '../config/animals';
+import { PICKUPS } from '../config/balance';
 import { el } from './dom';
 import { animalHeadSvg } from './icons';
 import { abilityGlyphSvg } from './abilityIcons';
+import { buffIconSvg, pickupIconSvg, trapGlyphSvg } from './buffIcons';
 
 /** One kill-feed line: killer icon ▸ victim icon (BLUEPRINT §12). */
 export interface KillFeedEntry {
@@ -28,6 +30,13 @@ export interface KillFeedEntry {
   killerIsPlayer?: boolean;
   /** Highlights the row red when the player died. */
   victimIsPlayer?: boolean;
+  /**
+   * Set when the arena (not a rival) finished the victim. The feed should then
+   * show a trap glyph instead of the killer's head; `killerAnimal` is ignored.
+   */
+  cause?: 'trap';
+  /** Optional trap flavour for the glyph (flame / spikes); omitted → combined glyph. */
+  trapKind?: TrapKind;
 }
 
 /** Countdown steps for the pre-match 3-2-1-FIGHT display. */
@@ -44,19 +53,27 @@ const KILLFEED_TTL_MS = 4000;
 const CONTROLS_HINT_SIM_T = 10; // seconds of sim time before the hint fades
 const LOW_HP_FRAC = 0.3;
 
-/** Buff chip presentation per {@link BuffState.kind}. */
+/** Buff icon presentation per {@link BuffState.kind} (glyphs in `buffIcons.ts`). */
 const BUFF_META: Record<BuffState['kind'], { label: string; good: boolean }> = {
-  speed: { label: 'SPD', good: true },
-  rage: { label: 'RAGE', good: true },
-  slow: { label: 'SLOW', good: false },
-  bleed: { label: 'BLD', good: false },
-  root: { label: 'ROOT', good: false },
-  blind: { label: 'BLND', good: false },
-  dmgTakenUp: { label: 'VULN', good: false },
-  armorUp: { label: 'ARMR', good: true },
-  atkSpeedUp: { label: 'HAST', good: true },
-  stealth: { label: 'STLH', good: true },
+  speed: { label: 'Speed', good: true },
+  rage: { label: 'Power', good: true },
+  slow: { label: 'Slowed', good: false },
+  bleed: { label: 'Bleeding', good: false },
+  root: { label: 'Rooted', good: false },
+  blind: { label: 'Blinded', good: false },
+  dmgTakenUp: { label: 'Vulnerable', good: false },
+  armorUp: { label: 'Armoured', good: true },
+  atkSpeedUp: { label: 'Haste', good: true },
+  stealth: { label: 'Stealth', good: true },
 };
+
+/** Centre-lower pickup toast copy (numbers live from config). */
+const TOAST_COPY: Record<PickupState['kind'], { title: string; sub: string }> = {
+  heal: { title: `+${PICKUPS.healAmount} HP`, sub: 'HEAL' },
+  speed: { title: 'SPEED', sub: `+${Math.round(PICKUPS.speedBonus * 100)}% move · ${PICKUPS.speedDur}s` },
+  rage: { title: 'POWER', sub: `+${Math.round(PICKUPS.rageBonus * 100)}% damage · ${PICKUPS.rageDur}s` },
+};
+const TOAST_MS = 1500;
 
 export class HUD {
   private root: HTMLElement | null = null;
@@ -85,6 +102,10 @@ export class HUD {
   private controlsHint!: HTMLElement;
   private spectateEl!: HTMLElement;
   private nameplate!: HTMLElement;
+  private toastEl!: HTMLElement;
+  private buffTimeEls: HTMLElement[] = [];
+  private buffSecs: number[] = [];
+  private toastTimer: number | null = null;
 
   // Update-diffing state.
   private lastHp = -1;
@@ -158,6 +179,7 @@ export class HUD {
       hintKey('TAB', 'Next target'),
     ]);
     this.spectateEl = el('div', { class: 'gk-hud__spectate gk-display' });
+    this.toastEl = el('div', { class: 'gk-hud__toast' });
 
     this.root = el('div', { class: 'gk-hud' }, [
       this.vignetteEl,
@@ -171,8 +193,11 @@ export class HUD {
       this.hitmarkerEl,
       this.controlsHint,
       this.spectateEl,
+      this.toastEl,
     ]);
     root.appendChild(this.root);
+    // QA handle (e.g. `__gkHud.pickupToast('speed')` from the console).
+    (window as unknown as { __gkHud?: HUD }).__gkHud = this;
 
     this.lastHp = -1;
     this.lastAnimal = null;
@@ -195,9 +220,12 @@ export class HUD {
     if (this.hitmarkerTimer !== null) window.clearTimeout(this.hitmarkerTimer);
     if (this.bloodlustTimer !== null) window.clearTimeout(this.bloodlustTimer);
     if (this.countdownTimer !== null) window.clearTimeout(this.countdownTimer);
-    this.hitmarkerTimer = this.bloodlustTimer = this.countdownTimer = null;
+    if (this.toastTimer !== null) window.clearTimeout(this.toastTimer);
+    this.hitmarkerTimer = this.bloodlustTimer = this.countdownTimer = this.toastTimer = null;
     this.root?.remove();
     this.root = null;
+    const w = window as unknown as { __gkHud?: HUD };
+    if (w.__gkHud === this) delete w.__gkHud;
   }
 
   /** Drive the HUD from the latest snapshot; call every render frame. */
@@ -291,8 +319,13 @@ export class HUD {
     const row = el('div', { class: 'gk-hud__kf-row' });
     if (entry.killerIsPlayer === true) row.classList.add('is-player-kill');
     if (entry.victimIsPlayer === true) row.classList.add('is-player-death');
+    const trap = entry.cause === 'trap';
+    if (trap) row.classList.add('is-trap');
+    const killer = trap
+      ? `<span class="gk-hud__kf-icon is-trap is-trap--${entry.trapKind ?? 'any'}" title="Arena trap">${trapGlyphSvg(entry.trapKind)}</span>`
+      : `<span class="gk-hud__kf-icon" style="color:${ANIMALS[entry.killerAnimal].accent}">${animalHeadSvg(entry.killerAnimal, 'gk-hud__kf-head')}</span>`;
     row.innerHTML = `
-      <span class="gk-hud__kf-icon" style="color:${ANIMALS[entry.killerAnimal].accent}">${animalHeadSvg(entry.killerAnimal, 'gk-hud__kf-head')}</span>
+      ${killer}
       <span class="gk-hud__kf-sep">▸</span>
       <span class="gk-hud__kf-icon is-victim" style="color:${ANIMALS[entry.victimAnimal].accent}">${animalHeadSvg(entry.victimAnimal, 'gk-hud__kf-head')}</span>`;
     this.killFeedEl.appendChild(row);
@@ -311,6 +344,27 @@ export class HUD {
     this.bloodlustEl.classList.add('is-active');
     if (this.bloodlustTimer !== null) window.clearTimeout(this.bloodlustTimer);
     this.bloodlustTimer = window.setTimeout(() => this.bloodlustEl.classList.remove('is-active'), 3200);
+  }
+
+  /**
+   * Brief centre-lower toast when the player collects a pickup ("+250 HP",
+   * "SPEED", "POWER" with the matching icon). Call on the player's own
+   * `pickup` events.
+   */
+  pickupToast(kind: PickupState['kind']): void {
+    if (this.root === null) return;
+    const copy = TOAST_COPY[kind];
+    this.toastEl.className = `gk-hud__toast is-${kind}`;
+    this.toastEl.innerHTML = `
+      <span class="gk-hud__toast-icon">${pickupIconSvg(kind)}</span>
+      <span class="gk-hud__toast-text">
+        <span class="gk-hud__toast-title gk-display">${copy.title}</span>
+        <span class="gk-hud__toast-sub">${copy.sub}</span>
+      </span>`;
+    void this.toastEl.offsetWidth; // restart the animation
+    this.toastEl.classList.add('is-active');
+    if (this.toastTimer !== null) window.clearTimeout(this.toastTimer);
+    this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('is-active'), TOAST_MS);
   }
 
   /** Subtle center hitmarker on a landed hit. */
@@ -357,27 +411,50 @@ export class HUD {
     }
   }
 
+  /**
+   * Buff/debuff icons: a glyph per kind inside a remaining-time ring, with the
+   * whole seconds left underneath. Rebuilt only when the set of kinds changes;
+   * otherwise just the ring (CSS var) and changed second counts update.
+   */
   private updateBuffs(buffs: readonly BuffState[]): void {
-    const key = buffs.map((b) => b.kind).join(',');
-    if (key === this.buffKey) {
-      // Same set — just refresh the duration fills.
-      const chips = this.buffBar.children;
-      for (let i = 0; i < buffs.length && i < chips.length; i++) {
-        const b = buffs[i];
-        (chips[i] as HTMLElement).style.setProperty('--t', String(b.dur > 0 ? 1 - b.t / b.dur : 0));
+    let key = '';
+    for (let i = 0; i < buffs.length; i++) key += (i > 0 ? ',' : '') + buffs[i].kind;
+    if (key !== this.buffKey) {
+      this.buffKey = key;
+      this.buffBar.replaceChildren();
+      this.buffTimeEls = [];
+      this.buffSecs = [];
+      for (const b of buffs) {
+        const meta = BUFF_META[b.kind];
+        const time = el('span', { class: 'gk-hud__buff-time' });
+        const chip = el('span', {
+          class: `gk-hud__buff gk-hud__buff--${b.kind} ${meta.good ? 'is-good' : 'is-bad'}`,
+          title: meta.label,
+          attrs: { 'aria-label': meta.label },
+        });
+        chip.innerHTML = `
+          <svg class="gk-hud__buff-ring" viewBox="0 0 40 40" aria-hidden="true">
+            <circle class="gk-hud__buff-track" cx="20" cy="20" r="17.5"/>
+            <circle class="gk-hud__buff-arc" cx="20" cy="20" r="17.5" pathLength="100"/>
+          </svg>
+          <span class="gk-hud__buff-glyph">${buffIconSvg(b.kind)}</span>`;
+        chip.appendChild(time);
+        this.buffBar.appendChild(chip);
+        this.buffTimeEls.push(time);
+        this.buffSecs.push(-1);
       }
-      return;
     }
-    this.buffKey = key;
-    this.buffBar.replaceChildren();
-    for (const b of buffs) {
-      const meta = BUFF_META[b.kind];
-      const chip = el('span', {
-        class: `gk-hud__buff ${meta.good ? 'is-good' : 'is-bad'}`,
-        text: meta.label,
-      });
-      chip.style.setProperty('--t', String(b.dur > 0 ? 1 - b.t / b.dur : 0));
-      this.buffBar.appendChild(chip);
+    const chips = this.buffBar.children;
+    for (let i = 0; i < buffs.length && i < chips.length; i++) {
+      const b = buffs[i];
+      const rem = b.dur > 0 ? Math.max(0, 1 - b.t / b.dur) : 1;
+      (chips[i] as HTMLElement).style.setProperty('--rem', rem.toFixed(3));
+      const secs = b.dur > 0 ? Math.max(0, Math.ceil(b.dur - b.t)) : -1;
+      if (secs !== this.buffSecs[i]) {
+        this.buffSecs[i] = secs;
+        this.buffTimeEls[i].textContent = secs >= 0 ? String(secs) : '';
+        (chips[i] as HTMLElement).classList.toggle('is-expiring', secs >= 0 && secs <= 2);
+      }
     }
   }
 }

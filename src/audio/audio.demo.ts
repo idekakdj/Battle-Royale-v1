@@ -145,6 +145,28 @@ registerDemo('audio', (root) => {
   button(pickups, 'Speed (arpeggio up)', () => engine.pickupChime('speed'));
   button(pickups, 'Rage (war drum)', () => engine.pickupChime('rage'));
 
+  // ── v1.2 arena traps + eagle landing ─────────────────────────────────────
+  const trapsSec = section('Arena traps + eagle landing (v1.2)');
+  button(trapsSec, 'Fire trap trigger (whoosh+crackle)', () => engine.trapTrigger('fire'));
+  button(trapsSec, 'Spike trap trigger (clank+thud)', () => engine.trapTrigger('spikes'));
+  button(trapsSec, 'Fire damage tick (sizzle)', () => engine.trapTick('fire'));
+  button(trapsSec, 'Spike damage tick (stab)', () => engine.trapTick('spikes'));
+  button(trapsSec, 'Fire expire (dying hiss)', () => engine.trapExpire('fire'));
+  button(trapsSec, 'Spikes retract', () => engine.trapExpire('spikes'));
+  button(trapsSec, 'Landing slam (light)', () => engine.landingImpact(1, 30));
+  button(trapsSec, 'Landing slam (heavy)', () => engine.landingImpact(1, 55));
+  button(trapsSec, 'Far fire trigger (distance 20 m)', () => engine.trapTrigger('fire', 1 / (1 + (20 / 14) ** 2)));
+  let bedOn = false;
+  button(trapsSec, 'Fire crackle bed on/off', () => {
+    bedOn = !bedOn;
+    engine.setFireBed(bedOn ? 0.9 : 0);
+  });
+  const bedTimer = window.setInterval(() => {
+    // The bed smooths + idles itself; keep feeding the current level.
+    if (bedOn) engine.setFireBed(0.9);
+    else engine.setFireBed(0);
+  }, 250);
+
   // ── Per-animal ────────────────────────────────────────────────────────────
   const animalsSec = section('Per-animal: roar · swing (size-pitched) · special · ult stinger+roar');
   const table = h('div', { display: 'grid', gridTemplateColumns: 'auto auto auto auto auto', gap: '2px', alignItems: 'center' }, animalsSec);
@@ -192,6 +214,18 @@ registerDemo('audio', (root) => {
   button(busSec, 'emit comboFinisher', () => emit({ type: 'comboFinisher', fighterId: 0 }));
   button(busSec, 'emit crateBreak', () => emit({ type: 'crateBreak', crateId: 0, pos: ORIGIN }));
   button(busSec, 'emit matchEnd', () => emit({ type: 'matchEnd', winnerId: 0 }));
+  button(busSec, 'emit trapTriggered (fire)', () =>
+    emit({ type: 'trapTriggered', trapId: 0, kind: 'fire', pos: ORIGIN, fighterId: 0 }));
+  button(busSec, 'emit trapTriggered (spikes)', () =>
+    emit({ type: 'trapTriggered', trapId: 1, kind: 'spikes', pos: ORIGIN, fighterId: 0 }));
+  button(busSec, 'emit trapDamage ×6 (rate-limited)', () => {
+    for (let i = 0; i < 6; i++) {
+      emit({ type: 'trapDamage', trapId: 0, kind: i % 2 === 0 ? 'fire' : 'spikes', targetId: i, damage: 6, pos: ORIGIN });
+    }
+  });
+  button(busSec, 'emit trapExpired (fire)', () => emit({ type: 'trapExpired', trapId: 0, kind: 'fire', pos: ORIGIN }));
+  button(busSec, 'emit landingImpact', () =>
+    emit({ type: 'landingImpact', fighterId: 0, pos: ORIGIN, radius: 3.2, damage: 48, height: 6 }));
 
   // Quick roar tour: plays each animal's roar in sequence (0.9 s apart).
   const tour = section('Tour');
@@ -214,6 +248,7 @@ registerDemo('audio', (root) => {
 
   return () => {
     if (tourTimer !== null) clearInterval(tourTimer);
+    clearInterval(bedTimer);
     engine.detachBus();
     engine.dispose();
     board.remove();

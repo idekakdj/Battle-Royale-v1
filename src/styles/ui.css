@@ -2366,3 +2366,238 @@
 .gk-settings__value--wide {
   min-width: 2.6rem;
 }
+
+/* ══ v1.2 WP-O: HUD buff icons, pickup toast, trap kill-feed glyph ═══════════ */
+
+.gk-hud__buffs {
+  bottom: 1.9rem;
+  gap: 0.55rem;
+  align-items: flex-end;
+}
+
+.gk-hud__buff {
+  --ring-c: var(--gk-gold-bright);
+  --glyph-c: var(--gk-gold-bright);
+  position: relative;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 38%, rgba(46, 36, 24, 0.94), rgba(10, 8, 6, 0.92) 72%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+  overflow: visible;
+  font-size: 0;
+  letter-spacing: 0;
+  color: var(--glyph-c);
+  animation: gk-buff-in 0.22s cubic-bezier(0.2, 1.5, 0.4, 1);
+}
+
+.gk-hud__buff::after {
+  content: none;
+}
+
+@keyframes gk-buff-in {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.gk-hud__buff-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.gk-hud__buff-track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.13);
+  stroke-width: 3;
+}
+
+.gk-hud__buff-arc {
+  fill: none;
+  stroke: var(--ring-c);
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: calc(100 - 100 * var(--rem, 1));
+  filter: drop-shadow(0 0 2px var(--ring-c));
+}
+
+.gk-hud__buff-glyph {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  display: block;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--glyph-c) 65%, transparent));
+}
+
+.gk-hud__buff-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.gk-hud__buff-time {
+  position: absolute;
+  left: 50%;
+  bottom: -1.02rem;
+  transform: translateX(-50%);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #f3e6c8;
+  text-shadow: 0 1px 2px #000, 0 0 4px #000;
+  font-variant-numeric: tabular-nums;
+}
+
+.gk-hud__buff.is-good {
+  border-color: transparent;
+}
+
+.gk-hud__buff.is-bad {
+  --ring-c: #e2503c;
+  border-color: transparent;
+  background: radial-gradient(circle at 50% 38%, rgba(70, 18, 12, 0.94), rgba(16, 6, 5, 0.92) 72%);
+}
+
+.gk-hud__buff.is-bad .gk-hud__buff-track {
+  stroke: rgba(226, 80, 60, 0.28);
+}
+
+.gk-hud__buff.is-expiring .gk-hud__buff-glyph {
+  animation: gk-buff-blink 0.45s ease-in-out infinite alternate;
+}
+
+@keyframes gk-buff-blink {
+  to {
+    opacity: 0.35;
+  }
+}
+
+/* Per-kind colours (match the arena pickup medallions). */
+.gk-hud__buff--speed { --glyph-c: #ffe45a; --ring-c: #3fe6ff; }
+.gk-hud__buff--rage { --glyph-c: #ff7650; --ring-c: #ff3a1e; }
+.gk-hud__buff--armorUp { --glyph-c: #a9d6ff; --ring-c: #6db3ff; }
+.gk-hud__buff--atkSpeedUp { --glyph-c: #ffc86a; --ring-c: #ff9a2a; }
+.gk-hud__buff--stealth { --glyph-c: #cdbdff; --ring-c: #8f7bd8; }
+.gk-hud__buff--slow { --glyph-c: #8fd3ff; }
+.gk-hud__buff--bleed { --glyph-c: #ff4a3a; }
+.gk-hud__buff--root { --glyph-c: #d4ab7c; }
+.gk-hud__buff--blind { --glyph-c: #ece4d2; }
+.gk-hud__buff--dmgTakenUp { --glyph-c: #ff9a7a; }
+
+/* Pickup toast (centre-lower). */
+.gk-hud__toast {
+  --toast-c: #fff;
+  --toast-ring: var(--gk-gold-bright);
+  position: absolute;
+  left: 50%;
+  bottom: 21%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.45rem 1.25rem 0.45rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(12, 9, 6, 0.74);
+  border: 1px solid color-mix(in srgb, var(--toast-ring) 55%, transparent);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--toast-ring) 30%, transparent);
+  opacity: 0;
+  transform: translate(-50%, 12px) scale(0.92);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.gk-hud__toast.is-active {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+  animation: gk-toast-pop 0.4s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+@keyframes gk-toast-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 16px) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.gk-hud__toast.is-heal { --toast-c: #62ff8c; --toast-ring: #ffc24a; }
+.gk-hud__toast.is-speed { --toast-c: #ffe85e; --toast-ring: #3fe6ff; }
+.gk-hud__toast.is-rage { --toast-c: #ff7a52; --toast-ring: #ff3a1e; }
+
+.gk-hud__toast-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 3px solid var(--toast-ring);
+  background: radial-gradient(circle at 50% 40%, rgba(40, 30, 20, 0.95), rgba(8, 6, 4, 0.95) 75%);
+  box-shadow: 0 0 12px var(--toast-ring);
+  color: var(--toast-c);
+}
+
+.gk-hud__toast-svg {
+  display: block;
+  width: 26px;
+  height: 26px;
+  filter: drop-shadow(0 0 4px var(--toast-c));
+}
+
+.gk-hud__toast-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.gk-hud__toast-title {
+  font-size: 1.55rem;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  color: var(--toast-c);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--toast-c) 65%, transparent), 0 2px 3px #000;
+}
+
+.gk-hud__toast-sub {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #f3e6c8;
+  opacity: 0.85;
+}
+
+.gk-hud.is-spectating .gk-hud__toast {
+  display: none;
+}
+
+/* Kill feed: arena-trap glyph in place of the killer's head. */
+.gk-hud__kf-row.is-trap {
+  border-color: rgba(255, 106, 42, 0.45);
+}
+
+.gk-hud__kf-icon.is-trap {
+  color: #ff7a2a;
+  filter: drop-shadow(0 0 4px rgba(255, 90, 20, 0.75));
+}
+
+.gk-hud__kf-icon.is-trap--spikes {
+  color: #d5dce4;
+  filter: drop-shadow(0 0 3px rgba(200, 210, 230, 0.55));
+}

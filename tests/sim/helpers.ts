@@ -10,7 +10,7 @@ import { EventBus } from '../../src/core/EventBus';
 import { ANIMALS } from '../../src/config/animals';
 import { mulberry32 } from '../../src/core/math';
 import type { Obstacle } from '../../src/config/arena';
-import type { AnimalId, FighterIntent, GameEvent, MatchConfig, PickupState } from '../../src/core/types';
+import type { AnimalId, Difficulty, FighterIntent, GameEvent, MatchConfig, PickupState } from '../../src/core/types';
 
 export const DT = 1 / 60;
 
@@ -57,12 +57,25 @@ export function neutral(): FighterIntent {
   return { moveX: 0, moveZ: 0, aimYaw: 0, attack: false, block: false, special: false, ultimate: false, jump: false };
 }
 
-/** Build a World and step it just past the countdown so the fight is live. */
-export function liveWorld(animals: AnimalId[], seed = 42, events: GameEvent[] = []): { world: World; events: GameEvent[] } {
-  const cfg: MatchConfig = { roster: animals.map((a, i) => ({ animal: a, isPlayer: i === 0 })), difficulty: 1 };
+/**
+ * Build a World and step it just past the countdown so the fight is live.
+ * v1.2: arena traps are OFF by default so fixtures that teleport fighters
+ * around aren't contaminated by a random plate; pass `{ traps: true }` (and a
+ * difficulty) to get the real seeded layout.
+ */
+export function liveWorld(
+  animals: AnimalId[],
+  seed = 42,
+  events: GameEvent[] = [],
+  opts: { traps?: boolean; difficulty?: Difficulty } = {},
+): { world: World; events: GameEvent[] } {
+  const cfg: MatchConfig = {
+    roster: animals.map((a, i) => ({ animal: a, isPlayer: i === 0 })),
+    difficulty: opts.difficulty ?? 1,
+  };
   const bus = new EventBus();
   bus.onAny((e) => events.push(e));
-  const world = new World(cfg, seed, bus);
+  const world = new World(cfg, seed, bus, { traps: opts.traps ?? false });
   for (let i = 0; i < 190; i++) world.step(DT); // 3 s countdown = 180 ticks
   events.length = 0; // discard countdown/no-op events
   return { world, events };

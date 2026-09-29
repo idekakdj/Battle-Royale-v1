@@ -17,10 +17,11 @@
  *   gameplay event to its §13 sound.
  */
 
-import type { AnimalId, PickupState } from '../core/types';
+import type { AnimalId, PickupState, TrapKind, Vec3 } from '../core/types';
 import type { EventBus } from '../core/EventBus';
 import { makeWhiteNoise, VoiceManager, type SynthCtx } from './synth';
 import { Sfx } from './sfx';
+import { TrapSfx } from './trapSfx';
 import { Roars } from './roars';
 import { Crowd } from './crowd';
 import { Music } from './music';
@@ -40,6 +41,12 @@ const VOL_RAMP = 0.03;
 /** Excitement spike sizes (decay ~5 s handled by Crowd). */
 const SPIKE_KILL = 0.5;
 const SPIKE_ULT = 0.35;
+/** v1.2 world-positioned SFX (traps / landings): gain = 1 / (1 + (d / ref)²). */
+const DIST_REF = 14;
+const DIST_CUTOFF = 0.04;
+/** Trap damage ticks are aggregated ~2×/s per victim; cap the audible rate. */
+const TRAP_TICK_MIN_GAP = 0.12;
+const TRAP_TICK_MIN_GAP_LISTENER = 0.08;
 
 function clamp01(x: number): number {
   return Math.min(1, Math.max(0, x));
@@ -78,6 +85,16 @@ export class AudioEngine {
   private roarsMod: Roars | null = null;
   private crowdMod: Crowd | null = null;
   private musicMod: Music | null = null;
+  private trapMod: TrapSfx | null = null;
+
+  // Listener for world-positioned SFX (set per frame by the match; until then
+  // every positioned sound plays at full level, e.g. in the demos).
+  private hasListener = false;
+  private listenerX = 0;
+  private listenerZ = 0;
+  private listenerId = 0;
+  private lastTrapTick = -1;
+  private lastListenerTrapTick = -1;
 
   private busUnsubs: Array<() => void> = [];
   private readonly gestureHandler: () => void;
@@ -116,6 +133,7 @@ export class AudioEngine {
     this.removeGestureListeners();
     this.musicMod?.stop();
     this.crowdMod?.stop();
+    this.trapMod?.stopBed();
     if (this.ctx !== null) void this.ctx.close();
     this.ctx = null;
     this.sc = null;
@@ -126,6 +144,7 @@ export class AudioEngine {
     this.roarsMod = null;
     this.crowdMod = null;
     this.musicMod = null;
+    this.trapMod = null;
   }
 
   // ── settings (UI calls these; UI persists `gk-settings`) ─────────────────
@@ -172,7 +191,49 @@ export class AudioEngine {
       bus.on('comboFinisher', () => this.finisher()),
       bus.on('crateBreak', () => this.crateBreak()),
       bus.on('matchEnd', () => this.matchEndSfx()),
+      // v1.2 arena traps + eagle landing slam (world-positioned).
+      bus.on('trapTriggered', (ev) => this.trapTrigger(ev.kind, this.distanceGain(ev.pos))),
+      bus.on('trapDamage', (ev) => this.trapDamageTick(ev.kind, ev.targetId, ev.pos)),
+      bus.on('trapExpired', (ev) => this.trapExpire(ev.kind, this.distanceGain(ev.pos))),
+      bus.on('landingImpact', (ev) => this.landingImpact(this.distanceGain(ev.pos), ev.damage)),
     ];
+  }
+
+  /**
+   * Where the "ears" are (the player, or the spectated fighter) for the
+   * distance attenuation of world-positioned SFX. `fighterId` = whose trap
+   * damage ticks are always audible.
+   */
+  setListener(x: number, z: number, fighterId = 0): void {
+    this.hasListener = true;
+    this.listenerX = x;
+    this.listenerZ = z;
+    this.listenerId = fighterId;
+  }
+
+  /** 0..1 attenuation for a sound at `pos` relative to the listener. */
+  private distanceGain(pos: Vec3): number {
+    if (!this.hasListener) return 1;
+    const dx = pos.x - this.listenerX;
+    const dz = pos.z - this.listenerZ;
+    const q = (dx * dx + dz * dz) / (DIST_REF * DIST_REF);
+    return 1 / (1 + q);
+  }
+
+  /** Rate-limited sizzle / stab for `trapDamage` (listener's own ticks favoured). */
+  private trapDamageTick(kind: TrapKind, targetId: number, pos: Vec3): void {
+    const sc = this.ready();
+    if (sc === null) return;
+    const now = sc.ctx.currentTime;
+    const mine = this.hasListener ? targetId === this.listenerId : true;
+    if (mine) {
+      if (now - this.lastListenerTrapTick < TRAP_TICK_MIN_GAP_LISTENER) return;
+      this.lastListenerTrapTick = now;
+    } else if (now - this.lastTrapTick < TRAP_TICK_MIN_GAP) {
+      return;
+    }
+    this.lastTrapTick = now;
+    this.trapTick(kind, mine ? 1 : this.distanceGain(pos) * 0.6);
   }
 
   /** Remove all EventBus subscriptions installed by {@link attachBus}. */
@@ -236,6 +297,44 @@ export class AudioEngine {
   /** Crate splinter. */
   crateBreak(): void {
     this.withSfx((s) => s.crateBreak());
+  }
+
+  // ── v1.2 arena traps + eagle landing (WP-P) ───────────────────────────────
+
+  /** Trap fires: fire = whoosh + crackle, spikes = clank + thud. `gain` 0..1. */
+  trapTrigger(kind: TrapKind, gain = 1): void {
+    if (gain < DIST_CUTOFF) return;
+    this.withTrap((t) => (kind === 'fire' ? t.fireTrigger(gain) : t.spikesTrigger(gain)));
+  }
+
+  /** One trap damage tick (fire sizzle / spike stab) — unthrottled; the bus path rate-limits. */
+  trapTick(kind: TrapKind, gain = 1): void {
+    if (gain < DIST_CUTOFF) return;
+    this.withTrap((t) => t.tick(kind, gain));
+  }
+
+  /** Hazard window over: dying hiss (fire) / retract clunk (spikes). */
+  trapExpire(kind: TrapKind, gain = 1): void {
+    if (gain < DIST_CUTOFF) return;
+    this.withTrap((t) => t.expire(kind, gain * 0.8));
+  }
+
+  /** Eagle landing slam: thump + dirt + feather rustle; heavier with `damage`. */
+  landingImpact(gain = 1, damage = 45): void {
+    if (gain < DIST_CUTOFF) return;
+    const k = Math.min(1, Math.max(0, (damage - 25) / 30));
+    this.withTrap((t) => t.landingImpact(gain, k));
+  }
+
+  /** Low fire-crackle bed while a fire trap burns near the listener (0 = off). */
+  setFireBed(level: number): void {
+    if (this.ready() === null) return;
+    this.trapMod?.setFireBed(level);
+  }
+
+  /** Stop the fire bed at once (match teardown). */
+  stopFireBed(): void {
+    this.trapMod?.stopBed();
   }
 
   /** Per-animal roar voice (§13 recipes). Match start / ult / kill flourish. */
@@ -352,6 +451,7 @@ export class AudioEngine {
     this.roarsMod = new Roars(sc);
     this.crowdMod = new Crowd(sc);
     this.musicMod = new Music(sc);
+    this.trapMod = new TrapSfx(sc);
     this.applyVolumes();
     return sc;
   }
@@ -375,6 +475,13 @@ export class AudioEngine {
     const sc = this.ready();
     if (sc === null || this.sfxMod === null) return;
     fn(this.sfxMod);
+  }
+
+  /** Run `fn` against the trap SFX module iff the context is running. */
+  private withTrap(fn: (t: TrapSfx) => void): void {
+    const sc = this.ready();
+    if (sc === null || this.trapMod === null) return;
+    fn(this.trapMod);
   }
 
   /** Push current settings into the three gain nodes (ramped, click-free). */

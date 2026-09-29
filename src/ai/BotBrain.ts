@@ -13,7 +13,19 @@ import { mulberry32, dirToYaw, angleDelta, DEG2RAD, type Rng } from '../core/mat
 import { Perception, MEMORY_SECONDS, type TrackedEnemy } from './Perception';
 import { BlockControl, sampleAimNoise, timeToImpact } from './CombatMicro';
 import { decideAbilities, type Situation, type AbilityWish } from './scripts';
-import { seek, flee, orbit, avoidObstacles, separation, lowWallDetour, type Move2 } from './Steering';
+import {
+  seek,
+  flee,
+  orbit,
+  avoidObstacles,
+  separation,
+  lowWallDetour,
+  avoidTraps,
+  activeTrapAt,
+  groundY,
+  type Move2,
+} from './Steering';
+import { MOVE } from '../config/balance';
 
 type Goal = 'engage' | 'retreat' | 'pickup' | 'defend' | 'special' | 'ultimate';
 
@@ -77,6 +89,15 @@ export class BotBrain {
   private unstickUntil = -1; // sidestepping out of a corner
   private unstickX = 0;
   private unstickZ = 0;
+  // v1.2 arena traps as perceived (reaction-delayed snapshot).
+  private trapView: WorldSnapshot['traps'] = [];
+  // v1.2 eagle soar plan (absolute manager time, seconds; -1 = none).
+  private soarStartAt = -1;
+  private soarHoldUntil = -1; // hold jump (climb) until …
+  private soarPlanEnd = -1; // … and never hold past this (always release)
+  private soarReadyAt = 0; // own estimate of when the flight is off cooldown
+  private soarWantedAt = -1e9; // a long telegraph covering us was perceived
+  private inFlight = false;
 
   constructor(id: number, animal: FighterState['animal'], profile: BotProfile, seed: number) {
     this.id = id;
@@ -138,6 +159,8 @@ export class BotBrain {
 
     this.perception.update(now, self, delayed);
     this.processEvents(now, self);
+    this.trapView = delayed.traps;
+    this.trackFlight(now, self);
 
     // Countdown: sim frozen — pick targets, do nothing else (§6, WP-C notes).
     if (current.time < 0) {
@@ -189,6 +212,8 @@ export class BotBrain {
           const dx = ev.pos.x - self.pos.x;
           const dz = ev.pos.z - self.pos.z;
           const d = Math.sqrt(dx * dx + dz * dz);
+          // v1.2: a soaring-capable eagle rises over long telegraphs instead.
+          if (d <= ev.radius + 1.5 && ev.windup >= AI_TUNING.soarDodgeMinWindupS) this.soarWantedAt = now;
           if (d <= ev.radius + 2.5 && this.rng() < this.profile.blockOnTelegraphChance) {
             const caster = this.tracked(ev.fighterId);
             const yaw = caster !== null ? dirToYaw(caster.x - self.pos.x, caster.z - self.pos.z) : ev.yaw + Math.PI;
@@ -237,6 +262,8 @@ export class BotBrain {
 
   /** Candidate usable as a target: alive, targetable, seen recently enough. */
   private isCandidate(t: TrackedEnemy, now: number): boolean {
+    // v1.2: Veteran/Apex don't waste time under a soaring eagle they can't reach.
+    if (this.profile.whiffPunish && t.alt > MOVE.groundHitMaxAltitude) return false;
     return t.alive && t.id !== this.id && t.targetable && now - t.lastSeen <= MEMORY_SECONDS;
   }
 
@@ -399,6 +426,15 @@ export class BotBrain {
     }
 
     decideAbilities(sit, this.wish);
+
+    // v1.2 eagle soar (Veteran/Apex): rise over a long telegraph, out of a
+    // 2v1, or away when hurt and pressed — then come down on a foe.
+    if (this.def.id === 'eagle' && p.soarUse === 'defensive' && this.canStartSoar(now, self)) {
+      const telegraph = now - this.soarWantedAt <= 0.35;
+      const hurt = sit.hpFrac < AI_TUNING.soarHurtHp && nearestDist <= 4;
+      const mobbed = p.retreat.avoidMultiTarget && near5 >= AI_TUNING.soarMobbedCount;
+      if (telegraph || hurt || mobbed) this.beginSoar(now);
+    }
 
     // ── Utility scores ────────────────────────────────────────────────────────
     const hpFrac = sit.hpFrac;
@@ -650,7 +686,7 @@ export class BotBrain {
           // Kite pokes: hit pursuers who enter range (kite modes only).
           if (
             (p.retreat.mode === 'kite' || p.retreat.mode === 'kiteAdvanced') &&
-            threat.dist <= this.def.range + 0.06
+            threat.dist <= this.def.range + ANIMALS[threat.animal].radius + 0.06
           ) {
             wantAttack = true;
           }
@@ -694,7 +730,7 @@ export class BotBrain {
           break;
         }
       }
-      if (stealthed && t.dist > this.def.range * 0.8) {
+      if (stealthed && t.dist > (this.def.range + ANIMALS[t.animal].radius) * 0.8) {
         const bx = t.x - Math.sin(t.yaw) * 1.8;
         const bz = t.z - Math.cos(t.yaw) * 1.8;
         seek(move, sx, sz, bx, bz);
@@ -703,6 +739,31 @@ export class BotBrain {
 
     // Detect incoming swings from the delayed view and schedule blocks.
     this.watchIncomingSwings(now, self);
+
+    // v1.2 eagle soar plan overrides movement / jump while it runs.
+    const soarState = this.driveSoar(now, self, move, t);
+    if (soarState !== 0) {
+      wantAttack = false;
+      if (move.x !== 0 || move.z !== 0) aimYaw = dirToYaw(move.x, move.z);
+    }
+
+    // v1.2 traps: Apex lets a target stuck in an active hazard burn — hold
+    // outside instead of walking in after it.
+    if (
+      soarState === 0 &&
+      p.trapAwareness === 'exploit' &&
+      t !== null &&
+      t.dist > this.def.range + ANIMALS[t.animal].radius + 0.06 &&
+      activeTrapAt(this.trapView, t.x, t.z, 0.2) >= 0
+    ) {
+      move.x = 0;
+      move.z = 0;
+    }
+
+    // v1.2 traps: route around plates / out of hazards (grounded only).
+    if (soarState === 0 && self.pos.y - groundY(sx, sz) < 1.0) {
+      avoidTraps(move, sx, sz, this.def.radius, this.trapView, p.trapAwareness);
+    }
 
     // Steering post-passes: obstacle feelers, local avoidance.
     const burrowed = false; // handled in driveChannel; normal flow is surface
@@ -728,6 +789,14 @@ export class BotBrain {
     intent.moveZ = move.z;
     intent.aimYaw = aimYaw;
     intent.jump = intent.jump || now < this.jumpHoldUntil;
+    // Soar plan: hold to climb, and ALWAYS release once the plan says so.
+    if (soarState === 1) intent.jump = true;
+    else if (soarState === 2) intent.jump = false;
+    if (soarState !== 0) {
+      intent.block = false;
+      intent.attack = false;
+      return;
+    }
 
     // Block overlay (cannot attack while blocking, §7.4). Skip when the guard
     // is nearly broken — eating a guard break is worse than a hit (L3+).
@@ -756,6 +825,76 @@ export class BotBrain {
     }
   }
 
+  // ── v1.2 eagle soar ─────────────────────────────────────────────────────────
+
+  /** Track our own flights (live self state) to know when the next one is ready. */
+  private trackFlight(now: number, self: FighterState): void {
+    if (self.glideT > 0) {
+      this.inFlight = true;
+    } else if (this.inFlight && !self.airborne) {
+      // Landed: the sim starts the flight cooldown on touchdown.
+      this.inFlight = false;
+      this.soarReadyAt = now + (this.def.perks.glide?.cooldown ?? 6) + 0.1;
+      this.soarStartAt = -1;
+      this.soarHoldUntil = -1;
+      this.soarPlanEnd = -1;
+    }
+  }
+
+  private canStartSoar(now: number, self: FighterState): boolean {
+    return (
+      this.soarPlanEnd < 0 &&
+      !this.inFlight &&
+      now >= this.soarReadyAt &&
+      !self.airborne &&
+      (self.action === 'idle' || self.action === 'run' || self.action === 'block')
+    );
+  }
+
+  private beginSoar(now: number): void {
+    const glide = this.def.perks.glide;
+    const flight = glide !== undefined ? glide.duration : 2.5;
+    this.soarStartAt = now;
+    this.soarHoldUntil = now + Math.max(0.5, flight - AI_TUNING.soarReleaseMarginS);
+    this.soarPlanEnd = now + flight + 1.5; // generous: descent + landing
+  }
+
+  /**
+   * Steer an active soar plan. Returns 0 = no plan, 1 = hold jump (climb),
+   * 2 = released (descending onto a foe; keep jump OFF).
+   */
+  private driveSoar(now: number, self: FighterState, move: Move2, t: TrackedEnemy | null): 0 | 1 | 2 {
+    if (this.soarPlanEnd < 0) return 0;
+    const soar = this.def.perks.soar;
+    const elapsed = now - this.soarStartAt;
+    // Never got airborne (jump refused), or the plan ran long: drop it.
+    if (now >= this.soarPlanEnd || (elapsed > 0.6 && !self.airborne && !this.inFlight)) {
+      this.soarStartAt = -1;
+      this.soarHoldUntil = -1;
+      this.soarPlanEnd = -1;
+      return 0;
+    }
+    const sx = self.pos.x;
+    const sz = self.pos.z;
+    const alt = self.pos.y - groundY(sx, sz);
+    // Landing target: our target, else whoever is nearest (remembered).
+    const tgt = t !== null ? t : this.freshestMemory(now);
+    if (tgt !== null && elapsed >= AI_TUNING.soarEscapeS) {
+      const lead = 0.35;
+      const tx = tgt.x + tgt.velX * lead;
+      const tz = tgt.z + tgt.velZ * lead;
+      seek(move, sx, sz, tx, tz);
+      const d = Math.hypot(tx - sx, tz - sz);
+      // Over the foe and high enough for the slam → let go.
+      if (soar !== undefined && alt >= soar.landMinHeight + 0.2 && d <= AI_TUNING.soarReleaseDistM) {
+        this.soarHoldUntil = Math.min(this.soarHoldUntil, now);
+      }
+    } else if (tgt !== null) {
+      flee(move, sx, sz, tgt.x, tgt.z);
+    }
+    return now < this.soarHoldUntil ? 1 : 2;
+  }
+
   /** Stuck detector for {@link execute}: samples displacement every stuckWindowS. */
   private updateStuck(
     now: number,
@@ -770,7 +909,7 @@ export class BotBrain {
     const travelling =
       !wantAttack &&
       move.x * move.x + move.z * move.z > 0.25 &&
-      (t === null || t.dist > this.def.range + 0.5) &&
+      (t === null || t.dist > this.def.range + ANIMALS[t.animal].radius + 0.06) && // not yet in swing reach
       (self.action === 'run' || self.action === 'idle');
     if (!travelling || now < this.smashUntil || now < this.unstickUntil) {
       this.stuckRefT = now;
@@ -815,7 +954,9 @@ export class BotBrain {
     const p = this.profile;
     const sx = self.pos.x;
     const sz = self.pos.z;
-    const range = this.def.range;
+    // v1.2: basic reach is measured to the target's BODY, so the effective
+    // centre-to-centre reach against this target is range + its radius.
+    const range = this.def.range + ANIMALS[t.animal].radius;
     // Long-reach animals hold max-range spacing; the rest walk into the cut.
     const spacing =
       p.strafeSkill > 0.3
@@ -849,10 +990,11 @@ export class BotBrain {
     const dz = tz - sz;
     const dist = Math.sqrt(dx * dx + dz * dz);
     const punishing = now < this.punishUntil;
-    // Full reach + a small pad: big bodies hold small animals at exactly
-    // `range` (mole 1.7 vs hippo contact 1.7) — never swinging is worse than
-    // an occasional edge whiff.
-    const reach = this.def.range + (punishing ? 0.2 : 0.06);
+    // Full reach + a small pad. v1.2: reach is measured to the target's body,
+    // so the centre-to-centre reach is range + target radius (a mole swings
+    // at a hippo from 1.3 + 1.2 = 2.5 m) — never swinging is worse than an
+    // occasional edge whiff.
+    const reach = this.def.range + ANIMALS[t.animal].radius + (punishing ? 0.2 : 0.06);
     if (dist > reach) return Number.NEGATIVE_INFINITY;
 
     // Combo depth cap (§10 table). `comboIndex` is the LAST/CURRENT swing's
@@ -892,14 +1034,14 @@ export class BotBrain {
       const eDef = ANIMALS[e.animal];
       const yawToSelf = dirToYaw(self.pos.x - e.x, self.pos.z - e.z);
       const facingMe = Math.abs(angleDelta(e.yaw, yawToSelf)) <= (eDef.arcDeg * 0.5 + 20) * DEG2RAD;
-      const inReach = e.dist <= eDef.range + 1.0;
+      const inReach = e.dist <= eDef.range + this.def.radius + 1.0; // v1.2: their reach to OUR body
 
       if (facingMe && inReach) {
         if (this.rng() < p.blockOnTelegraphChance) {
           const tti = Math.max(0.05, timeToImpact(e.actionT, e.actionDur));
           this.block.schedule(now, tti, yawToSelf + Math.PI, p.perfectBlockTry);
         }
-      } else if (p.whiffPunish && i === this.targetId && !inReach && e.dist <= eDef.range + 2.5) {
+      } else if (p.whiffPunish && i === this.targetId && !inReach && e.dist <= eDef.range + this.def.radius + 2.5) {
         // They swung at air near us — committed recovery, go punish (§10).
         this.punishUntil = now + 0.8;
       }

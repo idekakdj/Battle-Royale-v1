@@ -15,7 +15,9 @@ describe('melee arc hit detection (§7.3)', () => {
 
   it('misses a target beyond range', () => {
     const a = makeFighter(0, 'lion', 0, 0, 0);
-    const t = makeFighter(1, 'gorilla', 0, 3, 0);
+    // v1.2: range is measured to the target's body (gorilla radius 0.8), so
+    // "beyond" means the body's near edge is past 2.2 m (centre > 3.0 m).
+    const t = makeFighter(1, 'gorilla', 0, 3.05, 0);
     expect(meleeArcHit(a, t, range, arc, H)).toBe(false);
   });
 

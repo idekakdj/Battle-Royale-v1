@@ -16,7 +16,8 @@
  *
  * Draw calls (high): sand 1 + stone 1 + stands 1 + crowd 1 + flags 1 +
  * banners 1 + crates 1 + debris 1 + flames 1 + embers 1 + shafts 1 + motes 1
- * + ≤6 pickup icons ≈ 18 (+ shadow pass).
+ * + pickup beacons (3 icon instancers + ring + column + sparks, ≤6, + ≤2 labels)
+ * ≈ 20 (+ shadow pass).
  */
 
 import * as THREE from 'three';
@@ -51,6 +52,7 @@ import {
 } from './arenaFx';
 import { SUN_POSITION } from './SceneManager';
 import { getQualityTier, onQualityChange, tierProfile, type QualityTier } from './quality';
+import { PickupBeacons } from './pickupBeacons';
 
 export type PickupKind = PickupState['kind'];
 
@@ -126,8 +128,8 @@ export class Stadium {
   private dCursor = 0;
   private debrisDirty = false;
 
-  /** padIcons[padIndex][kindIndex] — kind order: heal, speed, rage. */
-  private readonly padIcons: THREE.Mesh[][] = [];
+  /** Pickup medallions + pad rings/columns/labels (kind order: heal, speed, rage). */
+  private readonly beacons: PickupBeacons;
   private readonly materials: THREE.Material[] = [];
   private readonly unsubscribe: () => void;
 
@@ -295,27 +297,9 @@ export class Stadium {
     this.debrisMesh.instanceMatrix.needsUpdate = true;
     this.root.add(this.debrisMesh);
 
-    // ── Pickup pad icons (meat / feather / war-drum) ─────────────────────────
-    const iconMat = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      flatShading: true,
-      roughness: 0.8,
-      metalness: 0,
-    });
-    this.materials.push(iconMat);
-    const iconGeos: readonly THREE.BufferGeometry[] = [buildMeatGeometry(), buildFeatherGeometry(), buildDrumGeometry()];
-    for (const pad of PICKUP_PADS) {
-      const set: THREE.Mesh[] = [];
-      for (let k = 0; k < 3; k++) {
-        const mesh = new THREE.Mesh(iconGeos[k], iconMat);
-        mesh.position.set(pad.x, 1.05, pad.z);
-        mesh.visible = false;
-        mesh.castShadow = true;
-        this.root.add(mesh);
-        set.push(mesh);
-      }
-      this.padIcons.push(set);
-    }
+    // ── Pickup pad beacons (v1.2: heal cross / speed bolt / power swords) ────
+    this.beacons = new PickupBeacons(PICKUP_PADS);
+    this.root.add(this.beacons.root);
 
     this.applyTier(getQualityTier());
     this.unsubscribe = onQualityChange((t) => this.applyTier(t));
@@ -341,17 +325,8 @@ export class Stadium {
     this.fires.update(this.time);
     this.motes.update();
 
-    // Floating, rotating pickup icons (visible ones only; ≤6).
-    const bobT = this.time * 2;
-    for (let padIdx = 0; padIdx < this.padIcons.length; padIdx++) {
-      const set = this.padIcons[padIdx];
-      for (let k = 0; k < 3; k++) {
-        const mesh = set[k];
-        if (!mesh.visible) continue;
-        mesh.rotation.y += dt * 1.5;
-        mesh.position.y = 1.05 + Math.sin(bobT + padIdx * 1.1) * 0.12;
-      }
-    }
+    // Floating pickup medallions, pad rings, light columns, labels.
+    this.beacons.update(dt, this.time);
   }
 
   /**
@@ -405,11 +380,20 @@ export class Stadium {
    * `config/arena.ts` PICKUP_PADS order). Showing a kind hides the other two.
    */
   setPickupVisible(padIndex: number, kind: PickupKind, visible: boolean): void {
-    if (padIndex < 0 || padIndex >= this.padIcons.length) return;
+    if (padIndex < 0 || padIndex >= PICKUP_PADS.length) return;
     const kindIdx = PICKUP_KINDS.indexOf(kind);
     if (kindIdx < 0) return;
-    const set = this.padIcons[padIndex];
-    for (let k = 0; k < 3; k++) set[k].visible = visible && k === kindIdx;
+    if (visible) this.beacons.setVisible(padIndex, kindIdx, true);
+    else for (let k = 0; k < PICKUP_KINDS.length; k++) this.beacons.setVisible(padIndex, k, false);
+  }
+
+  /**
+   * Optional: the local player's ground position, for the pickup proximity
+   * labels (HEAL / SPEED / POWER fade in within ≈10 m). Without it the labels
+   * estimate the player ≈5.5 m ahead of the chase camera.
+   */
+  setPickupFocus(x: number, z: number): void {
+    this.beacons.setFocus(x, z);
   }
 
   dispose(): void {
@@ -425,7 +409,7 @@ export class Stadium {
     this.flagMesh.geometry.dispose();
     this.crateMesh.geometry.dispose();
     this.debrisMesh.geometry.dispose();
-    for (const set of this.padIcons) for (const m of set) m.geometry.dispose();
+    this.beacons.dispose();
     for (const m of this.materials) m.dispose();
     for (const t of this.textures) t.dispose();
   }
@@ -438,6 +422,7 @@ export class Stadium {
     this.shafts.mesh.visible = prof.lightShafts;
     this.motes.setCount(prof.dustMotes);
     this.flagMesh.visible = prof.crowdFlags;
+    this.beacons.setTier(tier);
   }
 
   // ── Builders (init-time only; all data from config/arena.ts) ──────────────
@@ -833,37 +818,5 @@ function buildCrateGeometry(): THREE.BufferGeometry {
   acc.add(new THREE.BoxGeometry(s * 0.16, s * 0.16, s + 0.04), COL_WOOD_DARK, matAt(-s / 2, 0, 0));
   acc.add(new THREE.BoxGeometry(s + 0.03, 0.06, s + 0.03), COL_BARS, matAt(0, s / 2 - 0.03, 0));
   acc.add(new THREE.BoxGeometry(s + 0.03, 0.06, s + 0.03), COL_BARS, matAt(0, -s / 2 + 0.03, 0));
-  return acc.buildGeometry();
-}
-
-/** Haunch of meat (heal pickup, §9 icons). */
-function buildMeatGeometry(): THREE.BufferGeometry {
-  const acc = new GeoAccumulator();
-  const boneQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI / 2));
-  acc.add(new THREE.CylinderGeometry(0.05, 0.05, 0.72, 6), 0xe8dcc0, matQuatAt(0.12, 0, 0, boneQ));
-  acc.add(new THREE.SphereGeometry(0.09, 6, 4), 0xe8dcc0, matAt(0.48, 0, 0));
-  acc.add(new THREE.SphereGeometry(0.09, 6, 4), 0xe8dcc0, matAt(0.48, 0.08, 0.05));
-  acc.add(new THREE.SphereGeometry(0.3, 7, 5), 0xa5432e, matAt(-0.18, 0, 0, 0, 1.25, 0.85, 0.85));
-  acc.add(new THREE.SphereGeometry(0.22, 7, 5), 0x7d2f1f, matAt(-0.34, 0.02, 0, 0, 1.1, 0.9, 0.9));
-  return acc.buildGeometry();
-}
-
-/** Winged-sandal-esque feather (speed pickup). */
-function buildFeatherGeometry(): THREE.BufferGeometry {
-  const acc = new GeoAccumulator();
-  const tilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0.35));
-  acc.add(new THREE.CylinderGeometry(0.024, 0.04, 0.95, 5), 0xd9a441, matQuatAt(0, 0, 0, tilt));
-  acc.add(new THREE.SphereGeometry(0.3, 6, 4), 0xe9e2d0, matQuatAt(0.07, 0.12, 0, tilt, 0.5, 1.15, 0.14));
-  acc.add(new THREE.SphereGeometry(0.24, 6, 4), 0xd6cbb2, matQuatAt(0.1, -0.18, 0, tilt, 0.45, 0.9, 0.12));
-  return acc.buildGeometry();
-}
-
-/** Red war-drum (rage pickup). */
-function buildDrumGeometry(): THREE.BufferGeometry {
-  const acc = new GeoAccumulator();
-  acc.add(new THREE.CylinderGeometry(0.28, 0.33, 0.42, 10), 0x8f2118, matAt(0, 0, 0));
-  acc.add(new THREE.CylinderGeometry(0.29, 0.29, 0.05, 10), 0xe2cfa8, matAt(0, 0.21, 0));
-  acc.add(new THREE.CylinderGeometry(0.325, 0.325, 0.06, 10), 0xd9a441, matAt(0, 0.18, 0));
-  acc.add(new THREE.CylinderGeometry(0.35, 0.35, 0.06, 10), 0xd9a441, matAt(0, -0.18, 0));
   return acc.buildGeometry();
 }

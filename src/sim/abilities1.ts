@@ -8,7 +8,7 @@ import type { Fighter, Sim, AbilityRuntime } from './Fighter';
 import { AbilityPhase } from './Fighter';
 import { dealDamage } from './CombatSystem';
 import { applyEffect, applyKnockback } from './StatusEffects';
-import { isTargetable } from './hitbox';
+import { isGroundTargetable } from './hitbox';
 import { chargeStep, clampToWall, groundHeightAt } from './MovementSystem';
 import { lerp } from '../core/math';
 import { MOVE } from '../config/balance';
@@ -258,7 +258,7 @@ function ambushLunge(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): void
   let contact = false;
   for (let i = 0; i < sim.fighters.length && !contact; i++) {
     const t = sim.fighters[i];
-    if (t === f || !isTargetable(t)) continue;
+    if (t === f || !isGroundTargetable(t)) continue;
     const dx = t.state.pos.x - f.state.pos.x;
     const dz = t.state.pos.z - f.state.pos.z;
     if (Math.sqrt(dx * dx + dz * dz) <= f.def.radius + t.def.radius + CONTACT_PAD) contact = true;
@@ -276,7 +276,7 @@ function riverRush(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): void {
   const cr = chargeStep(sim, f, step, false);
   for (let i = 0; i < sim.fighters.length; i++) {
     const t = sim.fighters[i];
-    if (t === f || !t.state.alive || !isTargetable(t) || rt.hitOnce.has(t.id)) continue;
+    if (t === f || !t.state.alive || !isGroundTargetable(t) || rt.hitOnce.has(t.id)) continue;
     const dx = t.state.pos.x - f.state.pos.x;
     const dz = t.state.pos.z - f.state.pos.z;
     if (Math.sqrt(dx * dx + dz * dz) <= f.def.radius + t.def.radius + CONTACT_PAD) {
@@ -300,7 +300,7 @@ function lockdownCharge(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): v
     const cr = chargeStep(sim, f, step, false);
     for (let i = 0; i < sim.fighters.length; i++) {
       const t = sim.fighters[i];
-      if (t === f || !t.state.alive || !isTargetable(t) || t.state.grabbedById !== -1) continue;
+      if (t === f || !t.state.alive || !isGroundTargetable(t) || t.state.grabbedById !== -1) continue;
       const dx = t.state.pos.x - f.state.pos.x;
       const dz = t.state.pos.z - f.state.pos.z;
       if (Math.sqrt(dx * dx + dz * dz) <= f.def.radius + t.def.radius + CONTACT_PAD) {
@@ -353,7 +353,7 @@ function shadowDash(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): void 
   const cr = chargeStep(sim, f, step, false);
   for (let i = 0; i < sim.fighters.length; i++) {
     const t = sim.fighters[i];
-    if (t === f || !t.state.alive || !isTargetable(t) || rt.hitOnce.has(t.id)) continue;
+    if (t === f || !t.state.alive || !isGroundTargetable(t) || rt.hitOnce.has(t.id)) continue;
     const dx = t.state.pos.x - f.state.pos.x;
     const dz = t.state.pos.z - f.state.pos.z;
     if (Math.sqrt(dx * dx + dz * dz) <= f.def.radius + t.def.radius + CONTACT_PAD) {

@@ -12,6 +12,8 @@
  * randomized + stacked so they never blob, drawn in the untonemapped overlay
  * layer), death burst + crowd streamers, and a screenshake offset the
  * CameraRig applies (≤0.15 m) plus a FOV kick on ultimates/heavy hits.
+ * v1.2 (WP-P) adds trap bursts (trigger / expire), small orange trap-damage
+ * numbers and the eagle landing-slam impact — all on the same pools.
  *
  * Public API is event-shaped so WP-I can pipe GameEvents straight in
  * (positions are plain `Vec3` from core/types) — unchanged from v1.0.
@@ -21,7 +23,7 @@
  */
 
 import * as THREE from 'three';
-import type { AnimalId, Vec3 } from '../core/types';
+import type { AnimalId, TrapKind, Vec3 } from '../core/types';
 import { ANIMALS } from '../config/animals';
 import { DEG2RAD, TAU, clamp01 } from '../core/math';
 import { STANDS_INNER } from '../config/arena';
@@ -541,7 +543,7 @@ class DecalPool {
 }
 
 // ── Floating damage numbers (64 pooled canvas billboards) ────────────────────
-type NumberStyle = 0 | 1 | 2; // normal | blocked | crit
+type NumberStyle = 0 | 1 | 2 | 3; // normal | blocked | crit | trap (v1.2: small orange)
 
 class NumberPool {
   readonly group = new THREE.Group();
@@ -613,15 +615,15 @@ class NumberPool {
     const ctx = this.ctxs[i];
     ctx.clearRect(0, 0, 160, 80);
     const text = String(Math.max(0, Math.round(value)));
-    const px = style === 2 ? 60 : style === 1 ? 46 : 54;
+    const px = style === 2 ? 60 : style === 1 ? 46 : style === 3 ? 48 : 54;
     ctx.font = `900 ${px}px Arial, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 10;
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = style === 2 ? '#6a1f0a' : style === 1 ? '#1e3a5f' : '#3c2410';
+    ctx.strokeStyle = style === 2 ? '#6a1f0a' : style === 1 ? '#1e3a5f' : style === 3 ? '#4a1604' : '#3c2410';
     ctx.strokeText(text, 80, 42);
-    ctx.fillStyle = style === 2 ? '#ffd24a' : style === 1 ? '#bfe0ff' : '#fff4e0';
+    ctx.fillStyle = style === 2 ? '#ffd24a' : style === 1 ? '#bfe0ff' : style === 3 ? '#ff9a3c' : '#fff4e0';
     ctx.fillText(text, 80, 42);
     this.texs[i].needsUpdate = true;
 
@@ -645,6 +647,7 @@ class NumberPool {
     let s = NUM_MIN_SCALE + (NUM_MAX_SCALE - NUM_MIN_SCALE) * Math.min(1, value / 240);
     if (style === 2) s *= 1.22;
     else if (style === 1) s *= 0.85;
+    else if (style === 3) s *= 0.78;
     if (s > NUM_MAX_SCALE) s = NUM_MAX_SCALE;
 
     // Random scatter; stacked numbers also alternate sides so they never blob.
@@ -1330,6 +1333,174 @@ export class Effects implements FxSink {
   /** Live particle count across both pools (budget: ≤500). */
   get liveParticles(): number {
     return this.additive.count + this.soft.count;
+  }
+
+  // ── v1.2 arena traps + eagle landing slam (WP-P; additive API) ────────────
+
+  /**
+   * Small orange trap-damage number over the victim (+ a couple of embers /
+   * sparks). Distinct from combat numbers so players read "the arena did this".
+   */
+  onTrapDamage(pos: Vec3, damage: number, kind: TrapKind): void {
+    this.numbers.spawn(pos, damage, 3);
+    const fire = kind === 'fire';
+    const n = Math.max(2, Math.round(5 * tierProfile().fxScale));
+    for (let i = 0; i < n; i++) {
+      const ang = Math.random() * TAU;
+      const sp = fire ? 0.4 + Math.random() * 0.8 : 1.5 + Math.random() * 2.5;
+      const cr = Math.random();
+      this.additive.spawn(
+        pos.x + Math.cos(ang) * 0.25, pos.y + (fire ? 0.35 : 0.5), pos.z + Math.sin(ang) * 0.25,
+        Math.cos(ang) * sp, fire ? 1.5 + Math.random() * 1.8 : 1 + Math.random() * 2.5, Math.sin(ang) * sp,
+        fire ? 0.5 + Math.random() * 0.3 : 0.22 + Math.random() * 0.12, fire ? 0.12 : 0.1, 0.03,
+        1, fire ? 0.45 + cr * 0.3 : 0.75 + cr * 0.25, fire ? 0.1 : 0.7 + cr * 0.3,
+        0.9, fire ? 1.2 : -18, fire ? 1.4 : 2.4,
+      );
+    }
+  }
+
+  /**
+   * A trap just fired. Fire: blooming flame flash, ground shockwave, spark
+   * fountain and a smoke puff. Spikes: cold metallic flash, dust ring, sparks
+   * and grit. `nearness` (0..1, how close the camera's fighter is) scales the
+   * screenshake / FOV kick so a far-off trap never jolts the player.
+   */
+  onTrapTrigger(kind: TrapKind, pos: Vec3, radius: number, nearness = 1): void {
+    const fx = tierProfile().fxScale;
+    const near = clamp01(nearness);
+    _v.set(pos.x, 0, pos.z);
+    if (kind === 'fire') {
+      this.flashes.spawn(_v, 0.9, 0xff8a2a, radius * 0.6, radius * 2.3, 0.38, 0.85, 1.35, 1.6);
+      this.rings.spawn(_v, 0xff6a1a, radius * 0.35, radius * 1.55, 0.45, 1.6, 0.8);
+      const n = Math.round(38 * fx);
+      for (let i = 0; i < n; i++) {
+        const ang = Math.random() * TAU;
+        const r = Math.sqrt(Math.random()) * radius * 0.8;
+        const sp = 0.6 + Math.random() * 1.8;
+        const cr = Math.random();
+        this.additive.spawn(
+          pos.x + Math.cos(ang) * r, 0.15, pos.z + Math.sin(ang) * r,
+          Math.cos(ang) * sp, 5 + Math.random() * 7, Math.sin(ang) * sp,
+          0.55 + Math.random() * 0.55, 0.16 + Math.random() * 0.1, 0.04,
+          1, 0.4 + cr * 0.45, 0.06 + cr * 0.12, 0.95, -7, 1.3,
+        );
+      }
+      const m = Math.round(9 * fx);
+      for (let i = 0; i < m; i++) {
+        const ang = Math.random() * TAU;
+        const r = Math.random() * radius * 0.6;
+        this.soft.spawn(
+          pos.x + Math.cos(ang) * r, 0.6 + Math.random() * 0.8, pos.z + Math.sin(ang) * r,
+          Math.cos(ang) * 0.6, 1.2 + Math.random() * 1.2, Math.sin(ang) * 0.6,
+          1.3 + Math.random() * 0.6, 0.7, 2.2,
+          0.2, 0.16, 0.13, 0.42, 0.6, 1.2,
+        );
+      }
+      this.addShake(0.06 * near);
+      if (near > 0.05) kickFov(1.4 * near);
+    } else {
+      this.flashes.spawn(_v, 0.45, 0xdfe8ff, radius * 0.5, radius * 1.9, 0.16, 0.9, 0.6, 1.5);
+      this.impactRings.spawn(_v, 0.25, 0xcfd8e8, 0.4, radius * 1.6, 0.22, 0.6, 1, 1.2);
+      this.rings.spawn(_v, 0xe8dcc4, radius * 0.4, radius * 1.3, 0.35, 1.2, 0.7);
+      this.dustRing(pos.x, pos.z, radius, 16);
+      const n = Math.round(18 * fx);
+      for (let i = 0; i < n; i++) {
+        const ang = Math.random() * TAU;
+        const r = Math.sqrt(Math.random()) * radius * 0.8;
+        const sp = 1.5 + Math.random() * 3;
+        const c = 0.8 + Math.random() * 0.2;
+        this.additive.spawn(
+          pos.x + Math.cos(ang) * r, 0.45 + Math.random() * 0.3, pos.z + Math.sin(ang) * r,
+          Math.cos(ang) * sp, 2 + Math.random() * 3, Math.sin(ang) * sp,
+          0.2 + Math.random() * 0.15, 0.1, 0.02,
+          c, c * 0.95, c * 0.85, 0.95, -20, 2.4,
+        );
+      }
+      for (let i = 0; i < 8; i++) {
+        const ang = Math.random() * TAU;
+        const sp = 1 + Math.random() * 2;
+        this.soft.spawn(
+          pos.x + Math.cos(ang) * radius * 0.5, 0.1, pos.z + Math.sin(ang) * radius * 0.5,
+          Math.cos(ang) * sp, 2.5 + Math.random() * 2.5, Math.sin(ang) * sp,
+          0.7, 0.12, 0.1,
+          0.36, 0.27, 0.17, 0.9, -16, 0.5,
+        );
+      }
+      this.addShake(0.05 * near);
+      if (near > 0.05) kickFov(0.9 * near);
+    }
+  }
+
+  /** The active window ended: dying smoke + embers (fire) or a dust puff (spikes). */
+  onTrapExpire(kind: TrapKind, pos: Vec3, radius: number): void {
+    const fx = tierProfile().fxScale;
+    if (kind === 'fire') {
+      const m = Math.round(10 * fx);
+      for (let i = 0; i < m; i++) {
+        const ang = Math.random() * TAU;
+        const r = Math.random() * radius * 0.7;
+        this.soft.spawn(
+          pos.x + Math.cos(ang) * r, 0.3 + Math.random() * 0.5, pos.z + Math.sin(ang) * r,
+          Math.cos(ang) * 0.35, 0.8 + Math.random() * 0.9, Math.sin(ang) * 0.35,
+          1.6 + Math.random() * 0.8, 0.6, 2.0,
+          0.26, 0.23, 0.21, 0.36, 0.5, 1.0,
+        );
+      }
+      const n = Math.round(12 * fx);
+      for (let i = 0; i < n; i++) {
+        const ang = Math.random() * TAU;
+        const r = Math.sqrt(Math.random()) * radius * 0.7;
+        this.additive.spawn(
+          pos.x + Math.cos(ang) * r, 0.2, pos.z + Math.sin(ang) * r,
+          Math.cos(ang) * 0.5, 1.5 + Math.random() * 2.5, Math.sin(ang) * 0.5,
+          0.7 + Math.random() * 0.6, 0.1, 0.03,
+          1, 0.45, 0.1, 0.85, -1.5, 1.0,
+        );
+      }
+    } else {
+      this.dustRing(pos.x, pos.z, radius * 0.7, 9);
+    }
+  }
+
+  /**
+   * Eagle landing slam (`landingImpact`): ground crack + dust ring + shockwave
+   * sized by `radius`, grit and a few loose feathers. `nearness` (0..1) scales
+   * the screenshake / FOV kick; heavier slams (`damage`) kick a little harder.
+   */
+  onLandingImpact(pos: Vec3, radius: number, damage: number, nearness = 1): void {
+    const fx = tierProfile().fxScale;
+    const near = clamp01(nearness);
+    const k = clamp01(damage / 55);
+    _v.set(pos.x, 0, pos.z);
+    this.cracks.spawn(pos.x, 0, pos.z, radius * 0.75);
+    this.dustRing(pos.x, pos.z, radius, 20);
+    this.rings.spawn(_v, 0xf3e3c3, radius * 0.2, radius * 1.15, 0.5, 1.2, 0.85);
+    this.rings.spawn(_v, 0xffffff, radius * 0.1, radius * 0.7, 0.24, 1.5, 0.55);
+    this.impactRings.spawn(_v, 0.4, 0xffe6b0, 0.5, radius * 1.4, 0.25, 0.6, 1, 1.1);
+    for (let i = 0; i < 10; i++) {
+      const ang = Math.random() * TAU;
+      const sp = 1.5 + Math.random() * 2.5;
+      this.soft.spawn(
+        pos.x, 0.1, pos.z,
+        Math.cos(ang) * sp, 3 + Math.random() * 3, Math.sin(ang) * sp,
+        0.7, 0.12, 0.1,
+        0.36, 0.26, 0.16, 0.9, -16, 0.5,
+      );
+    }
+    const f = Math.round(9 * fx);
+    for (let i = 0; i < f; i++) {
+      const ang = Math.random() * TAU;
+      const sp = 0.8 + Math.random() * 1.6;
+      const light = Math.random() < 0.5;
+      this.soft.spawn(
+        pos.x + Math.cos(ang) * 0.3, 0.9 + Math.random() * 0.6, pos.z + Math.sin(ang) * 0.3,
+        Math.cos(ang) * sp, 1 + Math.random() * 1.5, Math.sin(ang) * sp,
+        1.5 + Math.random() * 0.6, 0.16, 0.12,
+        light ? 0.93 : 0.45, light ? 0.9 : 0.32, light ? 0.84 : 0.2, 0.9, -0.9, 2.2,
+      );
+    }
+    this.addShake((0.05 + 0.05 * k) * near);
+    if (near > 0.05) kickFov((1.2 + 1.4 * k) * near);
   }
 
   // ── FxSink (animal rigs → render/fxBus) ───────────────────────────────────

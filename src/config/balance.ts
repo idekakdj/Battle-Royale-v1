@@ -127,6 +127,13 @@ export const MOVE = {
   heightOverlapGiraffe: 3.2,
   /** Height (m) of low walls that a jump clears (fallen columns). */
   lowWallClearHeight: 0.9,
+  /**
+   * v1.2: ground-level area attacks (every ability circle/cone, charge and
+   * dash contact, grab lunge, pickup pad) ignore fighters flying higher than
+   * this many metres above the ground — a soaring eagle dodges by altitude.
+   * Melee arcs keep their own |Δy| tolerance above.
+   */
+  groundHitMaxAltitude: 2.5,
 } as const;
 
 // ── Arena geometry shared with match logic (§6, §9) ──────────────────────────

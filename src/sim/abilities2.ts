@@ -11,7 +11,7 @@ import { AbilityPhase } from './Fighter';
 import type { DamageOpts } from './CombatSystem';
 import { dealDamage } from './CombatSystem';
 import { applyEffect, applyKnockback, applyDirectionalKnockback } from './StatusEffects';
-import { isTargetable, circleHit, coneHit } from './hitbox';
+import { isGroundTargetable, circleHit, coneHit, withinGroundReach } from './hitbox';
 import { chargeStep, clampToWall, groundHeightAt } from './MovementSystem';
 import { DEG2RAD, rotateToward, dirToYaw } from '../core/math';
 import { MOVE } from '../config/balance';
@@ -53,7 +53,7 @@ export function aimPointDist(sim: Sim, f: Fighter, maxRange: number): number {
   let found = false;
   for (let i = 0; i < sim.fighters.length; i++) {
     const t = sim.fighters[i];
-    if (t === f || !isTargetable(t)) continue;
+    if (t === f || !isGroundTargetable(t)) continue; // v1.2: never snap onto a soaring eagle
     const rx = t.state.pos.x - f.state.pos.x;
     const rz = t.state.pos.z - f.state.pos.z;
     const along = rx * dx + rz * dz;
@@ -168,6 +168,7 @@ export function hitArea(sim: Sim, f: Fighter, cfg: AreaCfg): boolean {
     const t = sim.fighters[i];
     if (t === f || !t.state.alive) continue;
     if (cfg.once !== undefined && cfg.once.has(t.id)) continue;
+    if (!withinGroundReach(t)) continue; // v1.2: ground AoEs miss high flyers
     const hit =
       cfg.shape === 'circle'
         ? circleHit(cfg.cx, cfg.cz, cfg.cy, cfg.range, t, cfg.heightTol)
@@ -459,7 +460,7 @@ function stampede(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): void {
   // Run through fighters (once each): 180 + knockdown.
   for (let i = 0; i < sim.fighters.length; i++) {
     const t = sim.fighters[i];
-    if (t === f || !t.state.alive || !isTargetable(t) || rt.hitOnce.has(t.id)) continue;
+    if (t === f || !t.state.alive || !isGroundTargetable(t) || rt.hitOnce.has(t.id)) continue;
     const dx = t.state.pos.x - f.state.pos.x;
     const dz = t.state.pos.z - f.state.pos.z;
     if (Math.sqrt(dx * dx + dz * dz) <= f.def.radius + t.def.radius + CONTACT_PAD) {
@@ -511,7 +512,7 @@ function grabUlt(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): void {
     clampToWall(f);
     for (let i = 0; i < sim.fighters.length; i++) {
       const t = sim.fighters[i];
-      if (t === f || !t.state.alive || !isTargetable(t) || t.state.grabbedById !== -1) continue;
+      if (t === f || !t.state.alive || !isGroundTargetable(t) || t.state.grabbedById !== -1) continue;
       const dx = t.state.pos.x - f.state.pos.x;
       const dz = t.state.pos.z - f.state.pos.z;
       if (Math.sqrt(dx * dx + dz * dz) <= f.def.radius + t.def.radius + CONTACT_PAD) {

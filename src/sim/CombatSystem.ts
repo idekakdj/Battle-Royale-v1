@@ -9,7 +9,8 @@ import type { Fighter, Sim } from './Fighter';
 import { DAMAGE, GUARD, REACT, COMBO, ULT, MOVE } from '../config/balance';
 import { SHOVE_RANGE, SHOVE_ARC_DEG } from './simTuning';
 import { clamp01 } from '../core/math';
-import { isBehind, inFrontArc, meleeArcHit, coneHit, circleHit } from './hitbox';
+import { isBehind, inFrontArc, meleeArcHit, coneHit, circleHit, sectorCircleOverlap } from './hitbox';
+import { CRATE_HALF } from '../config/arena';
 import {
   hasBuff,
   removeBuff,
@@ -341,6 +342,20 @@ function resolveSwingHit(sim: Sim, f: Fighter): void {
 
   // Gorilla finisher is a 2.5 m slam (radius), not the normal arc (§8).
   const gorillaSlam = isFinisher && f.def.id === 'gorilla' && f.def.finisher.radius !== undefined;
+  const hitRange = gorillaSlam ? (f.def.finisher.radius as number) : f.def.range;
+  const hitArc = gorillaSlam ? 360 : f.def.arcDeg;
+
+  // v1.2: publish the exact sector this impact tests so the renderer draws
+  // the real hitbox (position/yaw at the impact instant, not swing start).
+  sim.emit({
+    type: 'swingImpact',
+    fighterId: f.id,
+    pos: { x: f.state.pos.x, y: f.state.pos.y, z: f.state.pos.z },
+    yaw: f.state.yaw,
+    range: hitRange,
+    arcDeg: hitArc,
+    step,
+  });
 
   for (let i = 0; i < sim.fighters.length; i++) {
     const t = sim.fighters[i];
@@ -366,14 +381,13 @@ function resolveSwingHit(sim: Sim, f: Fighter): void {
     }
   }
 
-  // Basic swings damage crates within the arc (crates are attackable, §9).
+  // Basic swings damage crates the swing sector overlaps (crates are
+  // attackable, §9). v1.2: same sector–circle test as fighters (crate = its
+  // 0.5 m half-extent circle), so crates behind the attacker are no longer hit.
   for (let i = 0; i < sim.crates.length; i++) {
     const c = sim.crates[i];
     if (!c.alive) continue;
-    const dx = c.x - f.x;
-    const dz = c.z - f.state.pos.z;
-    const dist = Math.sqrt(dx * dx + dz * dz);
-    if (dist <= f.def.range + 0.5) sim.damageCrate(c, base);
+    if (sectorCircleOverlap(f.x, f.state.pos.z, f.state.yaw, hitRange, hitArc, c.x, c.z, CRATE_HALF)) sim.damageCrate(c, base);
   }
 
   // Ult charge on landed basics only (§7.2), halved when only chip/blocked.

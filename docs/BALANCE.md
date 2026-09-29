@@ -1,4 +1,78 @@
-# Gladiator Kingdom — Balance Report (v1.1, WP-J)
+# Gladiator Kingdom — Balance Report (v1.2 WP-N on top of v1.1 WP-J)
+
+## v1.2 (WP-N): body hitboxes, eagle soar, arena traps
+
+Spec: `docs/UPGRADE-PLAN-v1.2.md` §3 and §5b. The v1.1 report below still describes the method and the v1.1 changes. All v1.2 numbers are in `src/config/animals.ts`, `src/config/traps.ts`, `src/config/balance.ts` (`MOVE.groundHitMaxAltitude`) and `src/config/botProfiles.ts` (`AI_TUNING.soar*`, `trapAwareness`, `soarUse`).
+
+### What changed and why
+| Change | Numbers | Why |
+|---|---|---|
+| **Melee = sector–circle overlap** (`hitbox.meleeArcHit`, same padding in `coneHit`): hit iff `dist − r ≤ range` and angle ≤ arc/2 + asin(min(1, r/dist)); a body over the attacker's centre always counts | — | "What you see is what you hit": any body that pokes into the drawn sector is hit. v1.1 tested only the target's centre, so big bodies were missed while their body was inside the arc, and the arc edge cut through bodies |
+| **Basic ranges retuned** (now measured to the target's body) | lion 2.2 → **1.5**, gorilla 2.3 → 1.6, croc 2.4 → 1.9, hippo 2.6 → 2.15, rhino 2.6 → 2.15, eagle 2.0 → 1.3, panther 2.1 → 1.4, python 3.0 → 2.2, giraffe 3.4 → 2.7, **mole 2.0 → 1.3** | Started at old − 0.7, about the mean body radius (0.8), so reach against an average body is unchanged: a lion still reaches a lion-sized body at 2.2 m centre to centre. Big bodies are now bigger targets (reach against a hippo grows 0.5 m), so the big animals kept a little more (croc, hippo, rhino −0.5 to −0.45). Order kept: giraffe > python > hippo = rhino > croc > gorilla > lion > panther > eagle = mole. `statPips.rng` is unchanged (same order) |
+| `swingImpact` event at every basic impact tick (exact pos / yaw / range / arc / step; gorilla slam 360° × 2.5 m) | — | The renderer draws the real sector at the impact instant |
+| Crate hits use the same sector test (crate = 0.5 m circle) | — | Crates behind a swing are no longer hit |
+| **Hippo** | HP 1100 → **1250**, speed 5.4 → **5.7**, River Rush cd 6.5 → **6** s, card HP pip 4 → 5 | The body hitbox hurt the biggest body most: it was at 0–3 % at L4 before this. It is still the level-split animal: strong against Cubs (26 %), 5 % at L4 |
+| **Eagle soar** (`perks.glide` + `perks.soar`) | flight 4 s (was a 2.5 s glide); glides at 8 m/s at 1.6 m; starts climbing after 0.15 s at 4 m/s (accel 20) up to **6.5 m**; attack lock **above 3.2 m**; descent ≤ 10 m/s; flight cooldown **8 s from touchdown** (was 6 s from release) | Dodge by altitude, with a real cost: no attack, block, special or ult up high, and the cooldown only starts on landing. The cooldown went from 6.5 to 8 s because at 6.5 s the Apex eagle was the L4 outlier (19–20 % wins, best placement) |
+| **Ground reach** | ground AoEs, charges, grab lunges, aim snap and pickups ignore fighters more than **2.5 m** up; melee keeps \|Δy\| ≤ 2.2 m (giraffe 3.2 m) | Nothing on the ground can hit a soaring eagle; a gliding one (1.6 m) can still be hit |
+| **Landing slam** | peak ≥ **3.0 m** → `min(40, 20 + 3 × peak)` (29–39.5), radius **3.2 m**, knockback **2 m**, recovery **0.4 s** | The brief asked for "not too much". The cap (40) is below Gale Burst (45) and a sixth of Death From Above (240), and the recovery is a real punish window. This deviates from the plan's 30 + 4/m ≤ 55, which could out-damage Gale Burst |
+| **Traps** (`config/traps.ts`) | count 2/3/5/7 (L1–L4); active **8 s**; re-arm after **20 s**; fire r 2.0 m, **7 per 0.5 s** (14/s); spikes r 1.8 m, **25 per 0.8 s**; hazard height 1.0 m (fire) / 0.6 m (spikes) | Started at the plan's 12/s and 20 per stab. The data showed traps at 0.1–0.9 % of damage, so they got a little more bite (fire 12 → 14/s, spikes 20 → 25) and stay flavour |
+| **Bots** | Cub ignores traps. Fighter steps out of hazards and sidesteps plates squarely ahead. Veteran routes around plates and hazards. Apex also stops chasing a target into an active hazard. Veteran/Apex eagles soar over long telegraphs (windup ≥ 0.8 s) and when below 35 % HP with a foe within 4 m; Apex also soars out of a 4-foe pile-up. They home onto a foe after 1.2 s, release within 2.2 m of it, and always release at least 0.4 s before the flight limit. Veteran/Apex drop a target that is soaring out of reach. Every "in reach" check now adds the target's body radius | Plates are visible to everyone, so reading `snapshot.traps` is fair. The stuck detector's "not yet in reach" test now uses the same body-radius reach; a leftover v1.1 margin caused one L1 stall in 200 matches until it was fixed |
+
+### Acceptance run: `N=60 LEVELS=1,2,3,4 npm run balance` (traps on, win % / avg place)
+| Animal | L1 | L2 | L3 | L4 |
+|---|---|---|---|---|
+| lion | 8 % / 5.27 | 10 % / 5.40 | 8 % / 5.52 | 7 % / 6.03 |
+| gorilla | 13 % / 4.48 | 3 % / 5.75 | 5 % / 5.70 | 10 % / 5.12 |
+| crocodile | 23 % / 4.38 | 12 % / 4.23 | 12 % / 5.23 | 7 % / 5.25 |
+| hippo | 27 % / 3.87 | 20 % / 5.07 | 17 % / 4.75 | 3 % / 5.78 |
+| rhino | 12 % / 4.38 | 20 % / 4.63 | 7 % / 5.73 | 7 % / 6.40 |
+| eagle | 3 % / 7.12 | 12 % / 5.12 | 5 % / 5.48 | 8 % / 4.25 |
+| panther | 3 % / 5.75 | 7 % / 6.23 | 7 % / 6.28 | 17 % / 5.55 |
+| python | 5 % / 6.22 | 5 % / 6.62 | 15 % / 6.05 | 7 % / 5.73 |
+| giraffe | 3 % / 6.03 | 10 % / 5.80 | 10 % / 5.17 | 17 % / 5.52 |
+| mole | 2 % / 7.50 | 2 % / 6.15 | 13 % / 5.08 | 18 % / 5.37 |
+| **timeouts** | 0 | 0 | 0 | 0 |
+| **avg match** | 44 s | 42 s | 87 s | 94 s |
+| **trap share of damage / trap deaths** | 0.9 % / 0 | 0.3 % / 0 | 0.1 % / 0 | 0.2 % / 0 |
+| **eagle slams / match** | 0 | 0.13 | 1.43 | 2.02 |
+
+L3 is 5–17 %, and the L1/L2 top animals are at 27 % / 20 % (target ≤ 30 %). L4 is 7–18 % apart from the hippo at 3 % (2 wins). At N=60 a single cell has a standard error of about ±4 points. The hippo's N=200 rate is 5 % with traps and 8 % without (below), so most of the 3 % is sampling. The hippo is still the weakest L4 animal, as it was in v1.1 (§6). Average match lengths are not inflated (v1.1: 52 / 48 / 93 / 99 s).
+
+### Traps vs no traps (same seeds, N=200 per level, `COMPARE=1 N=200 npm run balance`)
+| Level | triggers / match | trap dmg / match | per fighter | share of all damage | trap deaths / match (share) | avg match off → on | largest \|Δplace\| |
+|---|---|---|---|---|---|---|---|
+| L1 (2 traps) | 1.0 | 99 | 9.9 | 1.0 % | 0.03 (0.3 %) | 45 → 45 s | 0.16 (gorilla) |
+| L2 (3) | 1.4 | 38 | 3.8 | 0.3 % | 0.01 (0.1 %) | 41 → 43 s | 0.23 (panther) |
+| L3 (5) | 1.1 | 21 | 2.1 | 0.2 % | 0.01 (0.2 %) | 87 → 88 s | 0.28 (python) |
+| L4 (7) | 1.4 | 26 | 2.6 | 0.2 % | 0.01 (0.2 %) | 96 → 99 s | 0.62 (giraffe, better with traps); next are mole +0.43 and eagle −0.41 |
+
+Win % / avg place at N=200, traps **on** · **off**:
+
+| Animal | L1 | L2 | L3 | L4 |
+|---|---|---|---|---|
+| lion | 7/5.66 · 8/5.62 | 13/5.35 · 10/5.18 | 9/5.52 · 14/5.40 | 11/5.35 · 14/5.21 |
+| gorilla | 12/4.72 · 11/4.88 | 9/5.40 · 12/5.62 | 8/5.58 · 5/5.82 | 8/5.51 · 5/5.33 |
+| crocodile | 22/4.10 · 26/4.02 | 12/4.84 · 14/4.87 | 8/5.38 · 8/5.21 | 8/5.29 · 8/5.16 |
+| hippo | 26/3.53 · 23/3.50 | 12/4.95 · 15/4.88 | 14/4.92 · 12/5.07 | 5/5.82 · 8/5.91 |
+| rhino | 13/4.39 · 13/4.39 | 17/4.86 · 13/4.83 | 5/5.64 · 11/5.54 | 5/6.28 · 8/6.09 |
+| eagle | 5/6.71 · 5/6.68 | 12/5.03 · 8/5.05 | 11/5.00 · 12/4.90 | 13/3.96 · 12/4.37 |
+| panther | 6/6.25 · 5/6.29 | 6/6.01 · 6/6.25 | 10/5.99 · 8/6.12 | 13/5.78 · 10/5.79 |
+| python | 4/6.36 · 5/6.39 | 7/6.09 · 6/6.11 | 8/6.44 · 8/6.16 | 10/5.78 · 12/5.72 |
+| giraffe | 5/6.04 · 5/6.00 | 11/6.07 · 9/5.91 | 10/5.67 · 9/5.88 | 15/5.46 · 11/6.08 |
+| mole | 3/7.24 · 2/7.22 | 3/6.41 · 9/6.31 | 19/4.87 · 14/4.92 | 13/5.78 · 15/5.34 |
+
+- **Traps are flavour.** They cause at most 1 % of all damage (at the Cub level, where bots walk into them) and 0.1–0.3 % of deaths. They don't lengthen matches, and 39 of the 40 placement deltas are ≤ 0.43. The one larger delta (giraffe −0.62 at L4) is about 2 standard errors of a paired N=200 difference (≈ 0.3), which one cell in 40 is expected to reach by chance. At L4 traps deal 2.6 damage per fighter per match, far too little to move a placement by 0.6.
+- **True rates (N=200, traps on):** L3 5–19 %, L4 5–15 %. The eagle wins 11 % at L3 and 13 % at L4, so it is not the win-rate outlier. It still has the best average L4 placement (3.96) because soaring is a survival tool. The mole's 19 % at L3 is within noise of 18 % (14 % without traps).
+- **Human fairness:** `tests/ai/fairness.test.ts` still passes. The fastest Cub needs 16.0 s to kill an idle 760-HP eagle. Dropping the eagle to 720 HP was tried as its nerf, but that broke the guard (14.4 s), so the flight cooldown was nerfed instead.
+
+### Tuning trail (N=100–200, L3/L4)
+- Ranges at old − 0.7 across the board left the big bodies weak at L4 (hippo 0–3 %, rhino and croc 3–5 %) and put the eagle at 20 %. The big bodies got −0.45 to −0.5 instead, plus the hippo body buffs above.
+- Eagle nerfs compared at L4 (N=200): HP 700 → 11 %, cooldown 8 s → 14 %, no pile-up soar → 14 %, landing recovery 0.6 s → 15 %. Chosen: cooldown 8 s, plus the Apex pile-up trigger raised from 2 to 4 foes. HP stays at 760 for the fairness guard.
+- With the soar AI switched off entirely (the eagle still hop-glides), the eagle was at 16 % at L3. Most of its strength comes from the smaller body hitbox and the altitude dodge, not from the bot script.
+
+---
+
+# v1.1 report (WP-J)
 
 Owner: WP-J (Gameplay & Balance). Spec: `docs/UPGRADE-PLAN-v1.1.md` §1.1 / §3. Binding data: `src/config/animals.ts`, `src/config/balance.ts`, `src/config/botProfiles.ts` (BLUEPRINT §8 table synced).
 

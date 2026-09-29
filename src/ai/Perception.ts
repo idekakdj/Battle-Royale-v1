@@ -18,6 +18,7 @@
 
 import type { AnimalId, FighterAction, FighterState, GameEvent, WorldSnapshot } from '../core/types';
 import { PILLARS } from '../config/arena';
+import { groundY } from './Steering';
 
 /** Flattened pillar circles for the LOS test (radius² precomputed). */
 const LOS_PILLARS: readonly { x: number; z: number; rSq: number }[] = PILLARS.map((p) => ({
@@ -79,6 +80,8 @@ export interface TrackedEnemy {
   rooted: boolean;
   /** Horizontal distance from our own (live) position to best-known position. */
   dist: number;
+  /** v1.2: metres above the ground (a soaring eagle is out of ground reach). */
+  alt: number;
   lastSeen: number;
   /** Stealth reveal window (set when the stealthed fighter attacks). */
   revealedUntil: number;
@@ -160,6 +163,7 @@ export class Perception {
           helpless: false,
           rooted: false,
           dist: 0,
+          alt: 0,
           lastSeen: -1e9,
           revealedUntil: -1e9,
         });
@@ -210,6 +214,7 @@ export class Perception {
         const prevT = t.actionT;
         t.x = f.pos.x;
         t.z = f.pos.z;
+        t.alt = f.pos.y - groundY(f.pos.x, f.pos.z);
         t.velX = f.vel.x;
         t.velZ = f.vel.z;
         t.yaw = f.yaw;

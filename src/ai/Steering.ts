@@ -7,8 +7,10 @@
  * caller-owned {@link Move2} so hot paths allocate nothing.
  */
 
-import type { FighterState, WorldSnapshot } from '../core/types';
-import { PILLARS, FALLEN_COLUMNS, WALL_RADIUS, CRATE_HALF } from '../config/arena';
+import type { FighterState, TrapState, WorldSnapshot } from '../core/types';
+import { PILLARS, FALLEN_COLUMNS, WALL_RADIUS, CRATE_HALF, DAIS } from '../config/arena';
+import { ARENA } from '../config/balance';
+import type { TrapAwareness } from '../config/botProfiles';
 
 export interface Move2 {
   x: number;
@@ -272,4 +274,104 @@ export function separation(
     }
   }
   if (px !== 0 || pz !== 0) setDir(out, out.x + px, out.z + pz);
+}
+
+// -- v1.2 arena traps ---------------------------------------------------------
+
+/** Ground height under (x,z) - mirrors the sim (dais top inside its radius). */
+export function groundY(x: number, z: number): number {
+  return Math.hypot(x - DAIS.x, z - DAIS.z) <= DAIS.radius ? ARENA.daisY : ARENA.groundY;
+}
+
+/** Probe length (m) for bending around armed plates / active hazards ahead. */
+const TRAP_PROBE_LEN = 3.2;
+
+/** Index of the active trap whose hazard contains (sx,sz) (+`pad` m), else -1. */
+export function activeTrapAt(traps: readonly TrapState[], sx: number, sz: number, pad: number): number {
+  for (let i = 0; i < traps.length; i++) {
+    const t = traps[i];
+    if (t.phase !== 'active') continue;
+    const r = t.radius + pad;
+    const dx = sx - t.pos.x;
+    const dz = sz - t.pos.z;
+    if (dx * dx + dz * dz <= r * r) return i;
+  }
+  return -1;
+}
+
+/**
+ * v1.2 trap awareness. Bends `out` around hazards on the path ahead and, when
+ * the bot is standing in an active hazard, turns it straight out. Levels:
+ *  - `ignore` (Cub): no-op.
+ *  - `soft` (Fighter): steps out of active hazards; nudges around an armed
+ *    plate only when it lies squarely on the path (cheap detours only).
+ *  - `route` / `exploit` (Veteran / Apex): routes around armed plates and
+ *    active hazards with a margin and leaves an active hazard at once.
+ * Returns true while escaping an active hazard (the brain keeps that heading).
+ */
+export function avoidTraps(
+  out: Move2,
+  sx: number,
+  sz: number,
+  selfRadius: number,
+  traps: readonly TrapState[],
+  mode: TrapAwareness,
+): boolean {
+  if (mode === 'ignore' || traps.length === 0) return false;
+  const skilled = mode === 'route' || mode === 'exploit';
+
+  // Escape: inside (or at the lip of) an active hazard -> head straight out.
+  const lip = skilled ? 0.6 : 0.2;
+  const inside = activeTrapAt(traps, sx, sz, lip);
+  if (inside >= 0) {
+    const t = traps[inside];
+    let ex = sx - t.pos.x;
+    let ez = sz - t.pos.z;
+    if (ex * ex + ez * ez < 1e-6) {
+      // Dead centre: leave along the current heading (or +X).
+      const moving = out.x !== 0 || out.z !== 0;
+      ex = moving ? out.x : 1;
+      ez = moving ? out.z : 0;
+    }
+    setDir(out, ex, ez);
+    return true;
+  }
+
+  if (out.x === 0 && out.z === 0) return false;
+  let ax = out.x;
+  let az = out.z;
+  for (let i = 0; i < traps.length; i++) {
+    const t = traps[i];
+    if (t.phase === 'cooldown') continue; // spent plate: safe to cross
+    const relX = t.pos.x - sx;
+    const relZ = t.pos.z - sz;
+    if (t.phase === 'armed' && !skilled) {
+      // Fighter: only sidestep a plate squarely ahead (cheap, local).
+      const ahead = relX * out.x + relZ * out.z;
+      if (ahead < 0 || ahead > 1.8 + t.radius) continue;
+      const lat = relX * out.z - relZ * out.x;
+      if (Math.abs(lat) > t.radius * 0.7) continue;
+    }
+    const margin = t.radius + (skilled ? selfRadius * 0.5 + 0.6 : 0.3);
+    let proj = relX * out.x + relZ * out.z;
+    if (proj < 0) continue;
+    if (proj > TRAP_PROBE_LEN) proj = TRAP_PROBE_LEN;
+    const px = sx + out.x * proj;
+    const pz = sz + out.z * proj;
+    let dx = px - t.pos.x;
+    let dz = pz - t.pos.z;
+    let d = Math.sqrt(dx * dx + dz * dz);
+    if (d >= margin) continue;
+    if (d < 1e-6) {
+      // Heading straight at the centre: pick the perpendicular side.
+      dx = -out.z;
+      dz = out.x;
+      d = 1;
+    }
+    const push = ((margin - d) / margin) * (skilled ? 2.2 : 1.2);
+    ax += (dx / d) * push;
+    az += (dz / d) * push;
+  }
+  setDir(out, ax, az);
+  return false;
 }

@@ -25,6 +25,8 @@ export interface GkSettings {
   checkUpdates: boolean;
   /** Mouse look sensitivity in radians per pixel (WP-M; CameraRig's own default). */
   sensitivity: number;
+  /** v1.2: faint ground sector showing the player's real basic-attack reach (default on). */
+  rangeIndicator: boolean;
 }
 
 /** Matches `CameraRig`'s default `sensitivity` (0.0024 rad/px). */
@@ -40,6 +42,7 @@ export const DEFAULT_SETTINGS: GkSettings = {
   muted: false,
   checkUpdates: true,
   sensitivity: DEFAULT_SENSITIVITY,
+  rangeIndicator: true,
 };
 
 function clampSensitivity(v: unknown): number {
@@ -86,6 +89,7 @@ export function loadSettings(): GkSettings {
       muted: parsed.muted === true,
       checkUpdates: parsed.checkUpdates !== false,
       sensitivity: clampSensitivity(parsed.sensitivity),
+      rangeIndicator: parsed.rangeIndicator !== false,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

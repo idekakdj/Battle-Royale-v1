@@ -17,6 +17,28 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.2.0] - 2026-09-29
+
+### Added
+- **Eagle flight:** hold Space in the air to glide, and keep holding to soar up to 6.5 m, out of reach of ground attacks. You can't attack while high up, and your flight recharges 8 seconds after you land.
+- **Landing slam:** come down from a high flight to hit nearby foes for up to 40 damage and knock them back, but you are briefly off balance when you land.
+- **Arena traps:** fire pits and spike plates are hidden around the arena: 2 on Cub, 3 on Fighter, 5 on Veteran and 7 on Apex. Step on one and it stays active for 8 seconds, burning or stabbing everyone inside, including whoever set it off. Blocking won't save you, and it re-arms after a cooldown.
+- **Trap visuals and sound:** glowing rune rings and smouldering spike plates mark each trap, a red danger ring warns for the whole time it is active and blinks faster just before it ends, with roaring flames, clanking spikes and small orange damage numbers. Trap deaths show a flame or spike icon in the kill feed.
+- **Attack range indicator:** an optional faint wedge on the ground shows your fighter's real reach (Settings → Combat).
+- **Pickup messages:** grabbing a power-up flashes a quick "+250 HP / SPEED / POWER" message.
+
+### Changed
+- **Power-ups are unmistakable:** a green cross for Heal, a lightning bolt for Speed and crossed swords for Power, each with its own coloured light column, glowing pad ring and a name label as you approach.
+- **Buffs and debuffs on the HUD** are clear icons with a countdown ring instead of text abbreviations.
+- **What you see is what you hit:** basic attacks now connect with any body that overlaps your swing, and the swing trail shows exactly the zone that was tested, at the moment damage lands. Reach numbers are now measured to the enemy's body (Lion 1.5 m, Mole 1.3 m) and feel the same against a normal-sized foe.
+- **Bots notice the traps:** Cubs blunder in, Fighters step out, and Veterans and Apex route around the plates. Apex will happily let you chase them into the fire. Veteran and Apex eagles now use the new flight to dodge.
+- **Hippo** has more health and speed and a faster River Rush.
+- Character cards label the attack range as "reach".
+
+### Fixed
+- **The eagle's glide** now spreads its wings fully with fanned feathers and tucked talons, and every flight stage is animated: climb flaps, a wide hover, a folded dive and a flared landing.
+- Lion and Mole attacks no longer miss inside the drawn swing: the old trail was the same size for every animal and did not match the real hit zone.
+
 ## [1.1.0] - 2026-09-29
 
 ### Added
@@ -67,6 +89,7 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/idekakdj/Battle-Royale-v1/releases/tag/v1.0.0

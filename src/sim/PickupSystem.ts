@@ -11,6 +11,7 @@ import type { Rng } from '../core/math';
 import { PICKUPS } from '../config/balance';
 import { PICKUP_PADS } from '../config/arena';
 import { addBuff } from './StatusEffects';
+import { withinGroundReach } from './hitbox';
 
 function chooseKind(rng: Rng): PickupState['kind'] {
   const r = rng();
@@ -59,7 +60,7 @@ export function updatePickups(sim: Sim, pickups: PickupState[], dt: number): voi
     }
     for (let j = 0; j < sim.fighters.length; j++) {
       const f = sim.fighters[j];
-      if (!f.state.alive) continue;
+      if (!f.state.alive || !withinGroundReach(f)) continue; // v1.2: soaring eagles fly over pads
       const dx = f.state.pos.x - p.pos.x;
       const dz = f.state.pos.z - p.pos.z;
       if (Math.sqrt(dx * dx + dz * dz) <= PICKUPS.radius + f.def.radius) {

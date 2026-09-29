@@ -4,7 +4,7 @@
  *
  *   1..0        select animal            Q/W/E  attack1/2/3
  *   R special   T ultimate   Y block(t)  U hit   I stagger   O knockdown
- *   P death(t)  J jump       G glide(t)  B burrow(t)  F feared  Z grab  X grabbed
+ *   P death(t)  J jump       G glide(t)  H soar  B burrow(t)  F feared  Z grab  X grabbed
  *   A auto-cycle everything  ·  Arrow keys move the selected animal (run gait)
  */
 
@@ -68,6 +68,25 @@ function actionDur(def: AnimalDef, a: FighterAction): number {
     default:
       return 0;
   }
+}
+
+/**
+ * Scripted v1.2 soar for QA (mirrors the sim's shape, not its numbers):
+ * glide entry → level glide → climb at ≈4 m/s to 6.5 m → hover with a banking
+ * sideslip → released: accelerating fall → touchdown.
+ */
+function soarProfile(t: number): { y: number; vy: number; vx: number; vz: number; done: boolean } {
+  const glideV = 6;
+  if (t < 0.9) return { y: 1.6, vy: 0, vx: 0, vz: glideV, done: false };
+  if (t < 2.125) return { y: 1.6 + 4 * (t - 0.9), vy: 4, vx: 0, vz: glideV, done: false };
+  if (t < 3.6) {
+    const bank = Math.sin((t - 2.125) * 2.4) * 4;
+    return { y: 6.5, vy: 0, vx: bank, vz: glideV, done: false };
+  }
+  const f = t - 3.6;
+  const y = 6.5 - 7 * f * f;
+  if (y <= 0) return { y: 0, vy: 0, vx: 0, vz: 0, done: true };
+  return { y, vy: -14 * f, vx: 0, vz: glideV * 0.6, done: false };
 }
 
 function setAction(actor: Actor, a: FighterAction): void {
@@ -152,6 +171,8 @@ registerDemo('animals', (root: HTMLElement) => {
   let camPitch = 0.34;
   let camDist = 21;
   let dragging = false;
+  let pinned: { y: number; vy: number; vz: number } | null = null;
+  let soarT = -1;
   const applyCamera = (): void => {
     camera.position.set(
       camTarget.x + Math.sin(camYaw) * Math.cos(camPitch) * camDist,
@@ -196,6 +217,20 @@ registerDemo('animals', (root: HTMLElement) => {
       camPitch = 0.34;
     },
     action: (a: FighterAction): void => trigger(a),
+    /**
+     * Pin the selected actor's altitude / vertical speed (e.g. glide poses:
+     * `fly(6.2, 0)` hover, `fly(3, 3.5)` climb, `fly(4, -8)` dive). Pass
+     * `null` to release. Also `fly(y, vy, vx)` to add horizontal speed.
+     */
+    fly: (y: number | null, vy = 0, vz = 0): void => {
+      pinned = y === null ? null : { y, vy, vz };
+    },
+    /** Scripted eagle soar: jump → glide → climb → hover/bank → dive → flare. */
+    soar: (): void => {
+      pinned = null;
+      soarT = 0;
+      setAction(actors[selected], 'glide');
+    },
     tris: (): Record<string, number> => {
       const out: Record<string, number> = {};
       for (const a of actors) out[a.def.id] = a.rig.triangleCount;
@@ -223,7 +258,7 @@ registerDemo('animals', (root: HTMLElement) => {
       `selected: ${a.def.displayName.toUpperCase()} — ${a.state.action}` +
       ` (t=${a.state.actionT.toFixed(2)}/${a.state.actionDur.toFixed(2)})\n` +
       `1..0 select · Q/W/E atk1/2/3 · R special · T ult · Y block · U hit · I stagger\n` +
-      `O knockdown · P death · J jump · G glide · B burrow · F feared · Z grab · X grabbed\n` +
+      `O knockdown · P death · J jump · G glide · H soar · B burrow · F feared · Z grab · X grabbed\n` +
       `arrows move · drag orbit · wheel zoom`;
   };
 
@@ -253,6 +288,7 @@ registerDemo('animals', (root: HTMLElement) => {
         case 'KeyP': trigger('dead'); break;
         case 'KeyJ': trigger('jump'); break;
         case 'KeyG': trigger('glide'); break;
+        case 'KeyH': hook.soar(); break;
         case 'KeyB': trigger('burrowed'); break;
         case 'KeyF': trigger('feared'); break;
         case 'KeyZ': trigger('grab'); break;
@@ -326,6 +362,24 @@ registerDemo('animals', (root: HTMLElement) => {
       s.vel.y = 0;
     }
 
+    // Debug altitude pin / scripted soar (selected actor only).
+    if (isSelected && s.action === 'glide' && soarT >= 0) {
+      soarT += dt;
+      const f = soarProfile(soarT);
+      s.pos.y = f.y;
+      s.vel.y = f.vy;
+      s.vel.z = f.vz;
+      s.vel.x = f.vx;
+      if (f.done) {
+        soarT = -1;
+        setAction(actor, 'idle');
+      }
+    } else if (isSelected && pinned !== null && s.action === 'glide') {
+      s.pos.y = pinned.y;
+      s.vel.y = pinned.vy;
+      s.vel.z = pinned.vz;
+    }
+
     // Timed actions revert to idle (block/glide/burrowed/dead are toggles).
     if (!auto && s.actionDur > 0 && s.actionT >= s.actionDur && !toggling.includes(s.action)) {
       setAction(actor, 'idle');
@@ -366,7 +420,7 @@ registerDemo('animals', (root: HTMLElement) => {
     marker.position.set(sel.pos.x, 0.03, sel.pos.z);
     marker.scale.setScalar(actors[selected].def.radius * 1.5);
 
-    if (focus) camTarget.set(sel.pos.x, 0.9, sel.pos.z);
+    if (focus) camTarget.set(sel.pos.x, 0.9 + sel.pos.y, sel.pos.z);
     applyCamera();
     overlayT += dt;
     if (overlayT >= 0.2) {

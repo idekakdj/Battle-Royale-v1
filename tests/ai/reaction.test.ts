@@ -55,6 +55,7 @@ function makeSnapshot(time: number): WorldSnapshot {
     fighters: [makeFighter(0, 'lion', 0, 0, 0), makeFighter(1, 'gorilla', 0, 3, Math.PI)],
     pickups: [],
     crates: [],
+    traps: [],
     bloodlustMult: 1,
     matchOver: false,
     winnerId: -1,

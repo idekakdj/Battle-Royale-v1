@@ -16,6 +16,19 @@
  *  - world-anchored overlay: enemy nameplates, lock reticle, off-screen threat
  *    arrows, damage-direction wedges (`CombatOverlay.ts`);
  *  - mouse sensitivity from `gk-settings.sensitivity` (live from the pause menu).
+ *
+ * WP-P (v1.2) additions:
+ *  - arena traps: a {@link TrapRenderer} mirrors `snapshot.traps` every render
+ *    frame (nothing is drawn while the list is empty) and reacts to
+ *    `trapTriggered` / `trapExpired`; `trapDamage` → small orange numbers;
+ *  - eagle `landingImpact` → crack/dust/shockwave, shake scaled by proximity;
+ *  - world-positioned audio: the listener follows the player (or spectated
+ *    fighter) and a fire-crackle bed swells near burning fire pits;
+ *  - kill feed `cause: 'trap'` for environment deaths (`killerId === -1`);
+ *  - `hud.pickupToast(kind)` for the player's own pickups.
+ *  - §5b hitbox fidelity: swing ribbons are drawn from `swingImpact` (the
+ *    exact sector the sim tested, at the impact instant) and the player gets
+ *    a faint attack-range wedge (Settings → Combat → Attack range indicator).
  */
 
 import * as THREE from 'three';
@@ -29,6 +42,9 @@ import type {
   FighterAction,
   FighterIntent,
   FighterState,
+  TrapKind,
+  TrapState,
+  Vec3,
   WorldSnapshot,
 } from '../core/types';
 import { ANIMALS } from '../config/animals';
@@ -38,6 +54,8 @@ import { SceneManager } from '../render/SceneManager';
 import { Stadium } from '../render/Stadium';
 import { CameraRig } from '../render/CameraRig';
 import { Effects } from '../render/Effects';
+import { TrapRenderer } from '../render/traps/TrapRenderer';
+import { RangeIndicator } from '../render/RangeIndicator';
 import { AnimalFactory } from '../render/animals/AnimalFactory';
 import type { BaseRig } from '../render/animals/Animator';
 import type { AudioEngine } from '../audio/AudioEngine';
@@ -68,9 +86,13 @@ const HEAD_HEIGHT: Record<AnimalId, number> = {
   mole: 1.2,
 };
 
-// Cosmetic swing-ribbon defaults (the real hit math lives in the sim).
-const SWING_RANGE = 2.4;
-const SWING_ARC_DEG = 110;
+// v1.2 §5b: swing ribbons are drawn from the sim's `swingImpact` sector (exact
+// range / arc / yaw at the impact instant). Until the first such event arrives
+// (older sim), a fallback ribbon at swing start uses the animal's config sector.
+/** Range indicator shows while a rival's body is within this × the player's reach. */
+const RANGE_INDICATOR_NEAR = 1.6;
+/** Above this altitude melee can't reach the ground; hide the indicator. */
+const RANGE_INDICATOR_MAX_Y = 2.6;
 
 const RESULTS_DELAY_MS = 2500;
 const EXCITEMENT_BASE = 0.2;
@@ -82,6 +104,13 @@ const LOCK_BIAS_TAU = 0.9; // s — mouse-look bias decays back to 0 (camera ret
 const LOCK_BREAK_BIAS = 1.75; // rad (~100°) — flicking this far off releases the lock
 /** Specials' assist reach is their own range, capped (leaps/dashes are long). */
 const SPECIAL_ASSIST_RANGE_CAP = 8;
+/** Mean fighter body radius (m): basic `def.range` is measured to the body since v1.2. */
+const ASSIST_BODY_PAD = 0.7;
+
+// v1.2 traps / landing slam (render side).
+const NO_TRAPS: readonly TrapState[] = [];
+/** Landing-slam shake reaches this far past the slam radius (m). */
+const LANDING_SHAKE_PAD = 6;
 
 const _size = new THREE.Vector2();
 const _box = new THREE.Box3();
@@ -113,6 +142,12 @@ export class MatchController implements Screen {
   private stadium!: Stadium;
   private cameraRig!: CameraRig;
   private effects!: Effects;
+  private traps!: TrapRenderer;
+  private rangeIndicator!: RangeIndicator;
+  /** Set once the sim emits `swingImpact` (then the start-of-swing fallback ribbon stops). */
+  private swingImpactSeen = false;
+  /** Kind of the last trap that hurt each fighter (kill-feed glyph for trap deaths). */
+  private lastTrapKind: (TrapKind | undefined)[] = [];
   private rigs: BaseRig[] = [];
   private input!: InputManager;
   private hud!: HUD;
@@ -184,6 +219,11 @@ export class MatchController implements Screen {
     this.stadium = new Stadium();
     this.sceneManager.scene.add(this.stadium.root);
     this.effects = new Effects(this.sceneManager.scene);
+    this.traps = new TrapRenderer(this.sceneManager.scene, this.effects);
+    this.rangeIndicator = new RangeIndicator(this.sceneManager.scene);
+    this.rangeIndicator.setEnabled(settings.rangeIndicator);
+    this.swingImpactSeen = false;
+    this.lastTrapKind = roster.map(() => undefined);
     this.cameraRig = new CameraRig(this.sceneManager.camera, { sensitivity: this.rigSensitivity });
     this.cameraRig.shakeSource = () => this.effects.getShakeOffset();
 
@@ -237,6 +277,7 @@ export class MatchController implements Screen {
         audio.setVolumes({ master: s.master, music: s.music, sfx: s.sfx });
         audio.setMuted(s.muted);
         this.sensitivity = s.sensitivity;
+        this.rangeIndicator.setEnabled(s.rangeIndicator);
       },
     });
 
@@ -259,6 +300,7 @@ export class MatchController implements Screen {
     this.input.detach();
     this.opts.audio.detachBus();
     this.opts.audio.stopCrowd();
+    this.opts.audio.stopFireBed();
     this.overlay.unmount();
     this.hud.unmount();
     this.pauseMenu.unmount();
@@ -268,6 +310,8 @@ export class MatchController implements Screen {
       rig.dispose();
     }
     this.rigs = [];
+    this.traps.dispose();
+    this.rangeIndicator.dispose();
     this.effects.dispose();
     this.stadium.dispose();
     this.sceneManager.dispose();
@@ -336,7 +380,11 @@ export class MatchController implements Screen {
     }
   }
 
-  /** Action transitions into attack1/2/3 → swing whoosh + arc ribbon. */
+  /**
+   * Action transitions into attack1/2/3 → swing whoosh. The arc ribbon comes
+   * from `swingImpact` (exact sector, impact instant); only while the sim has
+   * not emitted one yet does a config-accurate fallback ribbon play here.
+   */
   private checkSwings(): void {
     const fighters = this.snap.fighters;
     for (let i = 0; i < fighters.length; i++) {
@@ -347,10 +395,47 @@ export class MatchController implements Screen {
         (f.action === 'attack1' || f.action === 'attack2' || f.action === 'attack3')
       ) {
         this.opts.audio.swing(f.animal);
-        this.effects.onSwing(f.pos, f.yaw, SWING_RANGE, SWING_ARC_DEG, i === 0);
+        if (!this.swingImpactSeen) {
+          const def = ANIMALS[f.animal];
+          this.effects.onSwing(f.pos, f.yaw, def.range, def.arcDeg, i === 0);
+          if (i === 0) this.rangeIndicator.pulse(0.5);
+        }
       }
       this.prevActions[i] = f.action;
     }
+  }
+
+  /**
+   * Player's attack-range wedge: real `range`/`arcDeg` from config (read live —
+   * the numbers are tuned per build), interpolated transform; visible while a
+   * rival's body is within {@link RANGE_INDICATOR_NEAR}× reach or a swing runs.
+   */
+  private updateRangeIndicator(dtRender: number): void {
+    const fighters = this.snap.fighters;
+    const p = fighters[0];
+    const def = ANIMALS[p.animal];
+    let show = false;
+    if (!this.playerDead && p.alive && this.matchOverAt < 0 && this.snap.time >= 0 && p.pos.y < RANGE_INDICATOR_MAX_Y) {
+      if (p.action === 'attack1' || p.action === 'attack2' || p.action === 'attack3') show = true;
+      else {
+        const reach = def.range * RANGE_INDICATOR_NEAR;
+        for (let i = 1; i < fighters.length; i++) {
+          const f = fighters[i];
+          if (!f.alive || isHidden(f)) continue;
+          const d = Math.hypot(f.pos.x - p.pos.x, f.pos.z - p.pos.z) - ANIMALS[f.animal].radius;
+          if (d <= reach) {
+            show = true;
+            break;
+          }
+        }
+      }
+    }
+    const root = this.rigs[0].root;
+    this.rangeIndicator.update(
+      dtRender,
+      root.position.x, root.position.y, root.position.z, root.rotation.y,
+      def.range, def.arcDeg, show,
+    );
   }
 
   // ── Lock-on + aim assist (player only; sim contract untouched) ─────────────
@@ -417,9 +502,12 @@ export class MatchController implements Screen {
     if (!(intent.attack || intent.special || intent.ultimate || acting)) return;
     const def = ANIMALS[p.animal];
     const special = intent.special || p.action === 'special';
+    // `def.range` is measured to the target's body (v1.2); assist compares
+    // against target centres, so add the average body radius back.
+    const meleeReach = def.range + ASSIST_BODY_PAD;
     const range = special
-      ? Math.min(SPECIAL_ASSIST_RANGE_CAP, Math.max(def.range, def.special.range ?? def.range))
-      : def.range;
+      ? Math.min(SPECIAL_ASSIST_RANGE_CAP, Math.max(meleeReach, def.special.range ?? meleeReach))
+      : meleeReach;
     intent.aimYaw = assistAimYaw(intent.aimYaw, p.pos.x, p.pos.z, this.aimTargets, this.aimTargets.length, range);
   }
 
@@ -472,6 +560,16 @@ export class MatchController implements Screen {
     this.excitement +=
       (EXCITEMENT_BASE - this.excitement) * (1 - Math.exp(-dtRender / EXCITEMENT_TAU));
     this.sceneManager.excitement = this.excitement;
+
+    // Arena traps + world-positioned audio follow the camera's fighter.
+    const focusId = this.focusId();
+    const focus = this.rigs[focusId].root.position;
+    this.traps.setFocus(focus.x, focus.z);
+    this.stadium.setPickupFocus(focus.x, focus.z);
+    this.traps.update(this.snap.traps ?? NO_TRAPS, dtRender);
+    this.opts.audio.setListener(focus.x, focus.z, focusId);
+    this.opts.audio.setFireBed(this.traps.fireProximity(focus.x, focus.z));
+    this.updateRangeIndicator(dtRender);
 
     this.effects.update(dtRender);
     this.stadium.update(dtRender, this.excitement);
@@ -580,11 +678,16 @@ export class MatchController implements Screen {
       if (victim !== null) this.effects.onDeath(victim.pos, this.rigs[e.targetId].accent);
       const killerAnimal =
         e.killerId >= 0 ? this.rosterAnimals[e.killerId] : this.rosterAnimals[e.targetId];
+      // killerId −1 = the arena (trap): no credit, trap glyph in the feed.
       this.hud.killFeed({
         killerAnimal,
         victimAnimal: this.rosterAnimals[e.targetId],
         killerIsPlayer: e.killerId === 0,
         victimIsPlayer: e.targetId === 0,
+        ...(e.killerId === -1 ? { cause: 'trap' as const } : {}),
+        ...(e.killerId === -1 && this.lastTrapKind[e.targetId] !== undefined
+          ? { trapKind: this.lastTrapKind[e.targetId] }
+          : {}),
       });
       if (e.killerId >= 0) audio.roar(killerAnimal);
       audio.spikeExcitement(0.4);
@@ -609,6 +712,53 @@ export class MatchController implements Screen {
       this.releaseLock();
       this.spike(0.6);
     });
+
+    // ── v1.2 §5b: the swing ribbon IS the tested sector, at the impact instant.
+    bus.on('swingImpact', (e) => {
+      this.swingImpactSeen = true;
+      this.effects.onSwing(e.pos, e.yaw, e.range, e.arcDeg, e.fighterId === 0);
+      if (e.fighterId === 0) this.rangeIndicator.pulse(1);
+    });
+
+    // ── v1.2: arena traps, eagle landing slam, pickup toast ─────────────────
+    bus.on('trapTriggered', (e) => {
+      this.traps.onTriggered(e);
+      if (e.fighterId === 0 || this.nearness(e.pos, 8) > 0.5) this.spike(0.06);
+    });
+
+    bus.on('trapDamage', (e) => {
+      this.lastTrapKind[e.targetId] = e.kind; // kill-feed glyph if this tick is fatal
+      // Numbers ride on the victim's current position (the event pos is where
+      // the tick was aggregated).
+      const victim = this.fighter(e.targetId);
+      this.effects.onTrapDamage(victim !== null ? victim.pos : e.pos, e.damage, e.kind);
+    });
+
+    bus.on('trapExpired', (e) => {
+      this.traps.onExpired(e);
+    });
+
+    bus.on('landingImpact', (e) => {
+      const near = this.nearness(e.pos, e.radius + LANDING_SHAKE_PAD);
+      this.effects.onLandingImpact(e.pos, e.radius, e.damage, near);
+      if (e.fighterId === 0 || near > 0.4) this.spike(0.1);
+    });
+
+    bus.on('pickup', (e) => {
+      if (e.fighterId === 0) this.hud.pickupToast(e.kind);
+    });
+  }
+
+  /** Fighter the camera follows: the player, or the spectated bot once dead. */
+  private focusId(): number {
+    return this.playerDead ? this.spectateId : 0;
+  }
+
+  /** 0..1: how close `pos` is to the camera's fighter (1 = on top, 0 = ≥ range). */
+  private nearness(pos: Vec3, range: number): number {
+    const p = this.rigs[this.focusId()].root.position;
+    const d = Math.hypot(pos.x - p.x, pos.z - p.z);
+    return clamp(1 - d / range, 0, 1);
   }
 
   private fighter(id: number): FighterState | null {

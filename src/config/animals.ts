@@ -148,8 +148,49 @@ export interface AnimalPerks {
   perfectBlockCounter?: { window: number; damage: number };
   /** Python: bonus fraction on the next strike after a blocked hit (one stack). */
   tensionBonus?: number;
-  /** Eagle: air glide (hold Space in air). */
+  /**
+   * Eagle: air glide (hold Space in air). `duration` is the total flight time
+   * (glide + climb + hover); `cooldown` starts when the eagle lands again.
+   */
   glide?: { duration: number; speed: number; cooldown: number };
+  /**
+   * Eagle v1.2: keep holding Space while gliding to climb ("soar") out of
+   * ground reach; landing from height slams nearby foes (BLUEPRINT §7.8).
+   */
+  soar?: SoarSpec;
+}
+
+/**
+ * Eagle soar + landing slam (v1.2, BLUEPRINT §7.8). Altitudes are metres above
+ * the ground under the eagle.
+ */
+export interface SoarSpec {
+  /** Cruise altitude of the plain glide (m). */
+  glideHeight: number;
+  /** Seconds of gliding before holding Space starts the climb. */
+  climbDelay: number;
+  /** Climb rate toward {@link maxHeight} (m/s). */
+  climbRate: number;
+  /** Vertical acceleration used to ease climb/level-off (m/s²). */
+  climbAccel: number;
+  /** Ceiling of the climb (m). */
+  maxHeight: number;
+  /** Above this altitude the eagle cannot attack, block, use its special or ultimate. */
+  attackLockHeight: number;
+  /** Controlled-descent terminal fall speed after the flight ends (m/s). */
+  descentMaxSpeed: number;
+  /** A touchdown after peaking at or above this altitude triggers the landing slam (m). */
+  landMinHeight: number;
+  /** Landing slam damage = base + perMetre × peak altitude, capped at `cap`. */
+  landDamageBase: number;
+  landDamagePerMetre: number;
+  landDamageCap: number;
+  /** Landing slam radius (m, padded by target body radius like other AoEs). */
+  landRadius: number;
+  /** Landing slam radial knockback (m). */
+  landKnockback: number;
+  /** Seconds the eagle cannot act or move after a slam landing. */
+  landRecovery: number;
 }
 
 /** Character-select stat pips, each 1–5 (§8 cards). */
@@ -179,7 +220,12 @@ export interface AnimalDef {
   combo: readonly [number, number, number];
   /** Swings per second; swing duration = 1 / attackRate. */
   attackRate: number;
-  /** Basic-attack reach (m from center). */
+  /**
+   * Basic-attack reach (m): from the attacker's centre to the nearest point of
+   * the target's BODY (v1.2 sector–circle test — the swing hits any body that
+   * pokes into the sector, so effective centre-to-centre reach = range + the
+   * target's radius; v1.1 measured to the target's centre, ranges were +0.7).
+   */
   range: number;
   /** Basic-attack arc, full angle (deg). */
   arcDeg: number;
@@ -236,7 +282,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     radius: 0.7,
     combo: [70, 70, 95],
     attackRate: 1.4,
-    range: 2.2,
+    range: 1.5,
     arcDeg: 120,
     blockReduction: 0.6,
     guardMax: 100,
@@ -285,7 +331,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     radius: 0.8,
     combo: [80, 80, 110],
     attackRate: 1.25,
-    range: 2.3,
+    range: 1.6,
     arcDeg: 110,
     blockReduction: 0.7,
     guardMax: 130,
@@ -337,7 +383,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     radius: 0.9,
     combo: [80, 80, 125],
     attackRate: 1.2,
-    range: 2.4,
+    range: 1.9,
     arcDeg: 100,
     blockReduction: 0.75,
     guardMax: 140,
@@ -380,23 +426,23 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     title: 'The Riverlord',
     loreLine: 'The deadliest large land mammal in Africa, sprinting 30 km/h behind a barrel of hide.',
     accent: '#9C7B8D',
-    hp: 1100,
-    speed: 5.4,
+    hp: 1250,
+    speed: 5.7,
     radius: 1.2,
     combo: [75, 75, 140],
     attackRate: 1.05,
-    range: 2.6,
+    range: 2.15,
     arcDeg: 100,
     blockReduction: 0.85,
     guardMax: 180,
     approxDps: 102,
-    statPips: { hp: 4, atk: 4, def: 5, spd: 2, rng: 2 },
+    statPips: { hp: 5, atk: 4, def: 5, spd: 2, rng: 2 },
     difficultyTag: 'Easy',
     finisher: {},
     special: {
       name: 'River Rush',
       description: 'Charge at 11 m/s for up to 1.2 s; impact deals 95 damage and 2.5 m knockback.',
-      cooldown: 6.5,
+      cooldown: 6,
       windup: SPECIAL_WINDUP,
       damage: 95,
       moveSpeed: 11,
@@ -427,7 +473,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     radius: 1.15,
     combo: [80, 80, 115],
     attackRate: 1.05,
-    range: 2.6,
+    range: 2.15,
     arcDeg: 100,
     blockReduction: 0.7,
     guardMax: 130,
@@ -472,14 +518,14 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     id: 'eagle',
     displayName: 'Eagle',
     title: 'The Sky Terror',
-    loreLine: 'Stoops at over 240 km/h to strike with crushing talons.',
+    loreLine: 'Soars out of reach on the thermals, then stoops at over 240 km/h to strike with crushing talons.',
     accent: '#B45309',
     hp: 760,
     speed: 7.2,
     radius: 0.55,
     combo: [65, 65, 85],
     attackRate: 1.7,
-    range: 2.0,
+    range: 1.3,
     arcDeg: 100,
     blockReduction: 0.45,
     guardMax: 80,
@@ -516,7 +562,23 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     },
     perks: {
       blockMoveMult: 1.2,
-      glide: { duration: 2.5, speed: 8, cooldown: 6 },
+      glide: { duration: 4, speed: 8, cooldown: 8 },
+      soar: {
+        glideHeight: 1.6,
+        climbDelay: 0.15,
+        climbRate: 4,
+        climbAccel: 20,
+        maxHeight: 6.5,
+        attackLockHeight: 3.2,
+        descentMaxSpeed: 10,
+        landMinHeight: 3.0,
+        landDamageBase: 20,
+        landDamagePerMetre: 3,
+        landDamageCap: 40,
+        landRadius: 3.2,
+        landKnockback: 2,
+        landRecovery: 0.4,
+      },
     },
   },
 
@@ -531,7 +593,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     radius: 0.65,
     combo: [62, 62, 85],
     attackRate: 1.8,
-    range: 2.1,
+    range: 1.4,
     arcDeg: 110,
     blockReduction: 0.5,
     guardMax: 90,
@@ -578,7 +640,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     radius: 0.7,
     combo: [75, 75, 95],
     attackRate: 1.25,
-    range: 3.0,
+    range: 2.2,
     arcDeg: 50,
     blockReduction: 0.55,
     guardMax: 100,
@@ -624,7 +686,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     radius: 0.9,
     combo: [80, 80, 110],
     attackRate: 0.85,
-    range: 3.4,
+    range: 2.7,
     arcDeg: 100,
     blockReduction: 0.55,
     guardMax: 110,
@@ -671,7 +733,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     radius: 0.5,
     combo: [60, 60, 75],
     attackRate: 1.6,
-    range: 2.0,
+    range: 1.3,
     arcDeg: 120,
     blockReduction: 0.5,
     guardMax: 95,

@@ -152,7 +152,7 @@ export class CharacterSelect implements Screen {
     const finisherNote = def.finisher.name !== undefined ? ` · ${def.finisher.name}` : '';
 
     const moves = el('div', { class: 'gk-moves' }, [
-      this.moveRow('Combo', `${combo} dmg`, `${def.attackRate.toFixed(2)}/s · ${def.range} m / ${def.arcDeg}°${finisherNote}`),
+      this.moveRow('Combo', `${combo} dmg`, `${def.attackRate.toFixed(2)}/s · reach ${def.range} m · ${def.arcDeg}°${finisherNote}`),
       this.moveRow('Block', `${pct(def.blockReduction)} reduction`, `Guard ${def.guardMax}`),
       this.moveRow(`Special · ${def.special.name}`, def.special.description, `Cooldown ${def.special.cooldown}s`),
       this.moveRow(`Ultimate · ${def.ultimate.name}`, def.ultimate.description, 'Charge 100'),

@@ -179,6 +179,16 @@ export class Fighter {
 
   // Eagle glide (separate cooldown from the Shift special).
   glideCd = 0;
+  // Eagle soar (v1.2): seconds since the current flight began.
+  flightT = 0;
+  // Highest altitude (m above ground) reached since the flight began; drives the landing slam.
+  soarPeak = 0;
+  // Flight ended (released / out of time) and the eagle is descending; cooldown starts on touchdown.
+  soarDescending = false;
+  // Set by MovementSystem on a slam-eligible touchdown (peak altitude); World resolves the slam.
+  pendingLandingPeak = 0;
+  // Landing-slam recovery: cannot act or move while > 0.
+  landRecoverT = 0;
 
   // Croc Ambush Lunge follow-up window.
   ambushBonusTimer = 0;
@@ -279,6 +289,7 @@ export class Fighter {
   tickTimers(dt: number): void {
     if (this.state.specialCd > 0) this.state.specialCd = Math.max(0, this.state.specialCd - dt);
     if (this.glideCd > 0) this.glideCd = Math.max(0, this.glideCd - dt);
+    if (this.landRecoverT > 0) this.landRecoverT = Math.max(0, this.landRecoverT - dt);
     if (this.hitstunTimer > 0) this.hitstunTimer = Math.max(0, this.hitstunTimer - dt);
     if (this.rootTimer > 0) this.rootTimer = Math.max(0, this.rootTimer - dt);
     if (this.disarmTimer > 0) this.disarmTimer = Math.max(0, this.disarmTimer - dt);

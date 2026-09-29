@@ -26,13 +26,24 @@ import { MATCH, BLOODLUST, ULT } from '../config/balance';
 import { PILLARS, FALLEN_COLUMNS, CRATES } from '../config/arena';
 import type { Obstacle } from '../config/arena';
 import { Fighter, type Sim, type CrateRuntime } from './Fighter';
-import { groundHeightAt, locomote, resolveFighterCollisions } from './MovementSystem';
+import { groundHeightAt, locomote, resolveFighterCollisions, cancelFlight } from './MovementSystem';
+import { flightLocked, landingSlam } from './soar';
 import { tickBuffs } from './StatusEffects';
 import { updateGuard, setBlocking, tryStartSwing, updateSwing, grantTakenCharge } from './CombatSystem';
 import { startSpecial, startUlt, updateAbility } from './abilities1';
 import { createPickups, updatePickups } from './PickupSystem';
+import { placeTraps, updateTraps, snapshotTraps, type TrapRuntime } from './TrapSystem';
 
 const STATIC_OBSTACLES: readonly Obstacle[] = [...PILLARS, ...FALLEN_COLUMNS];
+
+/** Optional World construction flags (not part of the §5.1 contract). */
+export interface WorldOptions {
+  /**
+   * Place arena traps for `cfg.difficulty` (default true). Tests and the
+   * balance sweep's no-trap baseline pass false.
+   */
+  traps?: boolean;
+}
 
 export class World implements Sim {
   readonly fighters: Fighter[] = [];
@@ -46,16 +57,19 @@ export class World implements Sim {
 
   private countdownRemaining: number = MATCH.countdown;
   private pickups: PickupState[];
+  /** Arena traps (v1.2); empty when disabled or the difficulty places none. */
+  traps: TrapRuntime[];
   private deaths = 0;
   matchOver = false;
   private winnerId = -1;
 
-  constructor(cfg: MatchConfig, seed: number, bus: EventBus) {
+  constructor(cfg: MatchConfig, seed: number, bus: EventBus, opts: WorldOptions = {}) {
     this.bus = bus;
     this.rng = mulberry32(seed);
 
     const n = cfg.roster.length;
     const stepDeg = n > 0 ? 360 / n : MATCH.spawnStepDeg;
+    const spawns: { x: number; z: number }[] = [];
     for (let i = 0; i < n; i++) {
       const entry = cfg.roster[i];
       const def = ANIMALS[entry.animal];
@@ -64,6 +78,7 @@ export class World implements Sim {
       const z = MATCH.spawnRing * Math.sin(angle);
       const yaw = dirToYaw(-x, -z); // face arena centre
       const pos = { x, y: groundHeightAt(x, z), z };
+      spawns.push({ x, z });
       this.fighters.push(new Fighter(i, entry.animal, def, entry.isPlayer, pos, yaw));
     }
 
@@ -79,6 +94,8 @@ export class World implements Sim {
     }));
 
     this.pickups = createPickups(this.rng);
+    // Own RNG stream (seed ^ salt) — never perturbs this.rng (determinism).
+    this.traps = opts.traps === false ? [] : placeTraps(seed, cfg.difficulty, spawns, n);
   }
 
   // ── Public API (§5.1) ──────────────────────────────────────────────────────
@@ -142,6 +159,13 @@ export class World implements Sim {
         updateSwing(this, f, dt);
         continue;
       }
+      // v1.2 eagle: no actions during the landing-slam recovery or while
+      // flying above the attack-lock height (intents are simply ignored).
+      if (f.landRecoverT > 0 || flightLocked(f)) {
+        if (f.blocking) setBlocking(this, f, false);
+        updateSwing(this, f, dt);
+        continue;
+      }
 
       if (f.edgeUlt && f.state.ultCharge >= ULT.cost) {
         startUlt(this, f);
@@ -158,11 +182,31 @@ export class World implements Sim {
       updateSwing(this, f, dt);
     }
 
+    // 2b. Casting, grabbed or carried fighters drop out of an eagle flight
+    // (no landing slam; the flight cooldown starts).
+    for (let i = 0; i < fs.length; i++) {
+      const f = fs[i];
+      if (f.state.alive && (f.ability !== null || f.movementOwned)) cancelFlight(f);
+    }
+
     // 3. Movement + collision.
     for (let i = 0; i < fs.length; i++) {
       if (fs[i].state.alive) locomote(this, fs[i], dt);
     }
     resolveFighterCollisions(this);
+
+    // 3a. Eagle landing slams queued by this tick's touchdowns.
+    for (let i = 0; i < fs.length; i++) {
+      const f = fs[i];
+      if (f.pendingLandingPeak > 0) {
+        const peak = f.pendingLandingPeak;
+        f.pendingLandingPeak = 0;
+        if (f.state.alive) landingSlam(this, f, peak);
+      }
+    }
+
+    // 3b. Arena traps (after movement so plates see this tick's positions).
+    if (this.traps.length > 0) updateTraps(this, this.traps, dt, this.trapDamageFn);
 
     // 4. Pickups.
     updatePickups(this, this.pickups, dt);
@@ -194,6 +238,7 @@ export class World implements Sim {
       fighters,
       pickups,
       crates,
+      traps: snapshotTraps(this.traps),
       bloodlustMult: this.bloodlustMult,
       matchOver: this.matchOver,
       winnerId: this.winnerId,
@@ -226,6 +271,22 @@ export class World implements Sim {
     grantTakenCharge(target, amount);
     this.dealHp(source, target, amount);
   }
+
+  /**
+   * Arena-trap damage (v1.2): TRUE damage — no block, guard drain, armour,
+   * bloodlust, flinch or ult charge (for anyone), and no kill credit: the
+   * trap becomes the "last attacker" so a trap kill reports killerId −1.
+   */
+  applyTrapDamage(target: Fighter, amount: number): number {
+    if (amount <= 0 || !target.state.alive) return 0;
+    const applied = Math.min(amount, target.state.hp);
+    if (applied <= 0) return 0;
+    target.state.hp -= applied;
+    target.lastAttackerId = -1;
+    return applied;
+  }
+
+  private readonly trapDamageFn = (target: Fighter, amount: number): number => this.applyTrapDamage(target, amount);
 
   damageCrate(crate: CrateRuntime, amount: number): void {
     if (!crate.alive) return;
@@ -316,6 +377,10 @@ export class World implements Sim {
     }
     if (f.fearTimer > 0) {
       s.action = 'feared';
+      return;
+    }
+    if (f.landRecoverT > 0) {
+      s.action = 'idle'; // v1.2 landing-slam recovery (renderer keys off landingImpact)
       return;
     }
     if (f.swinging) return; // attack1/2/3 already set by updateSwing

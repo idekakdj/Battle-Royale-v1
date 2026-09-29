@@ -118,11 +118,37 @@ export interface PickupState {
   respawnT: number;
 }
 
+/** Arena hazard flavours (v1.2). */
+export type TrapKind = 'fire' | 'spikes';
+
+/**
+ * armed    – hidden-in-plain-sight pressure plate, waiting for a grounded fighter.
+ * active   – triggered: hazard is up for its active window and hurts everyone inside.
+ * cooldown – spent; re-arms when `timeLeft` reaches 0.
+ */
+export type TrapPhase = 'armed' | 'active' | 'cooldown';
+
+export interface TrapState {
+  id: number;
+  kind: TrapKind;
+  /** Centre of the trap on the sand (y = 0). */
+  pos: Vec3;
+  /** Trigger + damage radius (m). */
+  radius: number;
+  phase: TrapPhase;
+  /** Seconds until the next phase change (active: time left up; cooldown: time until re-arm; armed: 0). */
+  timeLeft: number;
+  /** Fighter id that stepped on the plate, or -1 while armed. */
+  triggeredBy: number;
+}
+
 export interface WorldSnapshot {
   time: number;
   fighters: FighterState[];
   pickups: PickupState[];
   crates: { id: number; pos: Vec3; hp: number; alive: boolean }[];
+  /** Arena traps; empty when the match difficulty places none. */
+  traps: TrapState[];
   bloodlustMult: number;
   matchOver: boolean;
   winnerId: number;
@@ -148,6 +174,22 @@ export type GameEvent =
   | { type: 'pickup'; fighterId: number; kind: PickupState['kind']; pos: Vec3 }
   | { type: 'comboFinisher'; fighterId: number }
   | { type: 'crateBreak'; crateId: number; pos: Vec3 }
+  /**
+   * A basic melee swing's hit test was just evaluated (the impact instant, ~55%
+   * of the swing) — emitted for EVERY basic swing, hit or miss. `pos`/`yaw`/
+   * `range`/`arcDeg` are exactly the sector the sim tested (attacker-centred,
+   * radius `range`, full angle `arcDeg`; 360 for radial slams), so the renderer
+   * draws the real hitbox rather than a guess.
+   */
+  | { type: 'swingImpact'; fighterId: number; pos: Vec3; yaw: number; range: number; arcDeg: number; step: 0 | 1 | 2 }
+  /** A fighter stepped on an armed plate; the hazard is now up. */
+  | { type: 'trapTriggered'; trapId: number; kind: TrapKind; pos: Vec3; fighterId: number }
+  /** Trap damage to one fighter (aggregated ~2x/s; unblockable, never negated by blocking). */
+  | { type: 'trapDamage'; trapId: number; kind: TrapKind; targetId: number; damage: number; pos: Vec3 }
+  /** The active window ended; the trap goes on cooldown. */
+  | { type: 'trapExpired'; trapId: number; kind: TrapKind; pos: Vec3 }
+  /** Eagle came down from height and hit the ground (AoE). radius/damage are what was applied. */
+  | { type: 'landingImpact'; fighterId: number; pos: Vec3; radius: number; damage: number; height: number }
   | { type: 'matchEnd'; winnerId: number };
 
 /** Narrows {@link GameEvent} to a single variant by its `type` tag. */

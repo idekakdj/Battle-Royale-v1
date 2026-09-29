@@ -8,6 +8,14 @@
  *   N=60 LEVELS=3,4 npm run balance
  *   SEATS=fixed N=30 npm run balance         (v1.0 method: animal i always spawns in seat i)
  *   DUEL=1 N=10 LEVELS=4 npm run balance     (1v1 round-robin win matrix)
+ *   TRAPS=0 N=60 npm run balance             (v1.2: no arena traps — the baseline)
+ *   COMPARE=1 N=60 npm run balance           (v1.2: same seeds without and with traps + placement deltas)
+ *
+ * v1.2 trap readout per level: trap triggers / damage per match, average trap
+ * damage per fighter per match, trap share of ALL damage (fighter damage incl.
+ * bleed/grab/thorns + trap damage), trap deaths per match and their share of
+ * deaths; per animal, `trapT/m` = trap damage taken per match. Eagle soar
+ * readout: landing slams per match and average slam damage (base, pre-block).
  *
  * SEATS defaults to `shuffle`: every match deals the 10 animals into the 10
  * spawn seats with a seeded permutation, so no animal is stuck with the same
@@ -32,6 +40,10 @@ const DUEL = process.env.DUEL === '1';
 const MAX_SIM_S = Number(process.env.MAX_S ?? 300);
 /** TRACE=1 prints the survivors of every timed-out match (stall hunting). */
 const TRACE = process.env.TRACE === '1';
+/** TRAPS=0 disables arena traps (the v1.2 no-trap baseline). */
+const TRAPS_ON = process.env.TRAPS !== '0';
+/** COMPARE=1 runs every level twice (no traps, then traps) on the same seeds. */
+const COMPARE = process.env.COMPARE === '1';
 
 const A = ANIMAL_IDS as readonly AnimalId[];
 const IDX = new Map<AnimalId, number>(A.map((a, i) => [a, i]));
@@ -53,10 +65,28 @@ interface PerAnimal {
   ready: number;
   /** Seconds spent holding a full, uncast charge. */
   held: number;
+  /** v1.2: trap damage TAKEN. */
+  trapTaken: number;
 }
 
 function blank(): PerAnimal {
-  return { wins: 0, place: 0, ults: 0, specials: 0, dmg: 0, dmgBasic: 0, dmgSpecial: 0, dmgUlt: 0, dmgTotal: 0, kills: 0, survive: 0, ready: 0, held: 0 };
+  return { wins: 0, place: 0, ults: 0, specials: 0, dmg: 0, dmgBasic: 0, dmgSpecial: 0, dmgUlt: 0, dmgTotal: 0, kills: 0, survive: 0, ready: 0, held: 0, trapTaken: 0 };
+}
+
+/** v1.2 per-level trap / soar totals (ended matches only). */
+interface LevelExtras {
+  trapTriggers: number;
+  trapDmg: number;
+  /** All HP removed: Σ fighter damageDealt (incl. bleed/grab/thorns) + trap damage. */
+  allDmg: number;
+  trapDeaths: number;
+  deaths: number;
+  slams: number;
+  slamDmg: number;
+}
+
+function blankExtras(): LevelExtras {
+  return { trapTriggers: 0, trapDmg: 0, allDmg: 0, trapDeaths: 0, deaths: 0, slams: 0, slamDmg: 0 };
 }
 
 interface Outcome {
@@ -79,10 +109,18 @@ function seatOrder(seed: number): AnimalId[] {
   return order;
 }
 
-function play(seed: number, lvl: Difficulty, animals: readonly AnimalId[], stats: PerAnimal[] | null): Outcome {
+function play(
+  seed: number,
+  lvl: Difficulty,
+  animals: readonly AnimalId[],
+  stats: PerAnimal[] | null,
+  traps: boolean = TRAPS_ON,
+  extras: LevelExtras | null = null,
+): Outcome {
   const cfg: MatchConfig = { roster: animals.map((a) => ({ animal: a, isPlayer: false })), difficulty: lvl };
   const bus = new EventBus();
-  const world = new World(cfg, seed, bus);
+  const world = new World(cfg, seed, bus, { traps });
+  const mx = blankExtras();
   const bots = new BotManager(bus, lvl, seed);
   let ended = false;
   let winner = -1;
@@ -106,7 +144,20 @@ function play(seed: number, lvl: Difficulty, animals: readonly AnimalId[], stats
   bus.on('special', (e) => {
     if (stats !== null) stats[IDX.get(animals[e.fighterId]) as number].specials++;
   });
+  bus.on('trapTriggered', () => {
+    mx.trapTriggers++;
+  });
+  bus.on('trapDamage', (e) => {
+    mx.trapDmg += e.damage;
+    if (stats !== null) stats[IDX.get(animals[e.targetId]) as number].trapTaken += e.damage;
+  });
+  bus.on('landingImpact', (e) => {
+    mx.slams++;
+    mx.slamDmg += e.damage;
+  });
   bus.on('death', (e) => {
+    mx.deaths++;
+    if (e.killerId === -1) mx.trapDeaths++;
     place[e.targetId] = e.placement;
     deathTime[e.targetId] = world.time;
     if (stats !== null && e.killerId >= 0 && e.killerId !== e.targetId) stats[IDX.get(animals[e.killerId]) as number].kills++;
@@ -143,6 +194,18 @@ function play(seed: number, lvl: Difficulty, animals: readonly AnimalId[], stats
       );
     console.log(`  TIMEOUT seed=${seed} L${lvl}: ${alive.join('  ')}`);
   }
+  if (ended && extras !== null) {
+    let dealt = 0;
+    for (let i = 0; i < animals.length; i++) dealt += world.fighters[i].state.damageDealt;
+    mx.allDmg = dealt + mx.trapDmg;
+    extras.trapTriggers += mx.trapTriggers;
+    extras.trapDmg += mx.trapDmg;
+    extras.allDmg += mx.allDmg;
+    extras.trapDeaths += mx.trapDeaths;
+    extras.deaths += mx.deaths;
+    extras.slams += mx.slams;
+    extras.slamDmg += mx.slamDmg;
+  }
   if (ended && stats !== null) {
     for (let i = 0; i < animals.length; i++) {
       const s = stats[IDX.get(animals[i]) as number];
@@ -159,8 +222,9 @@ function pct(n: number, d: number): string {
   return `${((100 * n) / Math.max(1, d)).toFixed(0).padStart(3)}%`;
 }
 
-function runFfa(lvl: Difficulty): void {
+function runFfa(lvl: Difficulty, traps: boolean = TRAPS_ON): PerAnimal[] {
   const stats = A.map(() => blank());
+  const ex = blankExtras();
   let timeSum = 0;
   let ended = 0;
   let timeouts = 0;
@@ -168,7 +232,7 @@ function runFfa(lvl: Difficulty): void {
   const t0 = Date.now();
   for (let s = 1; s <= N; s++) {
     const seed = 1000 * lvl + s;
-    const r = play(seed, lvl, seatOrder(seed), stats);
+    const r = play(seed, lvl, seatOrder(seed), stats, traps, ex);
     if (!r.ended) {
       timeouts++;
       continue;
@@ -180,9 +244,9 @@ function runFfa(lvl: Difficulty): void {
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   const e = Math.max(1, ended);
   console.log(
-    `\n=== L${lvl}  matches=${N} ended=${ended} timeouts=${timeouts} avgTime=${(timeSum / e).toFixed(0)}s  bloodlust=${pct(bloodlust, e)}  seats=${SHUFFLE ? 'shuffle' : 'fixed'}  (${secs}s wall)`,
+    `\n=== L${lvl}  matches=${N} ended=${ended} timeouts=${timeouts} avgTime=${(timeSum / e).toFixed(0)}s  bloodlust=${pct(bloodlust, e)}  seats=${SHUFFLE ? 'shuffle' : 'fixed'}  traps=${traps ? 'on' : 'off'}  (${secs}s wall)`,
   );
-  console.log('animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share)');
+  console.log('animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m');
   const rows = A.map((a, i) => ({ a, s: stats[i] }));
   rows.sort((x, y) => x.s.place - y.s.place);
   for (const { a, s } of rows) {
@@ -191,12 +255,36 @@ function runFfa(lvl: Difficulty): void {
       `${a.padEnd(10)} ${String(s.wins).padStart(4)} ${pct(s.wins, e)}  ${(s.place / e).toFixed(2)} | ` +
         `${(s.ready / e).toFixed(2).padStart(5)} ${(s.ults / e).toFixed(2).padStart(5)} ${(s.held / Math.max(1, s.ready)).toFixed(0).padStart(4)} ${(s.specials / e).toFixed(1).padStart(5)} ${(s.dmgTotal / e).toFixed(0).padStart(6)} ` +
         `${(s.kills / e).toFixed(2).padStart(6)} ${(s.survive / e).toFixed(0).padStart(5)} | ` +
-        `${pct(s.dmgBasic, d)} ${pct(s.dmgSpecial, d)} ${pct(s.dmgUlt, d)}`,
+        `${pct(s.dmgBasic, d)} ${pct(s.dmgSpecial, d)} ${pct(s.dmgUlt, d)}                    | ${(s.trapTaken / e).toFixed(0).padStart(6)}`,
     );
   }
   const totalUlts = stats.reduce((acc, s) => acc + s.ults, 0);
   const totalSpc = stats.reduce((acc, s) => acc + s.specials, 0);
   console.log(`avg ults/fighter/match ${(totalUlts / e / A.length).toFixed(2)}  specials/fighter/match ${(totalSpc / e / A.length).toFixed(1)}`);
+  console.log(
+    `traps: triggers/match ${(ex.trapTriggers / e).toFixed(1)}  trapDmg/match ${(ex.trapDmg / e).toFixed(0)}  ` +
+      `trapDmg/fighter/match ${(ex.trapDmg / e / A.length).toFixed(1)}  share of all damage ${((100 * ex.trapDmg) / Math.max(1, ex.allDmg)).toFixed(1)}%  ` +
+      `trap deaths/match ${(ex.trapDeaths / e).toFixed(2)} (${((100 * ex.trapDeaths) / Math.max(1, ex.deaths)).toFixed(1)}% of deaths)`,
+  );
+  console.log(
+    `eagle soar: landing slams/match ${(ex.slams / e).toFixed(2)}  avg slam base dmg ${(ex.slamDmg / Math.max(1, ex.slams)).toFixed(1)}`,
+  );
+  return stats;
+}
+
+/** v1.2: same seeds without and with traps; prints per-animal placement / win deltas. */
+function runCompare(lvl: Difficulty): void {
+  const off = runFfa(lvl, false);
+  const on = runFfa(lvl, true);
+  console.log(`\n--- L${lvl} traps on − off (same seeds): Δwin% / Δplace  (place: + = worse)`);
+  let worst = 0;
+  for (let i = 0; i < A.length; i++) {
+    const dWin = (100 * (on[i].wins - off[i].wins)) / N;
+    const dPlace = (on[i].place - off[i].place) / N;
+    if (Math.abs(dPlace) > Math.abs(worst)) worst = dPlace;
+    console.log(`${A[i].padEnd(10)} ${dWin >= 0 ? '+' : ''}${dWin.toFixed(1).padStart(5)}%  ${dPlace >= 0 ? '+' : ''}${dPlace.toFixed(2)}`);
+  }
+  console.log(`largest |Δplace| ${Math.abs(worst).toFixed(2)}`);
 }
 
 function runDuels(lvl: Difficulty): void {
@@ -238,5 +326,6 @@ function runDuels(lvl: Difficulty): void {
 
 for (const lvl of LEVELS) {
   if (DUEL) runDuels(lvl);
+  else if (COMPARE) runCompare(lvl);
   else runFfa(lvl);
 }
