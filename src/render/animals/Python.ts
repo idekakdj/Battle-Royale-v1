@@ -2,13 +2,35 @@
  * PYTHON — "The Constrictor" (§8 #8). A coiled body with an articulated
  * raised neck chain — long thin jab strikes (3.2 m reach), the 360° Coil
  * Sweep special, and the Constrictor's Embrace wrap ultimate.
+ *
+ * v1.1: one continuous smooth coil (tube along a rising spiral) instead of a
+ * stack of balls, python saddle blotches with pale rims and a cream belly,
+ * wedge head with heat pits, amber slit-pupil eyes, nostrils and a forked
+ * flickering tongue.
  */
 
-import type * as THREE from 'three';
+import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, ramp, smooth01, easeInOutCubic, IMPACT } from './Animator';
-import { makeMat, mesh, pivot, boxGeo, sphGeo, capGeo } from './parts';
+import {
+  makeMat,
+  mesh,
+  part,
+  pivot,
+  boxGeo,
+  sphGeo,
+  capGeo,
+  coneGeo,
+  eye,
+  noTone,
+  noOutline,
+  paint,
+  cellular,
+  col,
+  mixColor,
+  shade,
+} from './parts';
 
 // Rest curvature of the neck chain (leaning back, ready to strike).
 const NECK_REST = [-0.55, 0.2, 0.38, 0.42];
@@ -24,41 +46,61 @@ export class PythonRig extends BaseRig {
     super(ANIMALS.python);
     this.hipDrop = 0.1;
     this.strideRate = 0.4;
+    this.stepScale = 0;
+    this.toneBack = 0.14;
+    this.toneBelly = 0.1;
+    this.slams = [{ action: 'special', at: IMPACT, radius: 2.2, kind: 'ring', forward: 0 }];
     const p = this.pal;
-    const mBody = makeMat(p.accent);
-    const mDark = makeMat(p.dark);
-    const mPat = makeMat(p.darker);
-    const mBelly = makeMat(p.belly);
-    const mBlack = makeMat(p.eye);
+    const scale = mixColor(p.accent, 0x6b7a3a, 0.3);
+    const mBody = makeMat(scale);
+    const mDark = makeMat(shade(scale, -0.3));
+    const mHead = makeMat(shade(scale, -0.12));
     const mTongue = makeMat(0xc4364d);
+    const mPit = makeMat(0x1e2014);
+
+    const blotch = col(shade(scale, -0.62));
+    const rim = col(mixColor(scale, 0xe6d9a0, 0.45));
+    const belly = col(mixColor(p.belly, 0xefe2b4, 0.6));
+    const cell: [number, number] = [0, 0];
+    const skin = (pp: THREE.Vector3, n: THREE.Vector3, c: THREE.Color): void => {
+      if (n.y < -0.45) {
+        c.copy(belly);
+        if (Math.abs(Math.sin((pp.x + pp.z) * 30)) < 0.2) c.multiplyScalar(0.86);
+        return;
+      }
+      cellular(pp.x * 1.1, pp.y * 1.6, pp.z * 1.1, 0.16, cell);
+      if (cell[0] < 0.06) c.copy(blotch);
+      else if (cell[0] < 0.08) c.copy(rim);
+    };
 
     const bodyN = pivot(0, 0, 0);
     this.bodyRoot.add(bodyN);
 
-    // Coiled base: a two-and-a-half-turn spiral of spheres.
+    // Coiled base: one continuous tube spiralling up and inward.
     const coilN = pivot(0, 0.16, -0.05);
     bodyN.add(coilN);
-    const turns = 9;
-    for (let i = 0; i < turns; i++) {
-      const a = i * 0.72;
-      const r = 0.44 - i * 0.027;
-      const y = i * 0.063;
-      const seg = mesh(sphGeo(0.18 - i * 0.005, 5, 4), i % 3 === 2 ? mPat : mBody, Math.sin(a) * r, y, Math.cos(a) * r - 0.05);
-      seg.scale.set(1.3, 0.95, 1.3);
-      coilN.add(seg);
+    const pts: THREE.Vector3[] = [];
+    const a0 = 2.39;
+    const N = 22;
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      const a = a0 - t * 2.25 * Math.PI * 2;
+      const r = 0.5 - 0.22 * t;
+      pts.push(new THREE.Vector3(Math.sin(a) * r, -0.02 + 0.33 * t, Math.cos(a) * r - 0.05));
     }
-    // Belly plate hint under the coil.
-    const base = mesh(sphGeo(0.42, 7, 4), mBelly, 0, 0.02, -0.05);
-    base.scale.set(1.15, 0.35, 1.15);
-    coilN.add(base);
+    pts.push(new THREE.Vector3(0.05, 0.42, 0.02));
+    pts.push(new THREE.Vector3(0, 0.52, 0.05));
+    const curve = new THREE.CatmullRomCurve3(pts);
+    coilN.add(paint(mesh(new THREE.TubeGeometry(curve, 44, 0.165, 7, false), mBody), skin));
+    coilN.add(part(sphGeo(0.165, 7, 5), mBody, pts[0].x, pts[0].y, pts[0].z)); // cap the tube end
+    // Belly plate under the coil.
+    coilN.add(part(sphGeo(0.42, 8, 4), mDark, 0, -0.04, -0.05, 1.15, 0.28, 1.15));
 
     // Tail tip trailing out of the coil.
     const tailN = pivot(0.35, 0.08, -0.42);
     tailN.rotation.y = -2.4;
     bodyN.add(tailN);
-    const tailSeg = mesh(capGeo(0.06, 0.5, 4), mDark, 0, 0, 0.28);
-    tailSeg.rotation.x = Math.PI / 2;
-    tailN.add(tailSeg);
+    tailN.add(paint(part(coneGeo(0.13, 0.62, 7), mBody, 0, 0, 0.28, 1, 1, 0.85, Math.PI / 2), skin));
 
     // Articulated neck chain rising from the coil, ending in the head.
     let parent: THREE.Group;
@@ -76,27 +118,34 @@ export class PythonRig extends BaseRig {
       parent = g;
     }
     for (let i = 0; i < 4; i++) {
-      const segM = mesh(capGeo(0.125 - i * 0.012, segLen * 0.85, 4), i % 2 === 1 ? mPat : mBody, 0, segLen / 2, 0);
-      chain[i].add(segM);
+      const segM = part(capGeo(0.13 - i * 0.012, segLen * 0.85, 7), mBody, 0, segLen / 2, 0, 1, 1, 0.92);
+      chain[i].add(paint(segM, skin));
     }
 
-    // Head: flattened wedge + jaw + tongue.
+    // Head: flattened wedge + jaw + forked tongue.
     const headN = pivot(0, segLen + 0.05, 0);
     headN.rotation.x = 1.15; // level the head out of the leaning chain
     parent.add(headN);
-    const skull = mesh(sphGeo(0.16, 6, 4), mDark, 0, 0.02, 0.05);
-    skull.scale.set(1.15, 0.7, 1.5);
-    headN.add(skull);
-    headN.add(mesh(sphGeo(0.035, 4, 3), mBlack, -0.09, 0.07, 0.1));
-    headN.add(mesh(sphGeo(0.035, 4, 3), mBlack, 0.09, 0.07, 0.1));
+    headN.add(part(sphGeo(0.16, 9, 6), mHead, 0, 0.02, 0.05, 1.15, 0.66, 1.5)); // skull
+    headN.add(part(sphGeo(0.1, 8, 5), mHead, 0, 0.0, 0.22, 1.05, 0.6, 1.1)); // snout
+    headN.add(part(sphGeo(0.07, 6, 4), mDark, 0, 0.085, 0.02, 1.6, 0.35, 1.6)); // crown scales
+    for (const sx of [-1, 1]) {
+      const e = eye({ r: 0.034, iris: 0xd9a030, side: sx, lateral: 0.85, slit: true });
+      e.position.set(sx * 0.1, 0.05, 0.1);
+      headN.add(e);
+      headN.add(noOutline(noTone(part(sphGeo(0.015, 4, 2), mPit, sx * 0.045, 0.03, 0.31))));
+      for (let k = 0; k < 3; k++) {
+        headN.add(noOutline(noTone(part(sphGeo(0.013, 4, 2), mPit, sx * (0.09 + k * 0.012), -0.02, 0.24 - k * 0.05))));
+      }
+    }
     const jawN = pivot(0, -0.05, 0.0);
     headN.add(jawN);
-    const jawM = mesh(sphGeo(0.12, 6, 4), mBody, 0, -0.01, 0.08);
-    jawM.scale.set(1.1, 0.45, 1.5);
-    jawN.add(jawM);
+    jawN.add(part(sphGeo(0.12, 8, 4), mBody, 0, -0.01, 0.1, 1.1, 0.42, 1.55));
     const tongueN = pivot(0, -0.01, 0.26);
     headN.add(tongueN);
-    tongueN.add(mesh(boxGeo(0.02, 0.008, 0.22), mTongue, 0, 0, 0.11));
+    tongueN.add(noOutline(noTone(mesh(boxGeo(0.018, 0.008, 0.18), mTongue, 0, 0, 0.09))));
+    tongueN.add(noOutline(noTone(part(boxGeo(0.012, 0.007, 0.07), mTongue, -0.012, 0, 0.2, 1, 1, 1, 0, -0.35))));
+    tongueN.add(noOutline(noTone(part(boxGeo(0.012, 0.007, 0.07), mTongue, 0.012, 0, 0.2, 1, 1, 1, 0, 0.35))));
     tongueN.scale.setScalar(0.001); // hidden until flicked
 
     this.body = this.joint(bodyN);

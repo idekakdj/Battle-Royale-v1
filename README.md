@@ -36,9 +36,16 @@ multiplier ramps damage as the match drags on so nobody can hide forever.
 | Shift        | Special ability                           |
 | Q            | Ultimate (when charged)                   |
 | Space (hold) | Jump / glide (eagle soars)                |
+| E / MMB      | Lock on to a rival (toggle)               |
+| Tab          | Switch to the next nearest target         |
 | Esc          | Pause                                     |
+| F11          | Fullscreen (desktop app)                  |
 
-While spectating after death: LMB cycles the fighter you're watching.
+Gentle aim assist nudges swings and specials toward an enemy right in front of
+you. Graphics quality (Auto / Low / Medium / High) and mouse sensitivity are in
+**Settings** (lobby or pause menu).
+
+While spectating after death: LMB or Tab cycles the fighter you're watching.
 
 ## Difficulty
 
@@ -82,6 +89,37 @@ files — append `?demo=<name>` to the dev URL:
 - **Event-driven glue.** Sim gameplay events flow over one typed EventBus into
   the renderer's effects, the HUD, the bot perception layer, and the audio
   engine.
+
+## Desktop app
+
+Gladiator Kingdom also ships as an installable **Windows desktop app** (Electron), built from the
+same `dist/`.
+
+**Players:** download the latest `Gladiator-Kingdom-Setup-<version>.exe` (installer) or
+`Gladiator-Kingdom-<version>-win-x64.zip` (portable) from
+[Releases](https://github.com/idekakdj/Battle-Royale-v1/releases) — every past version stays
+available there. The installer is per-user (no admin prompt), lets you pick the folder, and adds
+Desktop + Start Menu shortcuts; uninstall via Windows Settings → Apps. The builds are unsigned, so
+SmartScreen may warn on first run: **More info → Run anyway**. In the app, F11 toggles fullscreen,
+Esc pauses as usual, and the lobby's **What's New** button shows the full version history (it also
+opens once automatically after an update). The app can notify you when a newer release exists —
+it never downloads anything by itself; turn it off in Settings → Desktop.
+
+**Developers:**
+
+```bash
+npm run desktop        # build, then run the app in Electron (loads dist/)
+npm run desktop:dev    # Vite dev server + Electron with hot reload (F12 = DevTools)
+npm run dist:dir       # unpacked app → release/win-unpacked/ (fast)
+npm run dist           # NSIS installer + portable zip → release/
+npm run desktop:smoke  # boot release/win-unpacked with --smoke-test (prints SMOKE OK)
+npm run release:notes  # changelog section for the current version (GitHub Release body)
+npm run icons          # regenerate build/icon.png + build/icon.ico procedurally
+```
+
+The version lives only in `package.json`; the history lives only in [`CHANGELOG.md`](CHANGELOG.md).
+Pushing a `vX.Y.Z` tag builds and publishes a release via `.github/workflows/release.yml` — see
+[`docs/RELEASING.md`](docs/RELEASING.md) for the full checklist, signing, and troubleshooting.
 
 ## Deployment
 

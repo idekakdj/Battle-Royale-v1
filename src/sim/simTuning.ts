@@ -32,6 +32,14 @@ export const STAMPEDE_SPEED = 12;
 // AIM_POINT_DIST)`. DFA uses its own dive reach below.
 export const DFA_DIVE_RANGE = 8;
 
+// v1.1 aimed-point snap (see abilities2.aimPointDist): an enemy counts as "on
+// the aim line" within this lateral distance (m, + its body radius) of the
+// aim ray, and up to this far (m) beyond the ability's max range.
+export const AIM_SNAP_LATERAL = 1.5;
+export const AIM_SNAP_SLACK = 1.0;
+// Closest a snapped aim point may sit to the caster (m).
+export const AIM_SNAP_MIN = 2.0;
+
 // DEVIATION: vertical launch speed for `knockup` effects (mole eruption).
 export const KNOCKUP_VELOCITY = 6;
 

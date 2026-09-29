@@ -13,7 +13,7 @@ import { chargeStep, clampToWall, groundHeightAt } from './MovementSystem';
 import { lerp } from '../core/math';
 import { MOVE } from '../config/balance';
 import { DASH_SPEED, LEAP_DURATION, LEAP_PEAK, LAND_RECOVER, CONTACT_PAD } from './simTuning';
-import { beginAbility, emitCastEvents, endAbility, hitArea, aimX, aimZ, updateUlt } from './abilities2';
+import { beginAbility, emitCastEvents, endAbility, hitArea, aimX, aimZ, aimPointDist, updateUlt } from './abilities2';
 
 export { startUlt } from './abilities2';
 
@@ -27,8 +27,9 @@ export function startSpecial(sim: Sim, f: Fighter): void {
     case 'gorilla': {
       rt.sx = f.state.pos.x;
       rt.sz = f.state.pos.z;
-      rt.px = aimX(f, spec.range ?? 7);
-      rt.pz = aimZ(f, spec.range ?? 7);
+      const d = aimPointDist(sim, f, spec.range ?? 7);
+      rt.px = aimX(f, d);
+      rt.pz = aimZ(f, d);
       emitCastEvents(sim, f, rt, rt.px, rt.pz, spec.radius ?? 2, 360, spec.windup);
       return;
     }
@@ -252,7 +253,17 @@ function ambushLunge(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): void
   const step = DASH_SPEED * dt;
   rt.accum += step;
   const cr = chargeStep(sim, f, step, false);
-  if (rt.accum >= (spec.range ?? 7) || cr.stopped) {
+  // v1.1: the lunge ends on contact with an enemy (it used to plough 7 m on
+  // through/around the target, leaving the boosted Snap facing empty sand).
+  let contact = false;
+  for (let i = 0; i < sim.fighters.length && !contact; i++) {
+    const t = sim.fighters[i];
+    if (t === f || !isTargetable(t)) continue;
+    const dx = t.state.pos.x - f.state.pos.x;
+    const dz = t.state.pos.z - f.state.pos.z;
+    if (Math.sqrt(dx * dx + dz * dz) <= f.def.radius + t.def.radius + CONTACT_PAD) contact = true;
+  }
+  if (rt.accum >= (spec.range ?? 7) || cr.stopped || contact) {
     f.ambushBonusTimer = spec.followupWindow ?? 1;
     rt.didHit = true;
     toRecovery(rt);

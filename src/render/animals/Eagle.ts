@@ -2,12 +2,32 @@
  * EAGLE — "The Sky Terror" (§8 #6). Wings + tail-fan silhouette, white head,
  * hooked beak. Talon rakes and Beak Pierce combo, Gale Burst wing-sweep
  * special, Death From Above soar-and-dive ultimate, and the glide (§7.8).
+ *
+ * v1.1: layered wings (covert shell + overlapping secondaries + fanned
+ * primaries), scalloped body plumage, white head with a fierce brow, yellow
+ * cere and hooked beak, golden eyes, a fanned white tail, feathered "trousers"
+ * over scaly yellow legs and black talons.
  */
 
+import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, IMPACT } from './Animator';
-import { makeMat, mesh, pivot, boxGeo, sphGeo, coneGeo } from './parts';
+import {
+  makeMat,
+  part,
+  pivot,
+  boxGeo,
+  sphGeo,
+  coneGeo,
+  openCyl,
+  eye,
+  noTone,
+  noOutline,
+  paint,
+  mixColor,
+  shade,
+} from './parts';
 
 // Rest fold angles (wings tucked against the body).
 const FOLD_IN = 1.05;
@@ -24,75 +44,93 @@ export class EagleRig extends BaseRig {
     super(ANIMALS.eagle);
     this.hipDrop = 0.35;
     this.strideRate = 0.5;
+    this.stepScale = 0.35;
+    this.toneBack = 0.16;
+    this.toneBelly = 0.18;
+    this.slams = [{ action: 'ultimate', at: IMPACT, radius: 1.6, kind: 'crack', forward: 0 }];
     const p = this.pal;
-    const mBody = makeMat(p.dark);
-    const mWing = makeMat(p.darker);
-    const mWingLt = makeMat(p.accent);
-    const mHead = makeMat(p.bone);
-    const mBeak = makeMat(0xd8a020);
-    const mLeg = makeMat(0xc9a23a);
-    const mBlack = makeMat(p.eye);
+    const brown = mixColor(p.darker, 0x3b2414, 0.5);
+    const mBody = makeMat(brown);
+    const mWing = makeMat(shade(brown, -0.15));
+    const mWingLt = makeMat(mixColor(p.dark, 0x5a3a20, 0.4));
+    const mPrimary = makeMat(shade(brown, -0.35));
+    const mWhite = makeMat(0xf4f0e6);
+    const mWhite2 = makeMat(0xe2dccd);
+    const mBeak = makeMat(0xe7b52a);
+    const mBeakTip = makeMat(0x9a7418);
+    const mLeg = makeMat(0xe0b53a);
+    const mTalon = makeMat(0x1c1a18);
+
+    const scallops = (pp: THREE.Vector3, _n: THREE.Vector3, c: THREE.Color): void => {
+      const v = Math.sin(pp.y * 34 + Math.sin(pp.x * 22) * 1.6) + Math.sin(pp.z * 30) * 0.35;
+      if (v > 0.8) c.multiplyScalar(0.78);
+      else if (v < -0.9) c.multiplyScalar(1.12);
+    };
 
     const bodyN = pivot(0, 0.72, 0);
     this.bodyRoot.add(bodyN);
-    const torso = mesh(sphGeo(0.3, 8, 6), mBody, 0, 0, 0);
-    torso.scale.set(0.85, 1.0, 1.35);
-    torso.rotation.x = 0.45;
-    bodyN.add(torso);
-    bodyN.add(mesh(sphGeo(0.2, 7, 5), mWingLt, 0, -0.1, 0.22)); // chest
+    bodyN.add(paint(part(sphGeo(0.3, 10, 7), mBody, 0, 0, 0, 0.85, 1.0, 1.35, 0.45), scallops));
+    bodyN.add(paint(part(sphGeo(0.2, 8, 6), mWingLt, 0, -0.1, 0.22, 1, 1, 0.9), scallops)); // chest
+    bodyN.add(part(sphGeo(0.17, 7, 5), mWhite, 0, 0.3, 0.14, 1.1, 0.9, 1)); // white neck ruff
 
-    // White head with a hooked golden beak.
+    // White head with a fierce brow and hooked golden beak.
     const headN = pivot(0, 0.4, 0.2);
     bodyN.add(headN);
-    headN.add(mesh(sphGeo(0.16, 7, 5), mHead, 0, 0.02, 0));
-    const beak = mesh(coneGeo(0.06, 0.2, 5), mBeak, 0, 0.02, 0.22);
-    beak.rotation.x = Math.PI / 2;
-    headN.add(beak);
-    const hook = mesh(coneGeo(0.035, 0.08, 5), mBeak, 0, -0.04, 0.3);
-    hook.rotation.x = Math.PI;
-    headN.add(hook);
-    headN.add(mesh(sphGeo(0.03, 5, 4), mBlack, -0.09, 0.07, 0.1));
-    headN.add(mesh(sphGeo(0.03, 5, 4), mBlack, 0.09, 0.07, 0.1));
+    headN.add(part(sphGeo(0.16, 9, 7), mWhite, 0, 0.02, 0, 1, 0.95, 1.08));
+    headN.add(part(sphGeo(0.08, 6, 4), mWhite2, 0, 0.1, 0.1, 1.9, 0.45, 0.9)); // brow ridge
+    headN.add(noTone(part(sphGeo(0.06, 6, 4), mBeak, 0, 0.03, 0.15, 1, 0.85, 1.1))); // cere
+    headN.add(noTone(part(coneGeo(0.058, 0.2, 6), mBeak, 0, 0.02, 0.24, 1, 1, 0.85, Math.PI / 2)));
+    headN.add(noTone(part(coneGeo(0.034, 0.09, 5), mBeakTip, 0, -0.035, 0.32, 1, 1, 1, Math.PI * 0.95)));
+    headN.add(noTone(part(coneGeo(0.04, 0.12, 5), mBeak, 0, -0.04, 0.2, 1, 1, 0.7, Math.PI / 2 + 0.15))); // lower mandible
+    for (const sx of [-1, 1]) {
+      const e = eye({ r: 0.032, iris: 0xf2c230, side: sx, lateral: 0.55 });
+      e.position.set(sx * 0.085, 0.06, 0.1);
+      headN.add(e);
+    }
 
-    // Tail fan.
+    // Fanned white tail.
     const tailN = pivot(0, -0.12, -0.32);
     tailN.rotation.x = -0.25;
     bodyN.add(tailN);
-    tailN.add(mesh(boxGeo(0.3, 0.035, 0.5), mWing, 0, 0, -0.25));
-    const fanL = mesh(boxGeo(0.16, 0.03, 0.42), mWing, -0.18, 0, -0.2);
-    fanL.rotation.y = 0.35;
-    tailN.add(fanL);
-    const fanR = mesh(boxGeo(0.16, 0.03, 0.42), mWing, 0.18, 0, -0.2);
-    fanR.rotation.y = -0.35;
-    tailN.add(fanR);
+    for (let i = 0; i < 7; i++) {
+      const a = (i - 3) * 0.16;
+      const fe = part(boxGeo(0.085, 0.022, 0.44), i % 2 === 0 ? mWhite : mWhite2, Math.sin(a) * 0.2, 0.003 * i, -0.22 - Math.cos(a) * 0.02, 1, 1, 1, 0, a);
+      tailN.add(fe);
+    }
 
-    // Two-piece wings; rest pose folded.
+    // Layered wings; rest pose folded.
     const mkWing = (side: number): [Joint, Joint] => {
       const inn = pivot(0.2 * side, 0.18, 0.02);
       inn.rotation.z = -FOLD_IN * side;
       bodyN.add(inn);
-      inn.add(mesh(boxGeo(0.55, 0.05, 0.34), mWing, 0.27 * side, 0, -0.04));
+      inn.add(paint(part(sphGeo(0.3, 8, 5), mWingLt, 0.27 * side, 0.015, 0.0, 0.95, 0.13, 0.6), scallops)); // coverts
+      for (let i = 0; i < 4; i++) {
+        const x = (0.08 + i * 0.14) * side;
+        inn.add(part(boxGeo(0.13, 0.024, 0.4), mWing, x, -0.008 - i * 0.003, -0.2, 1, 1, 1, 0, side * 0.08 * i));
+      }
       const out = pivot(0.55 * side, 0, 0);
       out.rotation.z = FOLD_OUT * side;
       inn.add(out);
-      out.add(mesh(boxGeo(0.5, 0.04, 0.28), mWingLt, 0.24 * side, 0, -0.06));
-      out.add(mesh(boxGeo(0.22, 0.035, 0.2), mWing, 0.55 * side, 0, -0.1)); // tip feathers
+      out.add(part(sphGeo(0.24, 7, 4), mWing, 0.2 * side, 0.01, -0.02, 1, 0.12, 0.55)); // outer coverts
+      for (let i = 0; i < 5; i++) {
+        const x = (0.1 + i * 0.1) * side;
+        const fan = side * (0.04 + i * 0.07);
+        out.add(part(boxGeo(0.09, 0.02, 0.4), mPrimary, x, -0.006 * i, -0.14 - i * 0.015, 1, 1, 1, 0, fan));
+      }
       return [this.joint(inn), this.joint(out)];
     };
 
-    // Legs with talons.
+    // Feathered trousers, scaly yellow legs, black talons.
     const mkLeg = (side: number): Joint => {
       const g = pivot(0.12 * side, -0.26, 0.06);
       bodyN.add(g);
-      g.add(mesh(boxGeo(0.06, 0.3, 0.06), mLeg, 0, -0.15, 0));
-      const foot = mesh(sphGeo(0.06, 5, 4), mLeg, 0, -0.32, 0.03);
-      foot.scale.set(1, 0.6, 1.4);
-      g.add(foot);
+      g.add(part(sphGeo(0.09, 7, 5), mBody, 0, -0.02, 0, 1, 1.3, 1));
+      g.add(part(openCyl(0.035, 0.03, 0.3, 6), mLeg, 0, -0.17, 0));
+      g.add(noTone(part(sphGeo(0.05, 6, 4), mLeg, 0, -0.32, 0.03, 1.1, 0.55, 1.2)));
       for (let i = -1; i <= 1; i++) {
-        const claw = mesh(coneGeo(0.02, 0.09, 4), mBlack, 0.04 * i, -0.34, 0.1);
-        claw.rotation.x = Math.PI / 2.4;
-        g.add(claw);
+        g.add(noOutline(noTone(part(coneGeo(0.018, 0.1, 4), mTalon, 0.042 * i, -0.34, 0.1, 1, 1, 1, Math.PI / 2.2, 0, -i * 0.2))));
       }
+      g.add(noOutline(noTone(part(coneGeo(0.018, 0.08, 4), mTalon, 0, -0.33, -0.05, 1, 1, 1, -Math.PI / 2.2))));
       return this.joint(g);
     };
 

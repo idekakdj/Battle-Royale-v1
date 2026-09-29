@@ -5,6 +5,17 @@
  * World (sim), BotManager (AI), AudioEngine (via attachBus) and the render/HUD
  * event pipes below. Constructed per match, torn down completely on unmount so
  * REMATCH is always a fresh deterministic world with a fresh seed.
+ *
+ * WP-M (v1.1) additions, all player-side and outside the sim contract:
+ *  - seeded bot seating (`seating.ts`) so neighbours differ per match;
+ *  - lock-on (E / MMB toggle, Tab cycle): the camera yaw eases toward the
+ *    target (mouse input adds a decaying bias instead of being fought; flicking
+ *    far away breaks the lock) and `aimYaw` faces it;
+ *  - soft aim assist (`aimAssist.ts`) while an attack/special/ult starts or
+ *    runs, applied to the player's intent right before `setIntent`;
+ *  - world-anchored overlay: enemy nameplates, lock reticle, off-screen threat
+ *    arrows, damage-direction wedges (`CombatOverlay.ts`);
+ *  - mouse sensitivity from `gk-settings.sensitivity` (live from the pause menu).
  */
 
 import * as THREE from 'three';
@@ -15,10 +26,12 @@ import { wrapAngle, clamp } from '../core/math';
 import type {
   AnimalId,
   Difficulty,
+  FighterAction,
+  FighterIntent,
   FighterState,
-  RosterEntry,
   WorldSnapshot,
 } from '../core/types';
+import { ANIMALS } from '../config/animals';
 import { World } from '../sim/World';
 import { BotManager } from '../ai/BotManager';
 import { SceneManager } from '../render/SceneManager';
@@ -29,21 +42,17 @@ import { AnimalFactory } from '../render/animals/AnimalFactory';
 import type { BaseRig } from '../render/animals/Animator';
 import type { AudioEngine } from '../audio/AudioEngine';
 import { InputManager } from '../input/InputManager';
-import { HUD, PauseMenu, type MatchResults } from '../ui';
-
-/** All ten animals, used to fill the bot roster around the player's pick. */
-const ALL_ANIMALS: readonly AnimalId[] = [
-  'lion',
-  'gorilla',
-  'crocodile',
-  'hippo',
-  'rhino',
-  'eagle',
-  'panther',
-  'python',
-  'giraffe',
-  'mole',
-];
+import { HUD, PauseMenu, loadSettings, type MatchResults } from '../ui';
+import { seatRoster } from './seating';
+import {
+  LOCK_ON,
+  assistAimYaw,
+  cycleLockTarget,
+  pickLockTarget,
+  yawTo,
+  type AimTarget,
+} from './aimAssist';
+import { CombatOverlay, isHidden } from './CombatOverlay';
 
 /** Camera pivot height above the fighter's feet, per animal (§11.5 ~1.2–2.6). */
 const HEAD_HEIGHT: Record<AnimalId, number> = {
@@ -66,6 +75,20 @@ const SWING_ARC_DEG = 110;
 const RESULTS_DELAY_MS = 2500;
 const EXCITEMENT_BASE = 0.2;
 const EXCITEMENT_TAU = 3.0; // seconds, decay back toward baseline
+
+// Lock-on camera feel (render side).
+const LOCK_YAW_RATE = 5; // 1/s — exponential ease of camera yaw toward the target
+const LOCK_BIAS_TAU = 0.9; // s — mouse-look bias decays back to 0 (camera returns)
+const LOCK_BREAK_BIAS = 1.75; // rad (~100°) — flicking this far off releases the lock
+/** Specials' assist reach is their own range, capped (leaps/dashes are long). */
+const SPECIAL_ASSIST_RANGE_CAP = 8;
+
+const _size = new THREE.Vector2();
+const _box = new THREE.Box3();
+
+function isAttackAction(a: FighterAction): boolean {
+  return a === 'attack1' || a === 'attack2' || a === 'attack3' || a === 'special' || a === 'ultimate';
+}
 
 export interface MatchControllerOptions {
   canvas: HTMLCanvasElement;
@@ -94,6 +117,7 @@ export class MatchController implements Screen {
   private input!: InputManager;
   private hud!: HUD;
   private pauseMenu!: PauseMenu;
+  private overlay!: CombatOverlay;
   private loop!: GameLoop;
   private root: HTMLElement | null = null;
 
@@ -120,6 +144,16 @@ export class MatchController implements Screen {
   private finished = false;
   private pickupActive: boolean[] = [];
 
+  // Mouse sensitivity: the rig is built with `rigSensitivity`; later changes
+  // (pause menu) scale the raw delta by sensitivity / rigSensitivity.
+  private rigSensitivity = 0.0024;
+  private sensitivity = 0.0024;
+
+  // Lock-on + aim assist (player only).
+  private lockId = -1;
+  private lockBias = 0;
+  private aimTargets: AimTarget[] = [];
+
   constructor(opts: MatchControllerOptions) {
     this.opts = opts;
   }
@@ -130,13 +164,9 @@ export class MatchController implements Screen {
     this.root = root;
     const { canvas, audio, animal, difficulty, seed } = this.opts;
 
-    // Roster: player's pick at index 0, the other nine animals as bots.
-    const roster: RosterEntry[] = [
-      { animal, isPlayer: true },
-      ...ALL_ANIMALS.filter((a) => a !== animal).map(
-        (a): RosterEntry => ({ animal: a, isPlayer: false }),
-      ),
-    ];
+    // Roster: player's pick at index 0, the other nine seated by a seeded
+    // shuffle (fresh neighbours every match / REMATCH).
+    const roster = seatRoster(animal, seed);
     this.rosterAnimals = roster.map((r) => r.animal);
 
     // One shared bus: sim emits; AI, audio, and the pipes below subscribe.
@@ -147,11 +177,14 @@ export class MatchController implements Screen {
     audio.attachBus(this.bus);
 
     // Render stack.
+    const settings = loadSettings();
+    this.rigSensitivity = settings.sensitivity;
+    this.sensitivity = settings.sensitivity;
     this.sceneManager = new SceneManager(canvas);
     this.stadium = new Stadium();
     this.sceneManager.scene.add(this.stadium.root);
     this.effects = new Effects(this.sceneManager.scene);
-    this.cameraRig = new CameraRig(this.sceneManager.camera);
+    this.cameraRig = new CameraRig(this.sceneManager.camera, { sensitivity: this.rigSensitivity });
     this.cameraRig.shakeSource = () => this.effects.getShakeOffset();
 
     // Fighter rigs; roster order = fighter id.
@@ -171,6 +204,9 @@ export class MatchController implements Screen {
     this.prevActions = this.snap.fighters.map((f) => f.action);
     this.pickupActive = this.snap.pickups.map(() => false);
     this.syncPickups();
+    this.aimTargets = roster.map((_, id): AimTarget => ({ id, x: 0, z: 0, valid: false }));
+    this.lockId = -1;
+    this.lockBias = 0;
 
     // Camera follows the player until spectate.
     this.spectateId = 0;
@@ -183,12 +219,24 @@ export class MatchController implements Screen {
     this.input.enable();
     this.hud = new HUD();
     this.hud.mount(root);
+    this.overlay = new CombatOverlay();
+    const layer = this.hud.layer;
+    if (layer !== null) {
+      this.overlay.mount(
+        layer,
+        this.rosterAnimals,
+        this.rigs.map((r) => r.root.position),
+        this.measurePlateHeights(),
+        0,
+      );
+    }
     this.pauseMenu = new PauseMenu({
       onResume: () => this.resume(),
       onQuitToLobby: () => this.opts.onQuitToLobby(),
       onSettingsChange: (s) => {
         audio.setVolumes({ master: s.master, music: s.music, sfx: s.sfx });
         audio.setMuted(s.muted);
+        this.sensitivity = s.sensitivity;
       },
     });
 
@@ -211,6 +259,7 @@ export class MatchController implements Screen {
     this.input.detach();
     this.opts.audio.detachBus();
     this.opts.audio.stopCrowd();
+    this.overlay.unmount();
     this.hud.unmount();
     this.pauseMenu.unmount();
     this.bus.clear();
@@ -229,11 +278,16 @@ export class MatchController implements Screen {
 
   private step(dt: number): void {
     // Player intent (camera-relative). While dead, the consumed attack edge
-    // cycles the spectate target instead of driving the corpse.
+    // (or Tab) cycles the spectate target instead of driving the corpse.
     const intent = this.input.getIntent(this.cameraRig.yaw);
+    const lockToggle = this.input.consumeLockToggle();
+    const lockCycle = this.input.consumeLockCycle();
     if (!this.playerDead) {
+      this.refreshAimTargets();
+      this.updateLock(lockToggle, lockCycle);
+      this.applyAim(intent);
       this.world.setIntent(0, intent);
-    } else if (intent.attack) {
+    } else if (intent.attack || lockCycle) {
       this.cycleSpectate();
     }
 
@@ -299,11 +353,104 @@ export class MatchController implements Screen {
     }
   }
 
+  // ── Lock-on + aim assist (player only; sim contract untouched) ─────────────
+
+  /** Mirror the last snapshot into the reused aim-target array. */
+  private refreshAimTargets(): void {
+    const fighters = this.snap.fighters;
+    for (let i = 0; i < this.aimTargets.length; i++) {
+      const t = this.aimTargets[i];
+      const f = fighters[i];
+      t.x = f.pos.x;
+      t.z = f.pos.z;
+      t.valid = i !== 0 && f.alive && !isHidden(f);
+    }
+  }
+
+  /** Validate / toggle / cycle the lock (targets must be fresh). */
+  private updateLock(toggle: boolean, cycle: boolean): void {
+    const p = this.snap.fighters[0];
+    const px = p.pos.x;
+    const pz = p.pos.z;
+    const n = this.aimTargets.length;
+    if (this.lockId >= 0) {
+      const t = this.aimTargets[this.lockId];
+      const dx = t.x - px;
+      const dz = t.z - pz;
+      if (!t.valid || dx * dx + dz * dz > LOCK_ON.maxDist * LOCK_ON.maxDist) this.releaseLock();
+    }
+    if (toggle) {
+      if (this.lockId >= 0) this.releaseLock();
+      else this.setLock(pickLockTarget(this.cameraRig.yaw, px, pz, this.aimTargets, n));
+    }
+    if (cycle) {
+      this.setLock(
+        this.lockId >= 0
+          ? cycleLockTarget(this.lockId, px, pz, this.aimTargets, n)
+          : pickLockTarget(this.cameraRig.yaw, px, pz, this.aimTargets, n),
+      );
+    }
+  }
+
+  private setLock(id: number): void {
+    if (id !== this.lockId) this.lockBias = 0;
+    this.lockId = id;
+  }
+
+  private releaseLock(): void {
+    this.lockId = -1;
+    this.lockBias = 0;
+  }
+
+  /** Locked: face the target. Otherwise soft-assist attack/special/ult aim. */
+  private applyAim(intent: FighterIntent): void {
+    const p = this.snap.fighters[0];
+    if (!p.alive) return;
+    if (this.lockId >= 0) {
+      const t = this.aimTargets[this.lockId];
+      const dx = t.x - p.pos.x;
+      const dz = t.z - p.pos.z;
+      if (dx * dx + dz * dz > 1e-4) intent.aimYaw = yawTo(p.pos.x, p.pos.z, t.x, t.z);
+      return;
+    }
+    const acting = isAttackAction(p.action);
+    if (!(intent.attack || intent.special || intent.ultimate || acting)) return;
+    const def = ANIMALS[p.animal];
+    const special = intent.special || p.action === 'special';
+    const range = special
+      ? Math.min(SPECIAL_ASSIST_RANGE_CAP, Math.max(def.range, def.special.range ?? def.range))
+      : def.range;
+    intent.aimYaw = assistAimYaw(intent.aimYaw, p.pos.x, p.pos.z, this.aimTargets, this.aimTargets.length, range);
+  }
+
+  /** Render-side lock camera: ease yaw toward the target plus a decaying mouse bias. */
+  private updateLockCamera(mouseDx: number, dtRender: number): void {
+    if (this.lockId < 0 || this.playerDead) return;
+    this.lockBias -= mouseDx * this.sensitivity;
+    if (Math.abs(this.lockBias) > LOCK_BREAK_BIAS) {
+      this.releaseLock(); // the player deliberately looked away
+      return;
+    }
+    this.lockBias *= Math.exp(-dtRender / LOCK_BIAS_TAU);
+    const pp = this.rigs[0].root.position;
+    const tp = this.rigs[this.lockId].root.position;
+    const dx = tp.x - pp.x;
+    const dz = tp.z - pp.z;
+    if (dx * dx + dz * dz < 0.64) return; // on top of each other: yaw is unstable
+    const desired = Math.atan2(dx, dz) + this.lockBias;
+    const yaw = this.cameraRig.yaw;
+    this.cameraRig.yaw = wrapAngle(yaw + wrapAngle(desired - yaw) * (1 - Math.exp(-dtRender * LOCK_YAW_RATE)));
+  }
+
   // ── Render frame ────────────────────────────────────────────────────────────
 
   private render(alpha: number, dtRender: number): void {
     const md = this.input.consumeMouseDelta();
-    if (md.dx !== 0 || md.dy !== 0) this.cameraRig.applyMouseDelta(md.dx, md.dy);
+    const mdx = md.dx;
+    if (md.dx !== 0 || md.dy !== 0) {
+      const k = this.sensitivity / this.rigSensitivity;
+      this.cameraRig.applyMouseDelta(md.dx * k, md.dy * k);
+    }
 
     // Fighter roots from interpolated sim transforms; rigs pose from state.
     const fighters = this.snap.fighters;
@@ -319,6 +466,7 @@ export class MatchController implements Screen {
       rig.root.rotation.y = y0 + wrapAngle(this.yawCurr[i] - y0) * alpha;
       rig.update(fighters[i], dtRender);
     }
+    this.updateLockCamera(mdx, dtRender);
 
     // Excitement: spikes decay back to the ambient baseline.
     this.excitement +=
@@ -330,6 +478,18 @@ export class MatchController implements Screen {
     this.cameraRig.update(dtRender);
     this.sceneManager.render();
 
+    this.sceneManager.renderer.getSize(_size);
+    this.overlay.update(
+      this.snap,
+      this.sceneManager.camera,
+      this.cameraRig.yaw,
+      _size.x,
+      _size.y,
+      this.playerDead ? this.spectateId : 0,
+      this.playerDead ? -1 : this.lockId,
+      !this.playerDead && this.matchOverAt < 0,
+      performance.now(),
+    );
     this.hud.update(this.snap, 0);
     this.syncPickups();
 
@@ -364,6 +524,21 @@ export class MatchController implements Screen {
     }
   }
 
+  /**
+   * Nameplate anchor height per fighter id: the rest-pose model top (measured
+   * once at mount), falling back to the camera head height.
+   */
+  private measurePlateHeights(): number[] {
+    return this.rigs.map((rig, id) => {
+      const fallback = HEAD_HEIGHT[this.rosterAnimals[id]];
+      rig.root.updateMatrixWorld(true);
+      _box.setFromObject(rig.root);
+      if (_box.isEmpty()) return fallback;
+      const h = _box.max.y - rig.root.position.y;
+      return Number.isFinite(h) && h > 0.5 ? Math.min(h, 5.5) : fallback;
+    });
+  }
+
   // ── Event pipes (sim → render/HUD/audio glue the bus map can't cover) ──────
 
   private wireEvents(): void {
@@ -373,6 +548,7 @@ export class MatchController implements Screen {
     bus.on('hit', (e) => {
       this.effects.onHit(e.pos, e.damage, { crit: e.heavy });
       if (e.attackerId === 0) this.hud.hitmarker();
+      if (e.targetId === 0 && e.attackerId !== 0) this.overlay.onPlayerHit(e.attackerId, performance.now());
       if (e.heavy) this.effects.addShake(0.05);
     });
 
@@ -382,6 +558,7 @@ export class MatchController implements Screen {
 
     bus.on('guardBreak', (e) => {
       this.effects.onGuardBreak(e.pos);
+      this.overlay.onGuardBreak(e.targetId, performance.now());
       this.spike(0.08);
     });
 
@@ -412,8 +589,10 @@ export class MatchController implements Screen {
       if (e.killerId >= 0) audio.roar(killerAnimal);
       audio.spikeExcitement(0.4);
       this.spike(0.35);
+      if (e.targetId === this.lockId) this.releaseLock();
       if (e.targetId === 0) {
         this.playerPlacement = e.placement;
+        this.releaseLock();
         this.enterSpectate();
       } else if (this.playerDead && e.targetId === this.spectateId) {
         this.cycleSpectate();
@@ -427,6 +606,7 @@ export class MatchController implements Screen {
 
     bus.on('matchEnd', () => {
       this.matchOverAt = performance.now();
+      this.releaseLock();
       this.spike(0.6);
     });
   }
@@ -456,7 +636,7 @@ export class MatchController implements Screen {
     this.cycleSpectate();
   }
 
-  /** Follow the next alive fighter (LMB cycles); world runs on to matchEnd. */
+  /** Follow the next alive fighter (LMB / Tab cycles); world runs on to matchEnd. */
   private cycleSpectate(): void {
     const fighters = this.snap.fighters;
     const n = fighters.length;

@@ -1,22 +1,95 @@
 {
   "name": "gladiator-kingdom",
+  "productName": "Gladiator Kingdom",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "description": "Gladiator Kingdom — an animal-gladiator battle royale in a Roman colosseum.",
+  "author": "idekakdj",
+  "homepage": "https://github.com/idekakdj/Battle-Royale-v1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/idekakdj/Battle-Royale-v1.git"
+  },
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "three": "^0.169.0"
+    "typecheck": "tsc --noEmit",
+    "balance": "vite-node scripts/balance-sweep.ts",
+    "desktop": "npm run build && electron .",
+    "desktop:dev": "node scripts/desktop-dev.mjs",
+    "desktop:smoke": "node scripts/smoke-desktop.mjs",
+    "dist": "npm run build && node scripts/dist.mjs",
+    "dist:dir": "npm run build && node scripts/dist.mjs --dir",
+    "release:notes": "vite-node scripts/release-notes.ts",
+    "icons": "node scripts/make-icons.mjs"
   },
   "devDependencies": {
     "@types/three": "^0.169.0",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "rcedit": "^5.0.2",
+    "three": "^0.169.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.10",
     "vitest": "^2.1.4"
+  },
+  "build": {
+    "appId": "com.gladiatorkingdom.game",
+    "productName": "Gladiator Kingdom",
+    "copyright": "Copyright © 2026 Gladiator Kingdom",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "!dist/**/*.map",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "electronLanguages": [
+      "en-US"
+    ],
+    "npmRebuild": false,
+    "afterPack": "scripts/after-pack.cjs",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Gladiator-Kingdom-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Gladiator Kingdom",
+      "uninstallDisplayName": "Gladiator Kingdom ${version}",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "artifactName": "Gladiator-Kingdom-Setup-${version}.${ext}"
+    }
   }
 }

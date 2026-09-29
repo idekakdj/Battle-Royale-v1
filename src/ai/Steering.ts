@@ -175,6 +175,70 @@ export function avoidObstacles(
   return jumpable;
 }
 
+/** Clearance (m) beyond a fallen column's tip for the detour waypoint. */
+const DETOUR_TIP_CLEAR = 1.2;
+
+/**
+ * v1.1 fix (low-wall standoff): the obstacle feelers only bend the path
+ * locally, so two fighters on opposite sides of a fallen column used to slide
+ * along it forever — neither could reach the other and the match timed out.
+ * When the straight line self→(tx,tz) crosses a column, steer `out` toward a
+ * waypoint just past the column tip that gives the shorter way round.
+ * Returns true when a detour was applied.
+ */
+export function lowWallDetour(out: Move2, sx: number, sz: number, tx: number, tz: number, selfRadius: number): boolean {
+  for (let i = 0; i < FALLEN_COLUMNS.length; i++) {
+    const w = FALLEN_COLUMNS[i];
+    const ex = w.bx - w.ax;
+    const ez = w.bz - w.az;
+    const len = Math.sqrt(ex * ex + ez * ez);
+    if (len < 1e-6) continue;
+    const ux = ex / len;
+    const uz = ez / len;
+    // Column extended at both tips by our body radius (+ a little).
+    const pad = selfRadius + 0.4;
+    const ax = w.ax - ux * pad;
+    const az = w.az - uz * pad;
+    const bx = w.bx + ux * pad;
+    const bz = w.bz + uz * pad;
+    if (!segmentsCross(sx, sz, tx, tz, ax, az, bx, bz)) continue;
+    // Pick the tip giving the shorter path self → tip → target.
+    const clear = selfRadius + DETOUR_TIP_CLEAR;
+    const pax = w.ax - ux * clear;
+    const paz = w.az - uz * clear;
+    const pbx = w.bx + ux * clear;
+    const pbz = w.bz + uz * clear;
+    const viaA = Math.hypot(pax - sx, paz - sz) + Math.hypot(tx - pax, tz - paz);
+    const viaB = Math.hypot(pbx - sx, pbz - sz) + Math.hypot(tx - pbx, tz - pbz);
+    if (viaA <= viaB) seek(out, sx, sz, pax, paz);
+    else seek(out, sx, sz, pbx, pbz);
+    return true;
+  }
+  return false;
+}
+
+/** Proper 2D segment intersection test (p1→p2 vs p3→p4). */
+function segmentsCross(
+  x1: number,
+  z1: number,
+  x2: number,
+  z2: number,
+  x3: number,
+  z3: number,
+  x4: number,
+  z4: number,
+): boolean {
+  const d1 = cross(x4 - x3, z4 - z3, x1 - x3, z1 - z3);
+  const d2 = cross(x4 - x3, z4 - z3, x2 - x3, z2 - z3);
+  const d3 = cross(x2 - x1, z2 - z1, x3 - x1, z3 - z1);
+  const d4 = cross(x2 - x1, z2 - z1, x4 - x1, z4 - z1);
+  return d1 * d2 < 0 && d3 * d4 < 0;
+}
+
+function cross(ax: number, az: number, bx: number, bz: number): number {
+  return ax * bz - az * bx;
+}
+
 /**
  * Contact distance for local avoidance. Deliberately tight: the sim's soft
  * push-out already prevents overlap, and pushing away from the fighter we are

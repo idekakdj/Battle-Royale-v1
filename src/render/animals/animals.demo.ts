@@ -94,17 +94,29 @@ registerDemo('animals', (root: HTMLElement) => {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor(0x2b2320);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.12;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0x2b2320, 40, 90);
-  scene.add(new THREE.HemisphereLight(0xffe8c0, 0x6b5a3e, 0.9));
-  const sun = new THREE.DirectionalLight(0xffe0b0, 1.9);
+  scene.add(new THREE.HemisphereLight(0xffe6bf, 0x6e5536, 1.2));
+  const sun = new THREE.DirectionalLight(0xffd9a8, 2.35);
   sun.position.set(10, 16, 8);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -18;
+  sun.shadow.camera.right = 18;
+  sun.shadow.camera.top = 12;
+  sun.shadow.camera.bottom = -12;
+  sun.shadow.normalBias = 0.05;
   scene.add(sun);
 
   const groundMat = new THREE.MeshStandardMaterial({ color: 0xc2a46b, roughness: 1, flatShading: true });
   const ground = new THREE.Mesh(new THREE.CircleGeometry(32, 40), groundMat);
   ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
   scene.add(ground);
   const ringMat = new THREE.MeshStandardMaterial({ color: 0xa8895a, roughness: 1 });
   const ring = new THREE.Mesh(new THREE.RingGeometry(29.2, 30, 40), ringMat);
@@ -131,6 +143,7 @@ registerDemo('animals', (root: HTMLElement) => {
   });
   let selected = 0;
   let auto = false;
+  let focus = false;
 
   // ── Camera with a minimal drag-orbit ───────────────────────────────────────
   const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200);
@@ -165,6 +178,31 @@ registerDemo('animals', (root: HTMLElement) => {
   window.addEventListener('pointerup', onPointerUp);
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('wheel', onWheel, { passive: true });
+
+  // Debug/verification hook: frame one animal up close, read tri counts.
+  const hook = {
+    focus: (i: number, dist = 4.2, yaw = 0.6, pitch = 0.2): void => {
+      selected = Math.max(0, Math.min(actors.length - 1, i));
+      focus = true;
+      camDist = dist;
+      camYaw = yaw;
+      camPitch = pitch;
+    },
+    overview: (): void => {
+      focus = false;
+      camTarget.set(0, 1.3, 0);
+      camDist = 21;
+      camYaw = 0;
+      camPitch = 0.34;
+    },
+    action: (a: FighterAction): void => trigger(a),
+    tris: (): Record<string, number> => {
+      const out: Record<string, number> = {};
+      for (const a of actors) out[a.def.id] = a.rig.triangleCount;
+      return out;
+    },
+  };
+  (window as unknown as { __gkAnimals?: typeof hook }).__gkAnimals = hook;
 
   // ── Overlay ────────────────────────────────────────────────────────────────
   const overlay = document.createElement('div');
@@ -328,6 +366,7 @@ registerDemo('animals', (root: HTMLElement) => {
     marker.position.set(sel.pos.x, 0.03, sel.pos.z);
     marker.scale.setScalar(actors[selected].def.radius * 1.5);
 
+    if (focus) camTarget.set(sel.pos.x, 0.9, sel.pos.z);
     applyCamera();
     overlayT += dt;
     if (overlayT >= 0.2) {

@@ -4,6 +4,7 @@ import { addBuff } from '../../src/sim/StatusEffects';
 import { makeFighter, makeSim } from './helpers';
 import type { GameEvent } from '../../src/core/types';
 import type { DamageOpts } from '../../src/sim/CombatSystem';
+import { ANIMALS } from '../../src/config/animals';
 
 const basic: DamageOpts = { blockable: true, heavy: false, reaction: 'none', isBasic: true };
 
@@ -15,7 +16,7 @@ describe('damage pipeline (§7.1)', () => {
     const r = dealDamage(sim, a, t, 70, basic);
     expect(r.blocked).toBe(false);
     expect(r.dealt).toBeCloseTo(70, 5);
-    expect(t.state.hp).toBeCloseTo(1100 - 70, 5);
+    expect(t.state.hp).toBeCloseTo(ANIMALS.gorilla.hp - 70, 5);
   });
 
   it('applies rage ×1.25', () => {
@@ -42,13 +43,14 @@ describe('damage pipeline (§7.1)', () => {
     expect(dealDamage(sim, a, t, 100, basic).dealt).toBeCloseTo(125, 5);
   });
 
-  it('panther backstab ×1.25 only from the rear arc', () => {
+  it(`panther backstab ×${ANIMALS.panther.perks.backstabMult} only from the rear arc`, () => {
     const behind = makeFighter(0, 'panther', 0, -2, 0); // behind a +Z-facing target
     const front = makeFighter(2, 'panther', 0, 2, 0);
     const t = makeFighter(1, 'gorilla', 0, 0, 0); // faces +Z
     const sim = makeSim([behind, t, front]);
-    expect(dealDamage(sim, behind, t, 60, basic).dealt).toBeCloseTo(75, 5);
-    t.state.hp = 1100;
+    expect(dealDamage(sim, behind, t, 60, basic).dealt).toBeCloseTo(60 * (ANIMALS.panther.perks.backstabMult ?? 0), 5);
+    expect(ANIMALS.panther.perks.backstabMult).toBeGreaterThan(1);
+    t.state.hp = ANIMALS.gorilla.hp;
     expect(dealDamage(sim, front, t, 60, basic).dealt).toBeCloseTo(60, 5);
   });
 });

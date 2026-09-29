@@ -25,7 +25,9 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # electron / electron-builder / rcedit (devDependencies for the desktop
+          # build) require Node >= 22.12; `npm ci` installs them here too.
+          node-version: 22
           cache: npm
 
       - name: Install dependencies

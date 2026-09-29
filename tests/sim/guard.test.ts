@@ -3,6 +3,7 @@ import { dealDamage, updateGuard, setBlocking } from '../../src/sim/CombatSystem
 import { makeFighter, makeSim, DT } from './helpers';
 import type { GameEvent } from '../../src/core/types';
 import type { DamageOpts } from '../../src/sim/CombatSystem';
+import { ANIMALS } from '../../src/config/animals';
 
 const basic: DamageOpts = { blockable: true, heavy: false, reaction: 'none', isBasic: true };
 
@@ -45,7 +46,7 @@ describe('block perks (§7.4)', () => {
     expect(t.pythonTension).toBe(true);
   });
 
-  it('panther perfect block auto-counters for 60', () => {
+  it(`panther perfect block auto-counters for ${ANIMALS.panther.perks.perfectBlockCounter?.damage}`, () => {
     const a = makeFighter(0, 'gorilla', 0, 2, 0);
     const t = makeFighter(1, 'panther', 0, 0, 0);
     const sim = makeSim([a, t]);
@@ -53,7 +54,7 @@ describe('block perks (§7.4)', () => {
     t.blocking = true;
     t.blockStartTime = 0.0; // 0.1 s ago ≤ 0.2 s window
     dealDamage(sim, a, t, 40, basic);
-    expect(a.state.hp).toBeCloseTo(1100 - 60, 5);
+    expect(a.state.hp).toBeCloseTo(ANIMALS.gorilla.hp - (ANIMALS.panther.perks.perfectBlockCounter?.damage ?? NaN), 5);
   });
 
   it('gorilla release-shove hits a frontal victim for 30', () => {

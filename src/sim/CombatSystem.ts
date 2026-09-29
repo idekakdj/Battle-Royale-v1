@@ -80,6 +80,12 @@ export function dealDamage(sim: Sim, attacker: Fighter, target: Fighter, base: n
   // Conditional multipliers (ambush / tension / rooted / stealth-speed etc.).
   if (o.dmgMult !== undefined) dmg *= o.dmgMult;
 
+  // Mole: +25% on everything it deals to rooted targets (§8 Sinkhole text).
+  // v1.1 fix: this used to be checked only inside the Sinkhole's own AoE —
+  // before the root it applies — so it never triggered.
+  const vsRooted = attacker.def.ultimate.bonusVsRooted;
+  if (vsRooted !== undefined && target.rootTimer > 0) dmg *= 1 + vsRooted;
+
   // Crowd's Bloodlust.
   dmg *= sim.bloodlustMult;
 
@@ -90,6 +96,10 @@ export function dealDamage(sim: Sim, attacker: Fighter, target: Fighter, base: n
 
   // Grabber damage reduction (croc Death Roll / python Embrace).
   if (target.incomingDamageReduction > 0) dmg *= 1 - target.incomingDamageReduction;
+
+  // Comeback lever: the victim banks ult charge from the incoming hit, measured
+  // before block so guarding never costs charge.
+  grantTakenCharge(target, dmg);
 
   // Block check (§7.1 / §7.4).
   const blocking =
@@ -132,6 +142,16 @@ export function dealDamage(sim: Sim, attacker: Fighter, target: Fighter, base: n
   RESULT.blocked = false;
   RESULT.hit = true;
   return RESULT;
+}
+
+/**
+ * v1.1 comeback lever (see {@link ULT.gainPerDamageTaken}): add ult charge to
+ * `target` for `amount` incoming damage. Used by the hit pipeline (pre-block)
+ * and by DoT/grab ticks (World.applyBleedDamage).
+ */
+export function grantTakenCharge(target: Fighter, amount: number): void {
+  if (amount <= 0 || !target.state.alive) return;
+  target.state.ultCharge = Math.min(ULT.max, target.state.ultCharge + amount * ULT.gainPerDamageTaken);
 }
 
 function cloneXZ(f: Fighter): { x: number; y: number; z: number } {
@@ -306,7 +326,10 @@ function resolveSwingHit(sim: Sim, f: Fighter): void {
     f.pythonTension = false;
   }
   if (f.def.id === 'panther' && f.stealthCritPending) {
-    flatBonus += f.def.ultimate.stealthBonusDamage ?? 0;
+    // v1.1 fix: the crit belongs to the stealth window. It used to stay
+    // pending after Night Prowl expired, so any later swing (even minutes
+    // later) crit for +200. The first swing from stealth still breaks it.
+    if (hasBuff(f, 'stealth')) flatBonus += f.def.ultimate.stealthBonusDamage ?? 0;
     f.stealthCritPending = false;
     removeBuff(f, 'stealth');
   }

@@ -2,16 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { tryStartSwing, updateSwing } from '../../src/sim/CombatSystem';
 import { makeFighter, makeSim, DT } from './helpers';
 import type { GameEvent } from '../../src/core/types';
+import { ULT } from '../../src/config/balance';
 
 describe('combo & ult charge (§7.2)', () => {
-  it('grants +8 charge on a landed unblocked hit1', () => {
+  it(`grants +${ULT.gainHit1} charge on a landed unblocked hit1`, () => {
     const a = makeFighter(0, 'lion', 0, 0, 0);
     const t = makeFighter(1, 'gorilla', 0, 1.5, 0);
     const sim = makeSim([a, t]);
     a.intent.aimYaw = 0;
     tryStartSwing(a);
     for (let i = 0; i < 200 && a.swinging; i++) updateSwing(sim, a, DT);
-    expect(a.state.ultCharge).toBe(8);
+    expect(a.state.ultCharge).toBe(ULT.gainHit1);
   });
 
   it('halves charge when the hit was blocked', () => {
@@ -22,7 +23,7 @@ describe('combo & ult charge (§7.2)', () => {
     a.intent.aimYaw = 0;
     tryStartSwing(a);
     for (let i = 0; i < 200 && a.swinging; i++) updateSwing(sim, a, DT);
-    expect(a.state.ultCharge).toBe(4);
+    expect(a.state.ultCharge).toBe(ULT.gainHit1 * ULT.blockedGainMult);
   });
 
   it('chains hit1 → hit2 → finisher and emits comboFinisher', () => {
@@ -40,8 +41,8 @@ describe('combo & ult charge (§7.2)', () => {
     }
     expect(maxIdx).toBe(2);
     expect(events.filter((e) => e.type === 'comboFinisher').length).toBeGreaterThanOrEqual(1);
-    // Charge = 8 + 8 + 14.
-    expect(a.state.ultCharge).toBe(30);
+    // Charge = hit1 + hit2 + finisher gains.
+    expect(a.state.ultCharge).toBe(ULT.gainHit1 + ULT.gainHit2 + ULT.gainFinisher);
   });
 
   it('resets the combo to hit1 after the reset window elapses', () => {

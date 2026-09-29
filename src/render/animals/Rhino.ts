@@ -2,52 +2,111 @@
  * RHINO — "The Battering Ram" (§8 #5). Horn + armor-plate silhouette. Horn
  * hooks and the launching Horn Fling finisher, Lockdown Charge special, and
  * the steerable Seismic Stampede ultimate.
+ *
+ * v1.1: shoulder and hip armour shells with knobbly hide and deep skin-fold
+ * creases, a long tapering head with a big front horn + second horn, tubular
+ * ears, small side eyes, nostrils, pillar legs on three-toed feet, tail tuft.
  */
 
+import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01 } from './Animator';
-import { makeMat, mesh, pivot, boxGeo, sphGeo, coneGeo, cylGeo, leg } from './parts';
+import {
+  makeMat,
+  part,
+  pivot,
+  sphGeo,
+  coneGeo,
+  cylGeo,
+  openCyl,
+  solidLeg,
+  eye,
+  noTone,
+  noOutline,
+  paint,
+  cellular,
+  mixColor,
+  shade,
+} from './parts';
 
 export class RhinoRig extends BaseRig {
   constructor() {
     super(ANIMALS.rhino);
     this.hipDrop = 0.45;
     this.strideRate = 0.27;
+    this.stepScale = 1.0;
+    this.outlineScale = 1.2;
+    this.slams = [
+      { action: 'special', at: 0.2, radius: 1.7, kind: 'ring', forward: 1.4 },
+      { action: 'ultimate', at: 0.12, radius: 2.8, kind: 'crack', forward: 0.8 },
+      { action: 'attack3', at: 0.55, radius: 1.3, kind: 'ring', forward: 1.4 },
+    ];
     const p = this.pal;
-    const mBody = makeMat(p.accent);
-    const mPlate = makeMat(p.light);
-    const mDark = makeMat(p.dark);
-    const mHorn = makeMat(p.bone);
-    const mBlack = makeMat(p.eye);
+    const hideCol = mixColor(p.accent, 0x847c72, 0.3);
+    const mBody = makeMat(hideCol);
+    const mPlate = makeMat(shade(hideCol, 0.12));
+    const mDark = makeMat(shade(hideCol, -0.3));
+    const mHorn = makeMat(0xcfc2a3);
+    const mHornTip = makeMat(0xe9dfc6);
+    const mNostril = makeMat(0x252322);
+    const mNail = makeMat(0x3d3834);
+
+    const cell: [number, number] = [0, 0];
+    const knobbly = (pp: THREE.Vector3, _n: THREE.Vector3, c: THREE.Color): void => {
+      cellular(pp.x, pp.y, pp.z, 0.11, cell);
+      if (cell[1] - cell[0] < 0.018) c.multiplyScalar(0.82);
+    };
+    const folds = (pp: THREE.Vector3, _n: THREE.Vector3, c: THREE.Color): void => {
+      const z = pp.z;
+      if (Math.abs(z - 0.16) < 0.05 || Math.abs(z + 0.36) < 0.05) c.multiplyScalar(0.7);
+      else knobbly(pp, _n, c);
+    };
 
     const bodyN = pivot(0, 1.02, 0);
     this.bodyRoot.add(bodyN);
-    bodyN.add(mesh(boxGeo(0.92, 0.8, 1.8), mBody, 0, 0, -0.05));
-    // Armor plates: shoulder and hip slabs proud of the hide.
-    const shoulder = mesh(boxGeo(1.0, 0.55, 0.55), mPlate, 0, 0.15, 0.45);
-    bodyN.add(shoulder);
-    bodyN.add(mesh(boxGeo(0.98, 0.5, 0.5), mPlate, 0, 0.12, -0.62));
-    bodyN.add(mesh(boxGeo(0.8, 0.2, 0.9), mDark, 0, -0.42, -0.05)); // underbelly
+    bodyN.add(paint(part(sphGeo(0.56, 11, 8), mBody, 0, 0, -0.05, 0.86, 0.76, 1.72), folds));
+    // Armor shells: shoulder + hip, proud of the hide.
+    bodyN.add(paint(part(sphGeo(0.52, 10, 7), mPlate, 0, 0.13, 0.45, 1.0, 0.74, 0.56), knobbly));
+    bodyN.add(paint(part(sphGeo(0.5, 10, 7), mPlate, 0, 0.11, -0.62, 0.98, 0.74, 0.56), knobbly));
+    bodyN.add(part(sphGeo(0.48, 8, 5), mDark, 0, -0.3, -0.05, 0.8, 0.45, 1.5)); // underbelly
+    bodyN.add(part(sphGeo(0.3, 7, 5), mBody, 0, 0.2, 0.72, 1.3, 0.9, 0.7)); // neck hump
 
     // Head angled down, bearing the horns.
     const headN = pivot(0, 0.12, 0.95);
     headN.rotation.x = 0.3;
     bodyN.add(headN);
-    headN.add(mesh(boxGeo(0.5, 0.5, 0.75), mBody, 0, -0.05, 0.25));
-    const horn1 = mesh(coneGeo(0.13, 0.7, 6), mHorn, 0, 0.18, 0.58);
-    horn1.rotation.x = -0.55;
-    headN.add(horn1);
-    const horn2 = mesh(coneGeo(0.08, 0.3, 6), mHorn, 0, 0.28, 0.3);
-    horn2.rotation.x = -0.4;
-    headN.add(horn2);
-    headN.add(mesh(coneGeo(0.07, 0.18, 5), mDark, -0.2, 0.32, -0.1)); // ears
-    headN.add(mesh(coneGeo(0.07, 0.18, 5), mDark, 0.2, 0.32, -0.1));
-    headN.add(mesh(sphGeo(0.035, 5, 4), mBlack, -0.2, 0.12, 0.42));
-    headN.add(mesh(sphGeo(0.035, 5, 4), mBlack, 0.2, 0.12, 0.42));
+    headN.add(paint(part(sphGeo(0.28, 10, 7), mBody, 0, -0.03, 0.2, 0.86, 0.85, 1.3), knobbly));
+    headN.add(part(sphGeo(0.2, 8, 6), mBody, 0, -0.1, 0.52, 1.0, 0.8, 1.0)); // snout
+    headN.add(part(sphGeo(0.14, 7, 5), mPlate, 0, 0.05, 0.5, 1.1, 0.6, 1.0)); // horn boss
+    const horn1 = part(coneGeo(0.13, 0.5, 7), mHorn, 0, 0.16, 0.56, 1, 1, 0.9, -0.45);
+    headN.add(noTone(horn1));
+    headN.add(noTone(part(coneGeo(0.075, 0.3, 6), mHornTip, 0, 0.42, 0.68, 1, 1, 1, -0.75)));
+    headN.add(noTone(part(coneGeo(0.08, 0.3, 6), mHorn, 0, 0.27, 0.3, 1, 1, 0.9, -0.4)));
+    for (const sx of [-1, 1]) {
+      // Tubular ears with dark openings.
+      const ear = part(openCyl(0.075, 0.04, 0.2, 7), mBody, sx * 0.2, 0.33, -0.1, 1, 1, 0.75, 0.2, 0, -sx * 0.35);
+      headN.add(ear);
+      headN.add(noOutline(part(sphGeo(0.05, 5, 3), mDark, sx * 0.23, 0.41, -0.08, 1, 0.4, 0.8, 0.2, 0, -sx * 0.35)));
+      const e = eye({ r: 0.032, iris: 0x3a2618, side: sx, lateral: 0.85 });
+      e.position.set(sx * 0.22, 0.08, 0.36);
+      headN.add(e);
+      headN.add(noOutline(noTone(part(sphGeo(0.03, 5, 3), mNostril, sx * 0.08, -0.12, 0.7, 1, 1.4, 0.6))));
+    }
+    headN.add(part(sphGeo(0.12, 7, 4), mDark, 0, -0.24, 0.5, 1.2, 0.5, 1.1)); // lip
 
-    const mkLeg = (x: number, z: number): Joint => {
-      const g = leg(mBody, 0.18, 0.15, 0.68, mDark);
+    const mkLeg = (x: number, z: number, back: boolean): Joint => {
+      const g = solidLeg({
+        mat: mBody,
+        footMat: mDark,
+        clawMat: mNail,
+        len: 0.67,
+        rTop: back ? 0.27 : 0.25,
+        rBot: 0.15,
+        foot: 'pad',
+        toes: 3,
+        bend: 0,
+      });
       g.position.set(x, -0.35, z);
       bodyN.add(g);
       return this.joint(g);
@@ -56,12 +115,12 @@ export class RhinoRig extends BaseRig {
     const tailN = pivot(0, 0.3, -0.95);
     tailN.rotation.x = 1.0;
     bodyN.add(tailN);
-    tailN.add(mesh(cylGeo(0.04, 0.03, 0.45, 5), mDark, 0, -0.22, 0));
-    tailN.add(mesh(sphGeo(0.05, 5, 4), mDark, 0, -0.46, 0));
+    tailN.add(part(cylGeo(0.04, 0.03, 0.45, 5), mDark, 0, -0.22, 0));
+    tailN.add(part(coneGeo(0.06, 0.14, 5), mNostril, 0, -0.5, 0, 1, 1, 1, Math.PI));
 
     this.body = this.joint(bodyN);
     this.head = this.joint(headN);
-    this.legs = [mkLeg(-0.4, 0.62), mkLeg(0.4, 0.62), mkLeg(-0.4, -0.62), mkLeg(0.4, -0.62)];
+    this.legs = [mkLeg(-0.4, 0.62, false), mkLeg(0.4, 0.62, false), mkLeg(-0.4, -0.62, true), mkLeg(0.4, -0.62, true)];
     this.tail = this.joint(tailN);
     this.finalize();
   }

@@ -2,12 +2,16 @@
  * GORILLA — "The Silverback" (§8 #2). Knuckle-walking hulk: huge shoulders and
  * arms, silver back panel. Hooks + Double-Fist Slam combo, Silverback Leap
  * slam special, chest-beating Primal Rampage ultimate.
+ *
+ * v1.1: barrel torso with leathery chest, a real silver saddle across the
+ * back, deltoid/bicep mass, knuckled fists, a sagittal-crest skull with a dark
+ * face mask, heavy brow, eyes, nostrils and ears.
  */
 
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, IMPACT } from './Animator';
-import { makeMat, mesh, pivot, boxGeo, sphGeo, cylGeo } from './parts';
+import { makeMat, part, pivot, sphGeo, openCyl, capGeo, eye, noTone, noOutline, paint, mixColor, shade, col } from './parts';
 
 export class GorillaRig extends BaseRig {
   private readonly armL: Joint;
@@ -21,53 +25,89 @@ export class GorillaRig extends BaseRig {
     super(ANIMALS.gorilla);
     this.hipDrop = 0.42;
     this.strideRate = 0.3;
+    this.stepScale = 0.85;
+    this.outlineScale = 1.1;
+    this.toneBack = 0.12;
+    this.toneBelly = 0.2;
+    this.slams = [
+      { action: 'attack3', at: IMPACT, radius: 1.8, kind: 'crack', forward: 1.0 },
+      { action: 'special', at: IMPACT, radius: 2.5, kind: 'crack', forward: 0.6 },
+    ];
     const p = this.pal;
-    const mBody = makeMat(p.dark);
-    const mDark = makeMat(p.darker);
-    const mSilver = makeMat(p.light);
-    const mSkin = makeMat(p.black);
+    const furCol = mixColor(p.darker, 0x1b1a1d, 0.45);
+    const mFur = makeMat(furCol);
+    const mFur2 = makeMat(shade(furCol, 0.12));
+    const silverCol = mixColor(p.light, 0xd2d4d8, 0.55);
+    const mSilver = makeMat(silverCol);
+    const mSkin = makeMat(0x35302f);
+    const mSkinDark = makeMat(0x221e1d);
+    const mNail = makeMat(0x4a4038);
 
     const bodyN = pivot(0, 0.78, 0);
     this.bodyRoot.add(bodyN);
-    const torso = mesh(boxGeo(0.85, 0.8, 0.6), mBody, 0, 0.18, 0);
-    torso.rotation.x = 0.22;
-    bodyN.add(torso);
-    const back = mesh(boxGeo(0.7, 0.5, 0.14), mSilver, 0, 0.32, -0.3);
-    back.rotation.x = 0.22;
-    bodyN.add(back); // the silver back
-    bodyN.add(mesh(boxGeo(0.62, 0.42, 0.5), mBody, 0, -0.3, 0.02)); // pelvis
-    bodyN.add(mesh(sphGeo(0.3, 7, 5), mBody, 0, 0.28, 0.3)); // chest
+    bodyN.add(part(sphGeo(0.46, 10, 7), mFur, 0, 0.2, 0.02, 1.02, 0.98, 0.78, 0.22)); // barrel
+    // Silver saddle across the back (streaky toward the edges).
+    const saddle = part(sphGeo(0.37, 9, 6), mSilver, 0, 0.26, -0.2, 1.06, 0.72, 0.62, 0.22);
+    const furC = col(furCol);
+    paint(saddle, (pp, _n, c) => {
+      const edge = Math.min(1, Math.abs(pp.x) / 0.36);
+      const streak = Math.sin(pp.y * 38 + pp.x * 9) > 0.55 ? 0.82 : 1;
+      c.lerp(furC, edge * edge * 0.55).multiplyScalar(streak);
+    });
+    bodyN.add(saddle);
+    bodyN.add(part(sphGeo(0.32, 9, 6), mFur, 0, -0.28, -0.02, 1.05, 0.85, 0.9)); // pelvis
+    bodyN.add(part(sphGeo(0.28, 8, 5), mFur2, 0, -0.06, 0.2, 1.05, 0.8, 0.6)); // belly
+    // Leathery chest plates.
+    bodyN.add(noTone(part(sphGeo(0.15, 7, 5), mSkin, -0.14, 0.32, 0.3, 1.15, 0.8, 0.5, 0.2)));
+    bodyN.add(noTone(part(sphGeo(0.15, 7, 5), mSkin, 0.14, 0.32, 0.3, 1.15, 0.8, 0.5, 0.2)));
 
-    // Head with brow ridge.
+    // Head: crest skull, dark face mask, heavy brow, muzzle.
     const headN = pivot(0, 0.62, 0.3);
     bodyN.add(headN);
-    headN.add(mesh(boxGeo(0.34, 0.32, 0.32), mBody, 0, 0.05, 0.05));
-    headN.add(mesh(boxGeo(0.3, 0.09, 0.1), mDark, 0, 0.13, 0.22)); // brow
-    headN.add(mesh(boxGeo(0.22, 0.16, 0.14), mSkin, 0, -0.06, 0.2)); // muzzle
-    headN.add(mesh(sphGeo(0.11, 6, 4), mBody, 0, 0.24, -0.02)); // crest
-    headN.add(mesh(sphGeo(0.03, 5, 4), mSkin, -0.09, 0.06, 0.22));
-    headN.add(mesh(sphGeo(0.03, 5, 4), mSkin, 0.09, 0.06, 0.22));
+    headN.add(part(sphGeo(0.19, 9, 6), mFur, 0, 0.05, 0.03, 1.05, 1, 1));
+    headN.add(part(sphGeo(0.13, 7, 5), mFur, 0, 0.2, -0.04, 0.62, 1, 1.25)); // sagittal crest
+    headN.add(noTone(part(sphGeo(0.15, 8, 5), mSkin, 0, 0.0, 0.14, 1.12, 1.05, 0.7))); // face mask
+    headN.add(part(capGeo(0.05, 0.22, 6), mSkinDark, 0, 0.1, 0.21, 1, 1, 1.1, 0, 0, Math.PI / 2)); // brow
+    headN.add(noTone(part(sphGeo(0.11, 8, 5), mSkin, 0, -0.08, 0.22, 1.28, 0.85, 0.82))); // muzzle
+    headN.add(noOutline(noTone(part(sphGeo(0.028, 5, 3), mSkinDark, -0.035, -0.035, 0.31, 1, 0.8, 0.7))));
+    headN.add(noOutline(noTone(part(sphGeo(0.028, 5, 3), mSkinDark, 0.035, -0.035, 0.31, 1, 0.8, 0.7))));
+    headN.add(noOutline(noTone(part(sphGeo(0.06, 6, 3), mSkinDark, 0, -0.13, 0.28, 1.4, 0.25, 0.5)))); // mouth
+    for (const sx of [-1, 1]) {
+      const e = eye({ r: 0.028, iris: 0x5a3818, side: sx, lateral: 0.15 });
+      e.position.set(sx * 0.068, 0.05, 0.235);
+      headN.add(e);
+      headN.add(noTone(part(sphGeo(0.045, 6, 4), mSkin, sx * 0.19, 0.03, 0.0, 0.5, 1, 0.9))); // ears
+    }
 
-    // Arms: shoulder + forearm joints, ending in fists (knuckle-walk rest).
+    // Arms: shoulder + forearm joints, ending in knuckled fists.
     const mkArm = (side: number): [Joint, Joint] => {
       const sh = pivot(0.52 * side, 0.42, 0.12);
       sh.rotation.x = 0.35;
       bodyN.add(sh);
-      sh.add(mesh(cylGeo(0.15, 0.12, 0.5, 6), mBody, 0, -0.25, 0));
+      sh.add(part(sphGeo(0.21, 8, 6), mFur, 0, -0.02, 0, 1, 1.05, 1)); // deltoid
+      sh.add(part(openCyl(0.16, 0.13, 0.5, 8), mFur, 0, -0.25, 0));
+      sh.add(part(sphGeo(0.14, 7, 5), mFur2, 0, -0.22, 0.05, 0.95, 1.5, 0.9)); // bicep
       const el = pivot(0, -0.5, 0);
       el.rotation.x = -0.15;
       sh.add(el);
-      el.add(mesh(cylGeo(0.12, 0.1, 0.55, 6), mDark, 0, -0.28, 0));
-      el.add(mesh(sphGeo(0.16, 6, 5), mSkin, 0, -0.6, 0.02)); // fist
+      el.add(part(sphGeo(0.13, 6, 4), mFur, 0, 0, 0));
+      el.add(part(openCyl(0.14, 0.11, 0.55, 8), mFur, 0, -0.28, 0));
+      el.add(part(sphGeo(0.13, 7, 5), mFur2, 0, -0.18, 0.02, 1, 1.7, 1)); // forearm mass
+      el.add(noTone(part(sphGeo(0.16, 8, 5), mSkin, 0, -0.6, 0.02, 1, 0.9, 1.05))); // fist
+      for (let k = 0; k < 4; k++) {
+        const kx = (k - 1.5) * 0.065;
+        el.add(noOutline(noTone(part(sphGeo(0.042, 5, 3), mNail, kx, -0.72, 0.1, 1, 0.8, 1))));
+      }
       return [this.joint(sh), this.joint(el)];
     };
 
-    // Short legs.
+    // Short, thick legs with padded feet.
     const mkLeg = (side: number): Joint => {
       const hip = pivot(0.26 * side, -0.42, 0);
       bodyN.add(hip);
-      hip.add(mesh(cylGeo(0.14, 0.11, 0.38, 6), mDark, 0, -0.19, 0));
-      hip.add(mesh(sphGeo(0.13, 6, 4), mSkin, 0, -0.38, 0.06));
+      hip.add(part(sphGeo(0.17, 7, 5), mFur, 0, -0.04, 0, 1, 1.2, 1));
+      hip.add(part(openCyl(0.14, 0.11, 0.38, 7), mFur, 0, -0.19, 0));
+      hip.add(noTone(part(sphGeo(0.13, 7, 4), mSkin, 0, -0.37, 0.07, 1, 0.55, 1.45)));
       return this.joint(hip);
     };
 

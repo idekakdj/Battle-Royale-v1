@@ -1643,3 +1643,726 @@
     padding-bottom: 0.5rem;
   }
 }
+
+/* ══ WP-L: version footer, update banner, Version History panel ═════════════ */
+.gk-lobby__bottomgroup {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.gk-lobby__whatsnew,
+.gk-lobby__quit {
+  background: transparent;
+  border: 1px solid var(--gk-panel-border);
+  border-radius: 4px;
+  padding: 0.2rem 0.65rem;
+  color: var(--gk-gold);
+  font: inherit;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.gk-lobby__whatsnew:hover,
+.gk-lobby__quit:hover {
+  transform: translateY(-1px);
+  color: var(--gk-gold-bright);
+  border-color: var(--gk-gold);
+}
+
+.gk-lobby__whatsnew:focus-visible,
+.gk-lobby__quit:focus-visible,
+.gk-lobby__update-btn:focus-visible,
+.gk-lobby__update-close:focus-visible,
+.gk-vp__close:focus-visible,
+.gk-vp__link:focus-visible,
+.gk-vp__list:focus-visible {
+  outline: 2px solid var(--gk-gold-bright);
+  outline-offset: 2px;
+}
+
+.gk-lobby__update {
+  position: absolute;
+  top: 1.1rem;
+  left: 50%;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.55rem 0.7rem 0.55rem 1.1rem;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, rgba(58, 50, 37, 0.96), rgba(29, 25, 19, 0.96));
+  border: 1px solid var(--gk-gold);
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55), 0 0 18px rgba(217, 164, 65, 0.18);
+  color: var(--gk-text);
+  letter-spacing: 0.06em;
+  animation: gk-vp-drop 0.35s ease-out both;
+}
+
+.gk-lobby__update-text {
+  font-size: 0.9rem;
+}
+
+.gk-lobby__update-btn {
+  background: linear-gradient(180deg, var(--gk-gold-bright), var(--gk-gold-deep));
+  border: none;
+  border-radius: 4px;
+  padding: 0.3rem 0.9rem;
+  color: var(--gk-stone-900);
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.gk-lobby__update-btn:hover {
+  transform: translateY(-1px) scale(1.03);
+}
+
+.gk-lobby__update-close {
+  background: transparent;
+  border: none;
+  color: var(--gk-text-dim);
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0 0.3rem;
+  cursor: pointer;
+}
+
+.gk-lobby__update-close:hover {
+  color: var(--gk-text);
+}
+
+/* Settings: desktop toggle row */
+.gk-settings__toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.35rem 0;
+  cursor: pointer;
+}
+
+.gk-settings__check {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--gk-gold);
+  cursor: pointer;
+}
+
+.gk-settings__hint {
+  margin-top: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--gk-text-dim);
+}
+
+/* Version History / What's New overlay */
+.gk-vp {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.gk-vp__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 6, 4, 0.72);
+  animation: gk-vp-fade 0.2s ease-out both;
+}
+
+.gk-vp__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 100%);
+  max-height: min(78vh, 760px);
+  background:
+    radial-gradient(ellipse 90% 40% at 50% 0%, rgba(255, 154, 60, 0.08), transparent 70%),
+    linear-gradient(180deg, var(--gk-stone-700), var(--gk-stone-800));
+  border: 1px solid var(--gk-gold-deep);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(240, 195, 104, 0.18);
+  animation: gk-vp-rise 0.25s ease-out both;
+}
+
+.gk-vp__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.2rem 1.4rem 0.9rem;
+  border-bottom: 1px solid var(--gk-panel-border);
+}
+
+.gk-vp__title {
+  font-size: 1.45rem;
+  color: var(--gk-gold-bright);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.gk-vp__subtitle {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--gk-text-dim);
+  letter-spacing: 0.08em;
+}
+
+.gk-vp__close {
+  flex: none;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid var(--gk-panel-border);
+  border-radius: 50%;
+  background: rgba(20, 17, 13, 0.6);
+  color: var(--gk-gold);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.gk-vp__close:hover {
+  transform: scale(1.08);
+  color: var(--gk-gold-bright);
+  border-color: var(--gk-gold);
+}
+
+.gk-vp__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.6rem 1.4rem 1rem;
+  scrollbar-color: var(--gk-gold-deep) transparent;
+}
+
+.gk-vp__entry {
+  padding: 1rem 0 0.9rem;
+  border-bottom: 1px solid rgba(217, 164, 65, 0.16);
+}
+
+.gk-vp__entry:last-child {
+  border-bottom: none;
+}
+
+.gk-vp__entry-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.55rem;
+}
+
+.gk-vp__version {
+  font-size: 1.15rem;
+  color: var(--gk-text);
+  letter-spacing: 0.1em;
+}
+
+.gk-vp__entry.is-current .gk-vp__version {
+  color: var(--gk-gold-bright);
+}
+
+.gk-vp__badge {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--gk-gold-bright), var(--gk-gold-deep));
+  color: var(--gk-stone-900);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.gk-vp__badge--upcoming {
+  background: var(--gk-stone-500);
+  color: var(--gk-text);
+}
+
+.gk-vp__date {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--gk-text-dim);
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+
+.gk-vp__section {
+  margin-top: 0.5rem;
+}
+
+.gk-vp__section-title {
+  display: inline-block;
+  margin-bottom: 0.3rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gk-gold);
+}
+
+.gk-vp__section-title.is-added {
+  color: #9fd07a;
+}
+
+.gk-vp__section-title.is-fixed {
+  color: var(--gk-block);
+}
+
+.gk-vp__section-title.is-removed,
+.gk-vp__section-title.is-security {
+  color: var(--gk-blood-bright);
+}
+
+.gk-vp__items {
+  margin: 0;
+  padding-left: 1.15rem;
+  list-style: none;
+}
+
+.gk-vp__item {
+  position: relative;
+  margin: 0.22rem 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--gk-text);
+}
+
+.gk-vp__item::before {
+  content: '';
+  position: absolute;
+  left: -0.85rem;
+  top: 0.6em;
+  width: 0.34rem;
+  height: 0.34rem;
+  background: var(--gk-gold-deep);
+  transform: rotate(45deg);
+}
+
+.gk-vp__item strong {
+  color: var(--gk-gold-bright);
+  font-weight: 600;
+}
+
+.gk-vp__item code {
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.35);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.82em;
+}
+
+.gk-vp__empty {
+  padding: 1.5rem 0;
+  color: var(--gk-text-dim);
+  text-align: center;
+}
+
+.gk-vp__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 1.4rem;
+  border-top: 1px solid var(--gk-panel-border);
+  font-size: 0.75rem;
+  color: var(--gk-text-dim);
+  letter-spacing: 0.08em;
+}
+
+.gk-vp__link {
+  color: var(--gk-gold);
+  text-decoration: none;
+}
+
+.gk-vp__link:hover {
+  color: var(--gk-gold-bright);
+  text-decoration: underline;
+}
+
+@keyframes gk-vp-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes gk-vp-rise {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes gk-vp-drop {
+  from { opacity: 0; transform: translate(-50%, -12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gk-vp__backdrop,
+  .gk-vp__panel,
+  .gk-lobby__update {
+    animation: none;
+  }
+}
+
+/* ══ WP-M (v1.1): ability glyphs, nameplates, lock-on, threat cues, settings ══ */
+
+/* Ability cluster: glyph + cooldown numerals + key caps + names. The layers
+   inside each circle are explicitly stacked: glyph < cooldown sweep < text. */
+.gk-hud__abilities {
+  gap: 1.3rem;
+  padding-bottom: 1.1rem; /* room for the ability names under the circles */
+}
+
+.gk-hud__ability-glyph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 0;
+  color: var(--gk-sand);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.85));
+  transition: color 0.2s ease, opacity 0.2s ease, filter 0.2s ease;
+}
+
+.gk-hud__glyph {
+  width: 58%;
+  height: 58%;
+  overflow: visible;
+}
+
+.gk-hud__ability--special::before {
+  z-index: 1; /* cooldown sweep darkens the glyph */
+}
+
+.gk-hud__ability--special:not(.is-ready) .gk-hud__ability-glyph {
+  opacity: 0.55;
+}
+
+.gk-hud__ability--special.is-ready .gk-hud__ability-glyph {
+  color: var(--gk-gold-bright);
+  filter: drop-shadow(0 0 6px rgba(240, 196, 98, 0.75)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+  animation: gk-ability-ready-pop 0.45s ease-out;
+}
+
+.gk-hud__ability--special.is-ready {
+  box-shadow: 0 0 18px rgba(217, 164, 65, 0.55), inset 0 0 12px rgba(217, 164, 65, 0.25), 0 4px 14px rgba(0, 0, 0, 0.6);
+}
+
+@keyframes gk-ability-ready-pop {
+  0% { transform: scale(0.7); }
+  60% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
+.gk-hud__cd-text {
+  z-index: 2;
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+/* Key caps sit on the bottom rim of each circle. */
+.gk-hud__ability-key {
+  display: none; /* v1.0 label, superseded by the key caps */
+}
+
+.gk-hud__keycap {
+  position: absolute;
+  left: 50%;
+  bottom: -0.55rem;
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 0.08rem 0.42rem 0.05rem;
+  font-size: 0.6rem;
+  line-height: 1.25;
+  letter-spacing: 0.14em;
+  color: var(--gk-sand);
+  background: rgba(14, 11, 8, 0.92);
+  border: 1px solid var(--gk-panel-border);
+  border-radius: 3px;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+
+.gk-hud__ability.is-ready .gk-hud__keycap {
+  color: var(--gk-gold-bright);
+  border-color: var(--gk-gold);
+}
+
+.gk-hud__ability-name {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 0.75rem);
+  transform: translateX(-50%);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gk-text, #e8d8b0);
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 8px rgba(0, 0, 0, 0.7);
+}
+
+/* Ultimate: glyph above the inner disc, charge % under it, Q READY on top. */
+.gk-hud__ability--ult::after {
+  z-index: 0;
+}
+
+.gk-hud__ability--ult .gk-hud__ability-glyph {
+  z-index: 1;
+  opacity: 0.5;
+  padding-bottom: 0.7rem;
+}
+
+.gk-hud__ability--ult .gk-hud__glyph {
+  width: 50%;
+  height: 50%;
+}
+
+.gk-hud__ult-pct {
+  position: absolute;
+  bottom: 0.95rem;
+  z-index: 2;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--gk-sand);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.gk-hud__ult-ready {
+  position: absolute;
+  bottom: 0.9rem;
+  z-index: 2;
+}
+
+.gk-hud__ability--ult.is-ready .gk-hud__ability-glyph {
+  opacity: 1;
+  color: var(--gk-gold-bright);
+  filter: drop-shadow(0 0 8px rgba(240, 196, 98, 0.85)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+}
+
+.gk-hud__ability--ult.is-ready .gk-hud__ult-ready {
+  animation: gk-ult-ready-text 1.1s ease-in-out infinite;
+}
+
+@keyframes gk-ult-ready-text {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 1; }
+}
+
+/* Enemy nameplates (pooled; JS writes transform + opacity only). */
+.gk-np-layer,
+.gk-threat-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.gk-np,
+.gk-reticle,
+.gk-threat,
+.gk-dmgdir {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  will-change: transform, opacity;
+}
+
+.gk-np.is-hidden,
+.gk-reticle.is-hidden,
+.gk-threat.is-hidden,
+.gk-dmgdir.is-hidden {
+  visibility: hidden;
+}
+
+.gk-np__inner {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 76px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.gk-np__name {
+  font-size: 0.6rem;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  color: var(--gk-sand);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 6px rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+
+.gk-np__bar {
+  position: relative;
+  width: 100%;
+  height: 5px;
+  border-radius: 2px;
+  background: rgba(10, 8, 6, 0.78);
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--np-accent, #c8a15a) 35%, transparent);
+  overflow: hidden;
+}
+
+.gk-np__chip,
+.gk-np__fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left;
+}
+
+.gk-np__chip {
+  background: rgba(255, 255, 255, 0.75);
+  transition: transform 0.5s ease-out 0.2s;
+}
+
+.gk-np__fill {
+  background: linear-gradient(180deg, #e8604c, #b3321f);
+}
+
+.gk-np.is-low .gk-np__fill {
+  background: linear-gradient(180deg, #ff7a3d, #d23a12);
+}
+
+.gk-np.is-locked .gk-np__name {
+  color: var(--gk-gold-bright);
+}
+
+.gk-np.is-locked .gk-np__bar {
+  border-color: var(--gk-gold);
+}
+
+.gk-np.is-guardbreak .gk-np__bar {
+  animation: gk-np-guardbreak 0.45s ease-out;
+}
+
+.gk-np.is-guardbreak .gk-np__name {
+  color: #a8d2ff;
+}
+
+@keyframes gk-np-guardbreak {
+  0% { box-shadow: 0 0 0 2px #a8d2ff, 0 0 12px #6db3ff; }
+  100% { box-shadow: 0 0 0 1px transparent, 0 0 0 transparent; }
+}
+
+/* Lock-on reticle. */
+.gk-reticle__svg {
+  position: absolute;
+  left: -30px;
+  top: -30px;
+  width: 60px;
+  height: 60px;
+  color: var(--gk-gold-bright);
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.9)) drop-shadow(0 0 6px rgba(240, 196, 98, 0.55));
+  animation: gk-reticle-spin 3.2s linear infinite;
+}
+
+@keyframes gk-reticle-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Off-screen threat arrows (point outward from screen center). */
+.gk-threat__svg {
+  position: absolute;
+  left: -17px;
+  top: -17px;
+  width: 34px;
+  height: 34px;
+  color: #ff5a3c;
+  filter: drop-shadow(0 0 6px rgba(255, 70, 40, 0.8));
+  animation: gk-threat-pulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes gk-threat-pulse {
+  from { opacity: 0.6; }
+  to { opacity: 1; }
+}
+
+/* Damage-direction wedge (arc segment around screen center). */
+.gk-dmgdir__svg {
+  position: absolute;
+  left: -150px;
+  top: -150px;
+  width: 300px;
+  height: 300px;
+  color: rgba(220, 40, 24, 0.85);
+  filter: drop-shadow(0 0 10px rgba(255, 40, 20, 0.7));
+}
+
+.gk-hud.is-spectating .gk-threat-layer {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gk-reticle__svg,
+  .gk-threat__svg,
+  .gk-hud__ability--ult.is-ready .gk-hud__ult-ready,
+  .gk-hud__ability--special.is-ready .gk-hud__ability-glyph {
+    animation: none;
+  }
+}
+
+/* Settings: graphics quality segmented control + wider value column. */
+.gk-settings__row--seg {
+  grid-template-columns: 5.4rem 1fr;
+}
+
+.gk-settings__seg {
+  display: inline-flex;
+  border: 1px solid var(--gk-panel-border);
+  border-radius: 4px;
+  overflow: hidden;
+  justify-self: start;
+}
+
+.gk-settings__seg-btn {
+  padding: 0.42rem 0.85rem;
+  background: var(--gk-stone-700);
+  color: var(--gk-text-dim);
+  font-size: 0.76rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: 0;
+  border-right: 1px solid var(--gk-panel-border);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.gk-settings__seg-btn:last-child {
+  border-right: 0;
+}
+
+.gk-settings__seg-btn:hover {
+  color: var(--gk-sand);
+  background: var(--gk-stone-600);
+}
+
+.gk-settings__seg-btn.is-active {
+  color: var(--gk-stone-900);
+  background: linear-gradient(180deg, var(--gk-gold-bright), var(--gk-gold));
+  font-weight: 700;
+}
+
+.gk-settings__seg-btn:focus-visible {
+  outline: 2px solid var(--gk-gold-bright);
+  outline-offset: -2px;
+}
+
+.gk-settings__value--wide {
+  min-width: 2.6rem;
+}

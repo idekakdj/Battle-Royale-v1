@@ -21,9 +21,31 @@ export interface GkSettings {
   music: number;
   sfx: number;
   muted: boolean;
+  /** Desktop app only: notify-only GitHub update check at launch (WP-L, default on). */
+  checkUpdates: boolean;
+  /** Mouse look sensitivity in radians per pixel (WP-M; CameraRig's own default). */
+  sensitivity: number;
 }
 
-export const DEFAULT_SETTINGS: GkSettings = { master: 0.8, music: 0.6, sfx: 0.9, muted: false };
+/** Matches `CameraRig`'s default `sensitivity` (0.0024 rad/px). */
+export const DEFAULT_SENSITIVITY = 0.0024;
+/** Settings-slider bounds for {@link GkSettings.sensitivity} (0.25× … 3×). */
+export const MIN_SENSITIVITY = DEFAULT_SENSITIVITY * 0.25;
+export const MAX_SENSITIVITY = DEFAULT_SENSITIVITY * 3;
+
+export const DEFAULT_SETTINGS: GkSettings = {
+  master: 0.8,
+  music: 0.6,
+  sfx: 0.9,
+  muted: false,
+  checkUpdates: true,
+  sensitivity: DEFAULT_SENSITIVITY,
+};
+
+function clampSensitivity(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return DEFAULT_SENSITIVITY;
+  return v < MIN_SENSITIVITY ? MIN_SENSITIVITY : v > MAX_SENSITIVITY ? MAX_SENSITIVITY : v;
+}
 
 /** The default lobby gladiator when nothing is stored yet. */
 export const DEFAULT_ANIMAL: AnimalId = 'lion';
@@ -62,6 +84,8 @@ export function loadSettings(): GkSettings {
       music: clamp01(typeof parsed.music === 'number' ? parsed.music : DEFAULT_SETTINGS.music),
       sfx: clamp01(typeof parsed.sfx === 'number' ? parsed.sfx : DEFAULT_SETTINGS.sfx),
       muted: parsed.muted === true,
+      checkUpdates: parsed.checkUpdates !== false,
+      sensitivity: clampSensitivity(parsed.sensitivity),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

@@ -2,12 +2,33 @@
  * CROCODILE — "The Ambusher" (§8 #3). Long, low jaw + tail silhouette with
  * back scutes and sprawled legs. Snap combo ending in Jaw Crush, Ambush Lunge
  * special, and the Death Roll grab-spin ultimate.
+ *
+ * v1.1: armoured osteoderm back (cellular pattern) with a double scute ridge
+ * running down a laterally-flattened, cross-banded tail; long tapered snout
+ * with interlocking teeth rows on both jaws, nostril bulb, raised eye turrets
+ * with slit pupils; pale scaled belly; splayed clawed feet.
  */
 
+import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, ramp, smooth01, IMPACT } from './Animator';
-import { makeMat, mesh, pivot, boxGeo, sphGeo, cylGeo } from './parts';
+import {
+  makeMat,
+  part,
+  pivot,
+  sphGeo,
+  capGeo,
+  coneGeo,
+  openCyl,
+  eye,
+  noTone,
+  noOutline,
+  paint,
+  cellular,
+  mixColor,
+  shade,
+} from './parts';
 
 export class CrocodileRig extends BaseRig {
   private readonly jaw: Joint;
@@ -19,70 +40,128 @@ export class CrocodileRig extends BaseRig {
     super(ANIMALS.crocodile);
     this.hipDrop = 0.12;
     this.strideRate = 0.36;
+    this.stepScale = 0.45;
+    this.toneBack = 0.22;
+    this.toneBelly = 0.4;
+    this.slams = [{ action: 'special', at: 0.45, radius: 1.3, kind: 'ring', forward: 1.2 }];
     const p = this.pal;
-    const mBody = makeMat(p.accent);
-    const mDark = makeMat(p.dark);
-    const mScute = makeMat(p.darker);
-    const mBelly = makeMat(p.belly);
-    const mTooth = makeMat(p.bone);
-    const mBlack = makeMat(p.eye);
+    const skin = mixColor(p.accent, 0x3f5a2c, 0.35);
+    const mBody = makeMat(skin);
+    const mDark = makeMat(shade(skin, -0.3));
+    const mScute = makeMat(shade(skin, -0.45));
+    const mBelly = makeMat(mixColor(p.belly, 0xd9d2a0, 0.5));
+    const mTooth = makeMat(0xf1ead2);
+    const mNostril = makeMat(0x1a1a14);
+    const mClaw = makeMat(0x2a2620);
+    const mMouth = makeMat(0xc98f7a);
+
+    const cell: [number, number] = [0, 0];
+    const armour = (pp: THREE.Vector3, n: THREE.Vector3, c: THREE.Color): void => {
+      if (n.y < 0.15) return;
+      cellular(pp.x, pp.y * 0.5, pp.z, 0.13, cell);
+      const edge = cell[1] - cell[0];
+      c.multiplyScalar(edge < 0.03 ? 0.66 : 0.92 + (cell[0] % 0.05) * 2);
+    };
+    const bands = (pp: THREE.Vector3, _n: THREE.Vector3, c: THREE.Color): void => {
+      if (Math.sin(pp.z * 7.5) > 0.45) c.multiplyScalar(0.7);
+    };
+    const bellyScales = (pp: THREE.Vector3, _n: THREE.Vector3, c: THREE.Color): void => {
+      if (Math.abs(Math.sin(pp.z * 24)) < 0.22) c.multiplyScalar(0.82);
+    };
 
     const bodyN = pivot(0, 0.38, 0);
     this.bodyRoot.add(bodyN);
-    bodyN.add(mesh(boxGeo(0.68, 0.32, 1.5), mBody, 0, 0, 0));
-    bodyN.add(mesh(boxGeo(0.56, 0.1, 1.3), mBelly, 0, -0.19, 0));
-    // Back scutes: two staggered ridge rows.
+    bodyN.add(paint(part(capGeo(0.3, 1.0, 8), mBody, 0, 0, 0, 1.18, 1, 0.56, Math.PI / 2), armour));
+    bodyN.add(paint(part(sphGeo(0.3, 8, 5), mBelly, 0, -0.1, 0, 0.95, 0.32, 2.3), bellyScales));
+    // Double scute ridge (pyramids).
+    for (let i = 0; i < 6; i++) {
+      const z = 0.55 - i * 0.22;
+      for (const sx of [-1, 1]) {
+        bodyN.add(part(coneGeo(0.05, 0.1, 4), mScute, sx * 0.12, 0.17, z + (sx > 0 ? 0.08 : 0), 1, 1, 1.5, 0, Math.PI / 4));
+      }
+    }
     for (let i = 0; i < 4; i++) {
-      bodyN.add(mesh(boxGeo(0.1, 0.1, 0.16), mScute, -0.14, 0.2, 0.5 - i * 0.34));
-      bodyN.add(mesh(boxGeo(0.1, 0.1, 0.16), mScute, 0.14, 0.2, 0.34 - i * 0.34));
+      bodyN.add(part(coneGeo(0.04, 0.07, 4), mScute, (i % 2 ? 1 : -1) * 0.25, 0.1, 0.4 - i * 0.3, 1, 1, 1.4, 0, Math.PI / 4));
     }
 
     // Head: fixed skull + hinged lower jaw.
     const headN = pivot(0, 0.04, 0.78);
     bodyN.add(headN);
-    headN.add(mesh(boxGeo(0.42, 0.16, 0.88), mBody, 0, 0.05, 0.4)); // upper snout
-    headN.add(mesh(sphGeo(0.07, 5, 4), mDark, -0.13, 0.16, 0.06)); // eye ridges
-    headN.add(mesh(sphGeo(0.07, 5, 4), mDark, 0.13, 0.16, 0.06));
-    headN.add(mesh(sphGeo(0.03, 5, 4), mBlack, -0.13, 0.2, 0.09));
-    headN.add(mesh(sphGeo(0.03, 5, 4), mBlack, 0.13, 0.2, 0.09));
-    headN.add(mesh(boxGeo(0.09, 0.05, 0.09), mDark, 0, 0.11, 0.8)); // nostril bump
-    // Teeth strips on the upper snout.
-    headN.add(mesh(boxGeo(0.03, 0.05, 0.7), mTooth, -0.18, -0.03, 0.42));
-    headN.add(mesh(boxGeo(0.03, 0.05, 0.7), mTooth, 0.18, -0.03, 0.42));
+    headN.add(paint(part(sphGeo(0.2, 9, 6), mBody, 0, 0.05, 0.1, 1.05, 0.58, 1.1), armour)); // cranium
+    headN.add(part(capGeo(0.14, 0.62, 6), mBody, 0, 0.04, 0.5, 1.25, 1, 0.55, Math.PI / 2)); // snout
+    headN.add(part(sphGeo(0.1, 7, 5), mBody, 0, 0.07, 0.86, 1.25, 0.7, 1)); // nostril bulb
+    headN.add(noOutline(noTone(part(sphGeo(0.022, 4, 3), mNostril, -0.035, 0.13, 0.9))));
+    headN.add(noOutline(noTone(part(sphGeo(0.022, 4, 3), mNostril, 0.035, 0.13, 0.9))));
+    for (const sx of [-1, 1]) {
+      headN.add(part(sphGeo(0.075, 7, 5), mDark, sx * 0.12, 0.15, 0.06, 1, 0.9, 1.15)); // eye turret
+      const e = eye({ r: 0.042, iris: 0xc9c041, side: sx, lateral: 0.7, slit: true });
+      e.position.set(sx * 0.125, 0.19, 0.1);
+      headN.add(e);
+      // Upper teeth rows along the snout sides.
+      for (let i = 0; i < 7; i++) {
+        const z = 0.2 + i * 0.1;
+        const t = part(coneGeo(0.018, 0.07 + (i % 3 === 0 ? 0.03 : 0), 4), mTooth, sx * (0.155 - i * 0.004), -0.03, z, 1, 1, 1, Math.PI);
+        headN.add(noOutline(noTone(t)));
+      }
+    }
+    headN.add(noOutline(part(capGeo(0.1, 0.5, 5), mMouth, 0, -0.01, 0.45, 1.2, 1, 0.2, Math.PI / 2))); // palate
     const jawN = pivot(0, -0.05, 0.02);
     headN.add(jawN);
-    jawN.add(mesh(boxGeo(0.36, 0.1, 0.8), mDark, 0, -0.04, 0.4));
-    jawN.add(mesh(boxGeo(0.03, 0.05, 0.62), mTooth, -0.15, 0.03, 0.42));
-    jawN.add(mesh(boxGeo(0.03, 0.05, 0.62), mTooth, 0.15, 0.03, 0.42));
+    jawN.add(part(capGeo(0.13, 0.62, 6), mDark, 0, -0.04, 0.42, 1.18, 1, 0.42, Math.PI / 2));
+    jawN.add(part(sphGeo(0.12, 7, 4), mBelly, 0, -0.07, 0.35, 1, 0.3, 2.9)); // pale throat
+    for (const sx of [-1, 1]) {
+      for (let i = 0; i < 6; i++) {
+        const z = 0.18 + i * 0.1;
+        const t = part(coneGeo(0.017, 0.06 + (i % 2) * 0.02, 4), mTooth, sx * (0.13 - i * 0.004), 0.03, z + 0.05);
+        jawN.add(noOutline(noTone(t)));
+      }
+    }
 
-    // Sprawled stubby legs.
-    const mkLeg = (x: number, z: number, side: number): Joint => {
+    // Sprawled legs with splayed clawed feet.
+    const mkLeg = (x: number, z: number, side: number, back: boolean): Joint => {
       const g = pivot(x, -0.08, z);
       g.rotation.z = 0.55 * side;
       bodyN.add(g);
-      g.add(mesh(cylGeo(0.09, 0.075, 0.32, 6), mDark, 0, -0.16, 0));
-      g.add(mesh(sphGeo(0.09, 5, 4), mBody, 0, -0.32, 0.04));
+      g.add(part(sphGeo(back ? 0.13 : 0.11, 7, 5), mBody, 0, -0.04, 0, 1, 1.2, 1));
+      g.add(part(openCyl(0.09, 0.07, 0.32, 6), mDark, 0, -0.16, 0));
+      g.add(part(sphGeo(0.1, 6, 4), mDark, 0, -0.32, 0.05, 1.1, 0.45, 1.4));
+      for (let k = 0; k < 3; k++) {
+        const claw = part(coneGeo(0.02, 0.08, 4), mClaw, (k - 1) * 0.05, -0.33, 0.17, 1, 1, 1, Math.PI / 2);
+        g.add(noOutline(noTone(claw)));
+      }
       return this.joint(g);
     };
 
-    // Tail: three tapering segments with ridge fins.
+    // Tail: three tapering, laterally flattened segments with scute fins.
     const t1 = pivot(0, 0, -0.72);
     bodyN.add(t1);
-    t1.add(mesh(boxGeo(0.46, 0.26, 0.7), mBody, 0, 0, -0.32));
-    t1.add(mesh(boxGeo(0.08, 0.12, 0.5), mScute, 0, 0.17, -0.32));
+    t1.add(paint(part(capGeo(0.2, 0.5, 7), mBody, 0, 0, -0.32, 1.05, 1, 0.8, Math.PI / 2), bands));
     const t2 = pivot(0, 0, -0.68);
     t1.add(t2);
-    t2.add(mesh(boxGeo(0.3, 0.2, 0.62), mBody, 0, 0, -0.28));
-    t2.add(mesh(boxGeo(0.06, 0.12, 0.44), mScute, 0, 0.14, -0.28));
+    t2.add(paint(part(capGeo(0.14, 0.48, 6), mBody, 0, 0, -0.28, 0.95, 1, 0.9, Math.PI / 2), bands));
     const t3 = pivot(0, 0, -0.6);
     t2.add(t3);
-    t3.add(mesh(boxGeo(0.16, 0.13, 0.56), mDark, 0, 0, -0.26));
-    t3.add(mesh(boxGeo(0.05, 0.12, 0.36), mScute, 0, 0.1, -0.26));
+    t3.add(paint(part(coneGeo(0.12, 0.62, 6), mDark, 0, 0, -0.26, 0.8, 1, 1.1, -Math.PI / 2), bands));
+    const fin = (parent: THREE.Object3D, n: number, z0: number, step: number, y: number, s: number): void => {
+      for (let i = 0; i < n; i++) {
+        for (const sx of [-1, 1]) {
+          parent.add(part(coneGeo(0.04 * s, 0.1 * s, 4), mScute, sx * 0.05 * s, y, z0 - i * step + (sx > 0 ? step / 2 : 0), 1, 1, 1.4, 0, Math.PI / 4));
+        }
+      }
+    };
+    fin(t1, 3, -0.1, 0.2, 0.18, 1);
+    fin(t2, 3, -0.08, 0.18, 0.14, 0.9);
+    fin(t3, 2, -0.08, 0.2, 0.09, 0.7);
 
     this.body = this.joint(bodyN);
     this.head = this.joint(headN);
     this.jaw = this.joint(jawN);
-    this.legs = [mkLeg(-0.42, 0.5, -1), mkLeg(0.42, 0.5, 1), mkLeg(-0.42, -0.5, -1), mkLeg(0.42, -0.5, 1)];
+    this.legs = [
+      mkLeg(-0.42, 0.5, -1, false),
+      mkLeg(0.42, 0.5, 1, false),
+      mkLeg(-0.42, -0.5, -1, true),
+      mkLeg(0.42, -0.5, 1, true),
+    ];
     this.tail1 = this.joint(t1);
     this.tail2 = this.joint(t2);
     this.tail3 = this.joint(t3);

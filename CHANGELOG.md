@@ -1,0 +1,72 @@
+# Changelog
+
+All notable changes to Gladiator Kingdom are documented in this file. The
+in-game **Version History** panel and the GitHub Release notes are generated
+from it, so every player-facing change belongs here.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Use the sections `Added`, `Changed` and `Fixed` (plus `Removed` when needed),
+newest version first.
+
+## [Unreleased]
+
+<!--
+  Add bullets for the next release under ### Added / ### Changed / ### Fixed.
+  When cutting a release, rename this heading to `## [x.y.z] - YYYY-MM-DD`
+  and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
+-->
+
+## [1.1.0] - 2026-09-29
+
+### Added
+- **Windows desktop app.** Install Gladiator Kingdom and play it offline, or grab the portable zip. It has fullscreen (F11), remembers your window size and position, and can tell you when a new version is out.
+- **Version History** panel in the lobby (What's New) listing every release; it opens by itself once after you update.
+- **Graphics quality** setting (Auto / Low / Medium / High). Auto steps down a level if your frame rate stays low.
+- **Cinematic look:** soft bloom on fire, sparks and ultimates, a warm colour grade and vignette, drifting clouds and a golden-hour sky.
+- **A living arena:** flickering torches and braziers with real firelight, sunbeams, drifting dust, waving banners and flags, a detailed sand floor with an inlaid stone ring, and a stone wall built from blocks.
+- **All ten gladiators remodelled** with real faces, solid legs, claws, horns and tusks, species markings and a crisp outline that keeps them readable against the sand. Fighters now cast shadows.
+- **Heavier impacts:** ground cracks and dust rings on slams, footstep and landing dust, a blooming light column for ultimates and a subtle camera kick.
+- **Comeback ultimates:** you now also build ultimate charge when you take hits (blocking doesn't reduce it), so a losing fighter still gets a big moment.
+- **Enemy nameplates:** every rival shows their animal and a health bar above their head, fading with distance and flashing when their guard breaks.
+- **Lock-on:** press E or middle mouse to lock onto a rival; the camera and your attacks follow them, Tab switches to the next nearest enemy, and a hard look away breaks the lock.
+- **Aim assist:** your swings and specials are gently nudged toward an enemy right in front of you.
+- **Threat cues:** red arrows at the screen edge warn of nearby enemies attacking from off screen, and a red arc shows which way a hit came from.
+- **New settings:** graphics quality (changeable mid-match from the pause menu) and a mouse sensitivity slider.
+
+### Changed
+- **The Giraffe no longer rules the arena.** Slower, narrower neck swings, shorter (still the longest) reach and less health. It was winning over half of all bot matches.
+- **Crocodile, Panther, Mole and Eagle were strengthened**, and Hippo, Rhino and Gorilla were retuned, so every animal now wins a fair share of matches at every difficulty.
+- **Ultimates come around about three times as often** thanks to faster charging and the comeback charge.
+- **Aimed abilities land where you aim:** Pounce, Silverback Leap, Death From Above and Sinkhole now drop onto the enemy you are aiming at instead of always flying to full range.
+- **Cub bots are gentler:** they pause between swings and hesitate before using a full ultimate, giving new players breathing room.
+- **Damage numbers** are sized to the hit, spread out and stack neatly instead of piling up in the middle of the screen.
+- **Camera:** no more collapsing into your fighter next to the arena wall, and a higher, wider spectator view.
+- Matches at the two hardest difficulties now finish in about a minute and a half instead of running to the time limit.
+- **Bots take random seats** around the arena each match, so a rematch brings new neighbours.
+
+### Fixed
+- **Ability icons are back:** every gladiator's special (Shift) and ultimate (Q) now shows its own symbol, a cooldown countdown, a glow when ready, and the ultimate's charge percentage with a pulsing "Q READY".
+- The Crocodile's Ambush Lunge now stops at its target, so the boosted bite connects.
+- The Mole's +25% damage against rooted enemies now actually applies.
+- The Panther's stealth crit no longer stays armed long after Night Prowl ends.
+- Bots no longer get stuck on fallen columns or crate piles, stand idle, or kite forever.
+
+## [1.0.0] - 2026-07-14
+
+### Added
+- Initial release: a ten-fighter battle royale in a Roman colosseum — you and nine bot gladiators enter the arena, one leaves.
+- Ten animal gladiators, each with a 3-hit combo, a special ability (Shift) and a charged ultimate (Q): Lion, Gorilla, Crocodile, Hippo, Rhino, Eagle, Panther, Python, Giraffe and Mole.
+- Blocking and guard system (hold RMB), plus an ultimate that charges as you land hits.
+- Four bot difficulty tiers, from **1 — Cub** (slow reactions, forgiving) to **4 — Apex** (kiting, near-instant punishes); your last pick is remembered.
+- Procedural colosseum arena with a stadium crowd, breakable crates and pickup pads for heal, speed and rage boosts.
+- Bloodlust damage multiplier that ramps up as a match drags on, so nobody can hide forever.
+- Spectate mode after you are knocked out (LMB cycles the fighter you are watching) and a results screen with rematch, change-gladiator and lobby options.
+- Fortnite-style lobby with a 3D gladiator preview, character and difficulty select, pause menu and settings with master/music/SFX volume and mute.
+- Fully synthesized Web Audio soundtrack and sound effects — roars, swings, impacts, crowd and music, with no audio files.
+- Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
+- Browser build deployed automatically to GitHub Pages on every push to `main`.
+
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/idekakdj/Battle-Royale-v1/releases/tag/v1.0.0

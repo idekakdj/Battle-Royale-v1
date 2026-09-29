@@ -6,13 +6,13 @@
  * governed ONLY by the profile's `specialUse` / `ultimateUse` modes — L1 rolls
  * randomly, L2 gap-closes, L3 adds escape/peel, L4 runs the full scripts.
  *
- * Range gates respect the sim's aimed-ability rule (WP-B integration note):
- * aimed ground-point abilities land at MAX RANGE along aimYaw, so e.g. lion
- * Pounce is only thrown when the target stands near the 8 m landing point.
+ * Range gates respect the sim's aimed-ability rule (v1.1): aimed ground-point
+ * abilities land on the nearest enemy on the aim line (else at max range), so
+ * e.g. lion Pounce is thrown at any target between ~3 m and its 8 m reach.
  */
 
 import type { AnimalId } from '../core/types';
-import type { BotProfile } from '../config/botProfiles';
+import { AI_TUNING, type BotProfile } from '../config/botProfiles';
 import type { Rng } from '../core/math';
 
 export interface Situation {
@@ -26,6 +26,8 @@ export interface Situation {
   guardFrac: number;
   specialReady: boolean;
   ultReady: boolean;
+  /** Seconds the ult has been sitting fully charged (0 when not ready). */
+  ultHeldS: number;
   retreating: boolean;
 
   // Target (best-known).
@@ -70,14 +72,14 @@ export interface AbilityWish {
 }
 
 // ── Special-range gates ───────────────────────────────────────────────────────
-// Aimed ground-point specials land at max range: gate = landing ± radius slack.
+// Aimed ground-point specials snap onto the aimed target (≤ max range).
 
 function specialGapGate(animal: AnimalId, d: number): boolean {
   switch (animal) {
     case 'lion':
-      return d >= 6.8 && d <= 9.2; // Pounce lands at 8, hit radius 1.5
+      return d >= 3 && d <= 9; // Pounce snaps onto the target ≤ 8 m (hit radius 1.5)
     case 'gorilla':
-      return d >= 4.9 && d <= 9.1; // Leap lands at 7, AoE 2.5
+      return d >= 3 && d <= 8.8; // Leap snaps onto the target ≤ 7 m (AoE 2.5)
     case 'crocodile':
       return d >= 3.2 && d <= 7.5; // 7 m dash then boosted Snap
     case 'hippo':
@@ -114,13 +116,13 @@ function ultGate(s: Situation): boolean {
     case 'gorilla':
       return d <= 4; // self-buff — only worth it in melee
     case 'crocodile':
-      return d <= 4.4; // 4 m grab lunge
+      return d <= 4.9; // 4.5 m grab lunge
     case 'hippo':
       return d <= 3.4; // 4 m cone after 1 s windup
     case 'rhino':
       return d <= 9; // 3 s steerable stampede
     case 'eagle':
-      return d >= 5.6 && d <= 10.4; // DFA dives at 8 m along aim (splash 3)
+      return d >= 3 && d <= 9.5; // DFA dives onto the target ≤ 8 m (splash 3)
     case 'panther':
       return d >= 5 && d <= 15; // Night Prowl = stealth approach tool
     case 'python':
@@ -128,7 +130,7 @@ function ultGate(s: Situation): boolean {
     case 'giraffe':
       return d <= 4; // 4.5 m spin
     case 'mole':
-      return d >= 6.8 && d <= 13; // Sinkhole zone lands at 10 m, radius 4
+      return d >= 2.5 && d <= 12; // Sinkhole centres on the target ≤ 10 m, radius 4
     default:
       return false;
   }
@@ -285,7 +287,7 @@ function decideUltimate(s: Situation, out: AbilityWish): void {
   switch (p.ultimateUse) {
     case 'enemyWithinRange':
       // Cub: fire on charge whenever an enemy is inside the flat range gate.
-      out.ult = s.tdist <= p.ultimateRangeM && ultGate(s);
+      out.ult = s.ultHeldS >= p.ultHesitateS && s.tdist <= p.ultimateRangeM && ultGate(s);
       return;
 
     case 'targetInUltRange':
@@ -293,13 +295,37 @@ function decideUltimate(s: Situation, out: AbilityWish): void {
       return;
 
     case 'afterFinisherOrCluster':
-      out.ult = (s.recentFinisher && ultGate(s)) || clusterUlt(s);
+      out.ult =
+        (s.recentFinisher && ultGate(s)) ||
+        clusterUlt(s) ||
+        (isRangedUlt(s.animal) && ultGate(s) && rangedUltWindow(s)) ||
+        (s.ultHeldS >= AI_TUNING.ultPatienceS && ultGate(s));
       return;
 
     case 'optimalWindows':
       decideUltimateApex(s, out);
+      // Patience: a charge held too long is wasted — take any in-range cast
+      // unless it is a 3+-enemy bad trade.
+      if (!out.ult && s.ultHeldS >= AI_TUNING.ultPatienceS && s.enemiesNearSelf8 < 3) out.ult = ultGate(s);
       return;
   }
+}
+
+/**
+ * Ults whose effective range sits beyond melee (eagle dive point, mole
+ * sinkhole, panther stealth approach). v1.1 fix: the Veteran "after a
+ * finisher" trigger could never fire for these — a finisher means the target
+ * is at melee range, outside their gate — so L3 eagles/moles/panthers
+ * practically never cast their ultimates.
+ */
+function isRangedUlt(animal: AnimalId): boolean {
+  return animal === 'eagle' || animal === 'mole' || animal === 'panther';
+}
+
+/** Veteran window for ranged ults: a soft, catchable or escaping target. */
+function rangedUltWindow(s: Situation): boolean {
+  if (s.animal === 'panther') return s.hpFrac > 0.4;
+  return s.targetHelpless || s.targetRooted || s.targetFleeing || s.targetIsolated || s.tHpFrac <= 0.5;
 }
 
 /** Apex ults: helpless targets, saves vs bad trades (§10). */
@@ -318,11 +344,13 @@ function decideUltimateApex(s: Situation, out: AbilityWish): void {
       out.ult = s.tdist <= 4 && (s.tGuardFrac < 0.35 || helpless);
       return;
     case 'crocodile':
-      out.ult = ultGate(s) && (helpless || s.tHpFrac <= 0.4);
+      // Grabs ignore block — a turtling target is a Death Roll target too.
+      out.ult = ultGate(s) && (helpless || s.tHpFrac <= 0.4 || s.targetBlocking);
       return;
     case 'hippo':
-      // Chomp on guard-break (1 s windup fits inside the 1.5 s stagger).
-      out.ult = ultGate(s) && helpless;
+      // Chomp on guard-break (1 s windup fits inside the 1.5 s stagger) — or
+      // straight into a raised guard: its 0.45 × 250 guard drain breaks most.
+      out.ult = ultGate(s) && (helpless || s.targetBlocking);
       return;
     case 'rhino':
       out.ult = (s.enemiesNearSelf8 >= 2 && s.tdist <= 9) || (helpless && s.tdist <= 8);
@@ -337,7 +365,7 @@ function decideUltimateApex(s: Situation, out: AbilityWish): void {
       return;
     case 'python':
       // Constrict punishes committed specials and helpless targets.
-      out.ult = s.tdist <= 4.8 && (s.targetCommitted || helpless || s.tHpFrac <= 0.35);
+      out.ult = s.tdist <= 4.8 && (s.targetCommitted || helpless || s.tHpFrac <= 0.35 || s.targetBlocking);
       return;
     case 'giraffe':
       out.ult = s.enemiesNearSelf5 >= 2 || (helpless && s.tdist <= 4);

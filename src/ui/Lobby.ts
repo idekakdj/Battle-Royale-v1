@@ -17,10 +17,22 @@ import { crossedSwordsSvg, speakerSvg } from './icons';
 import { PreviewPane } from './PreviewPane';
 import { SettingsPanel } from './SettingsPanel';
 import { ANIMALS } from '../config/animals';
-import { type GkSettings, loadSettings, saveSettings } from './storage';
+import {
+  type GkSettings,
+  loadSettings,
+  saveSettings,
+  SETTINGS_KEY,
+  ANIMAL_KEY,
+  DIFFICULTY_KEY,
+} from './storage';
+import { VersionPanel } from './VersionPanel';
+import { APP_VERSION, APP_VERSION_LABEL, consumeWhatsNew, getChangelog, requestUpdateCheck } from '../version';
 
-/** App version shown in the lobby footer. */
-const VERSION = 'v1.0';
+/** App version shown in the lobby footer (package.json via `__APP_VERSION__`). */
+const VERSION = APP_VERSION_LABEL;
+
+/** Session-wide lobby flags (WP-L): auto "What's New" runs once, banner dismissal sticks. */
+const lobbySession = { whatsNewChecked: false, updateDismissed: false };
 
 export interface LobbyOptions {
   /** PLAY → character select (BLUEPRINT §3). */
@@ -44,6 +56,7 @@ export class Lobby implements Screen {
   private settingsHost: HTMLElement | null = null;
   private muteBtn: HTMLButtonElement | null = null;
   private activeNav: NavId = 'play';
+  private versionPanel: VersionPanel | null = null;
 
   constructor(opts: LobbyOptions) {
     this.opts = opts;
@@ -79,9 +92,18 @@ export class Lobby implements Screen {
     // ── Bottom bar ───────────────────────────────────────────────────────────
     this.muteBtn = button('', 'gk-lobby__mute', () => this.toggleMute());
     this.refreshMuteBtn();
+    const desktop = window.gkDesktop;
     const bottomBar = el('div', { class: 'gk-lobby__bottombar' }, [
-      el('span', { class: 'gk-lobby__version', text: `Gladiator Kingdom · ${VERSION}` }),
-      this.muteBtn,
+      el('div', { class: 'gk-lobby__bottomgroup' }, [
+        el('span', { class: 'gk-lobby__version', text: `Gladiator Kingdom · ${VERSION}` }),
+        button("What's New", 'gk-lobby__whatsnew', () => this.openVersionPanel(false), {
+          title: 'Version history',
+        }),
+      ]),
+      el('div', { class: 'gk-lobby__bottomgroup' }, [
+        desktop !== undefined ? button('Quit', 'gk-lobby__quit', () => desktop.quit(), { title: 'Quit game' }) : null,
+        this.muteBtn,
+      ]),
     ]);
 
     const stage = el('div', { class: 'gk-lobby__stage' }, [this.detailEl, this.settingsHost, playBtn]);
@@ -91,9 +113,12 @@ export class Lobby implements Screen {
     root.appendChild(this.root);
 
     this.showNav('play');
+    this.initVersionFeatures();
   }
 
   unmount(): void {
+    this.versionPanel?.close();
+    this.versionPanel = null;
     this.preview?.dispose();
     this.preview = null;
     this.root?.remove();
@@ -146,6 +171,48 @@ export class Lobby implements Screen {
       this.settingsPanel = null;
       this.ensureSettingsPanel();
     }
+  }
+
+  // ── Version history + update notice (WP-L) ─────────────────────────────────
+
+  /** First lobby of the session: auto "What's New" after an update; update banner (desktop). */
+  private initVersionFeatures(): void {
+    if (!lobbySession.whatsNewChecked) {
+      lobbySession.whatsNewChecked = true;
+      if (consumeWhatsNew(APP_VERSION, [SETTINGS_KEY, ANIMAL_KEY, DIFFICULTY_KEY])) this.openVersionPanel(true);
+    }
+    if (lobbySession.updateDismissed) return;
+    void requestUpdateCheck(loadSettings().checkUpdates, APP_VERSION).then((info) => {
+      if (info !== null && this.root !== null && !lobbySession.updateDismissed) this.showUpdateBanner(info);
+    });
+  }
+
+  private openVersionPanel(whatsNew: boolean): void {
+    if (this.root === null || this.versionPanel?.isOpen === true) return;
+    this.versionPanel = new VersionPanel({
+      entries: getChangelog(),
+      currentVersion: APP_VERSION,
+      whatsNew,
+      onClose: () => {
+        this.versionPanel = null;
+      },
+    });
+    this.versionPanel.open(this.root);
+  }
+
+  private showUpdateBanner(info: GkUpdateInfo): void {
+    if (this.root === null || this.root.querySelector('.gk-lobby__update') !== null) return;
+    const banner = el('div', { class: 'gk-lobby__update', attrs: { role: 'status' } }, [
+      el('span', { class: 'gk-lobby__update-text', text: `Update v${info.version} available` }),
+      button('Download', 'gk-lobby__update-btn', () => window.gkDesktop?.openExternal(info.url), {
+        title: 'Open the release page in your browser',
+      }),
+      button('×', 'gk-lobby__update-close', () => {
+        lobbySession.updateDismissed = true;
+        banner.remove();
+      }, { attrs: { 'aria-label': 'Dismiss update notice' } }),
+    ]);
+    this.root.appendChild(banner);
   }
 
   private refreshMuteBtn(): void {

@@ -15,14 +15,32 @@ export const ULT = {
   cost: 100,
   /** Charge cap; charge persists until the ult is cast. */
   max: 100,
-  /** Charge gained on a landed hit1. */
-  gainHit1: 8,
-  /** Charge gained on a landed hit2. */
-  gainHit2: 8,
-  /** Charge gained on a landed finisher (hit3). */
-  gainFinisher: 14,
+  /**
+   * Ult economy (v1.1, WP-J). v1.0 paid 8/8/14 per landed basic and nothing
+   * else, which measured ~0.35 ults per fighter per L3/L4 match (most fighters
+   * died without ever casting). v1.1 pays 12/12/20 plus the damage-taken lever
+   * below → ~1.1 ults per fighter per match at L3/L4 (≈ 1.3 for survivors),
+   * i.e. roughly one ult per 45–60 s of fighting. Not spammable: a full
+   * landed 3-hit combo is still only 44% of a bar.
+   */
+  /** Charge gained on a landed hit1 (v1.0: 8). */
+  gainHit1: 12,
+  /** Charge gained on a landed hit2 (v1.0: 8). */
+  gainHit2: 12,
+  /** Charge gained on a landed finisher (hit3) (v1.0: 14). */
+  gainFinisher: 20,
   /** Multiplier applied to charge gain when the hit was blocked (halved). */
   blockedGainMult: 0.5,
+  /**
+   * v1.1 comeback lever: charge gained per point of damage TAKEN. A landed
+   * hit1 pays ≈ 12 charge per ≈ 75 damage (≈ 0.16/dmg); this is ~28% of that
+   * rate, so a fighter that soaks a 1000-HP bar banks ≈ 45 charge even if it
+   * never lands a hit — losing fighters still get their comeback ult. Measured
+   * on the incoming hit BEFORE block reduction (blocking never costs charge)
+   * and also paid on bleed/grab ticks. Ability hits still pay the attacker
+   * nothing (§7.2: basics build the ult).
+   */
+  gainPerDamageTaken: 0.045,
 } as const;
 
 // ── Basic-attack combo (§7.2, §7.3) ──────────────────────────────────────────

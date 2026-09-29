@@ -28,8 +28,11 @@ export interface CrowdSeat {
 /** Muted tunic palette; multiplied by a random shade for variety. */
 const TUNIC_COLORS: readonly number[] = [
   0x9a3b2e, 0xb0703a, 0x8a7c54, 0x5f7561, 0x566a80, 0x74586e, 0xa08a4e, 0x7d6b52, 0x8f5a44,
-  0x6b7a6e,
+  0x6b7a6e, 0xc9b98f, 0x3f5f8a, 0xa8322a, 0xd2c6a4, 0x4d6b3c, 0x8a4a78,
 ];
+
+/** Skin tones for the heads (multiplied by the head's warm vertex colour). */
+const SKIN_TONES: readonly number[] = [0xf2d3b3, 0xe0b48e, 0xc58f63, 0x9a6a45, 0x6e4a30, 0xf5dcc2];
 
 const TICK = 0.1; // 10 Hz coarse animation (BLUEPRINT §11.2)
 
@@ -64,7 +67,27 @@ export class Crowd {
       roughness: 1,
       metalness: 0,
     });
-    const mesh = new THREE.InstancedMesh(buildBodyGeometry(), this.material, n);
+    // v1.1: heads take a per-instance skin tone instead of the tunic tint
+    // (head vertices are tagged by their non-white vertex colour).
+    this.material.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute vec3 aSkin;')
+        .replace(
+          '#include <color_vertex>',
+          '#include <color_vertex>\nif (color.b < 0.95) vColor.xyz = color.xyz * aSkin;',
+        );
+    };
+    this.material.customProgramCacheKey = () => 'gk-crowd-skin';
+    const geo = buildBodyGeometry();
+    const skin = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      scratchColor.setHex(SKIN_TONES[Math.floor(rng() * SKIN_TONES.length)]).multiplyScalar(0.9 + rng() * 0.2);
+      skin[i * 3] = scratchColor.r;
+      skin[i * 3 + 1] = scratchColor.g;
+      skin[i * 3 + 2] = scratchColor.b;
+    }
+    geo.setAttribute('aSkin', new THREE.InstancedBufferAttribute(skin, 3));
+    const mesh = new THREE.InstancedMesh(geo, this.material, n);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.castShadow = false;
     mesh.receiveShadow = false;

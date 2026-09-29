@@ -1,0 +1,80 @@
+name: Release desktop app
+
+# Cuts a versioned Windows release when a semver tag is pushed:
+#   git tag v1.1.0 && git push origin v1.1.0
+# Builds Gladiator-Kingdom-Setup-<version>.exe + Gladiator-Kingdom-<version>-win-x64.zip
+# and attaches them to a GitHub Release whose body is that version's CHANGELOG.md
+# section. Every past release stays downloadable on the Releases page.
+# See docs/RELEASING.md. (The GitHub Pages deploy lives in deploy.yml.)
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # Electron 44 / rcedit 5 require Node >= 22.12 (deploy.yml matches).
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check tag matches package.json version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG"
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Release notes from CHANGELOG.md
+        shell: bash
+        run: npm run --silent release:notes > release-notes.md && cat release-notes.md
+
+      - name: Build installer + portable zip
+        run: npm run dist
+        # Optional code signing: add repository secrets WIN_CSC_LINK (base64 .pfx
+        # or https URL) and WIN_CSC_KEY_PASSWORD; electron-builder signs when set.
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: Smoke-test the packaged app
+        run: npm run desktop:smoke
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Gladiator Kingdom ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            release/Gladiator-Kingdom-Setup-*.exe
+            release/Gladiator-Kingdom-*-win-x64.zip

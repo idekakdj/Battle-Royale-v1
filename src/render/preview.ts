@@ -19,18 +19,24 @@ export function createPreview(canvas: HTMLCanvasElement, animal: AnimalId): Anim
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor(0x000000, 0); // transparent — UI supplies the backdrop
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 60);
 
-  // Warm arena-toned lighting (§11.1): hemisphere fill, warm key, cool rim.
-  scene.add(new THREE.HemisphereLight(0xffe8c0, 0x6b5a3e, 0.85));
-  const key = new THREE.DirectionalLight(0xffdcae, 2.1);
+  // Warm arena-toned lighting (§11.1): hemisphere fill, warm key, cool rim,
+  // plus a low warm torch-like fill from the front.
+  scene.add(new THREE.HemisphereLight(0xffe6bf, 0x6e5536, 1.1));
+  const key = new THREE.DirectionalLight(0xffd9a8, 2.6);
   key.position.set(2.5, 4, 3);
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0x8fb7ff, 1.2);
+  const rim = new THREE.DirectionalLight(0x8fb7ff, 1.8);
   rim.position.set(-3, 3.5, -3.5);
   scene.add(rim);
+  const fill = new THREE.PointLight(0xff9a50, 6, 8, 2);
+  fill.position.set(-1.5, 0.8, 2.2);
+  scene.add(fill);
 
   // Turntable: pedestal + rig rotate together.
   const table = new THREE.Group();

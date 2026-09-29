@@ -28,7 +28,7 @@ import type { Obstacle } from '../config/arena';
 import { Fighter, type Sim, type CrateRuntime } from './Fighter';
 import { groundHeightAt, locomote, resolveFighterCollisions } from './MovementSystem';
 import { tickBuffs } from './StatusEffects';
-import { updateGuard, setBlocking, tryStartSwing, updateSwing } from './CombatSystem';
+import { updateGuard, setBlocking, tryStartSwing, updateSwing, grantTakenCharge } from './CombatSystem';
 import { startSpecial, startUlt, updateAbility } from './abilities1';
 import { createPickups, updatePickups } from './PickupSystem';
 
@@ -223,6 +223,7 @@ export class World implements Sim {
   }
 
   applyBleedDamage(source: Fighter, target: Fighter, amount: number): void {
+    grantTakenCharge(target, amount);
     this.dealHp(source, target, amount);
   }
 

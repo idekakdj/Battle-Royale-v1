@@ -76,6 +76,14 @@ export interface BotProfile {
   // Offense.
   /** Max basic-combo depth the bot will chain (1..3). */
   comboDepth: 1 | 2 | 3;
+  /**
+   * Hesitation between swings (v1.1), as a multiple of the animal's own swing
+   * duration: after pressing attack the bot waits `swing × (1 + this)` before
+   * pressing again. 0 = presses as fast as the combo timing allows. Scaling
+   * with the swing keeps every animal's relative DPS intact — the Cub is just
+   * slower on the trigger, like a new player. A decision knob, not a stat.
+   */
+  swingPauseMult: number;
   /** Uses feints (start swing, hold, punish whiff) — Apex only. */
   feints: boolean;
   /** Punishes a whiffed enemy swing with an attack. */
@@ -90,6 +98,8 @@ export interface BotProfile {
   ultimateUse: UltimateUseMode;
   /** Enemy range gate (m) for the simple `enemyWithinRange` ult mode (Cub). */
   ultimateRangeM: number;
+  /** Seconds a full ult charge sits before this tier notices it (v1.1; Cub). */
+  ultHesitateS: number;
 
   // Positioning & survival.
   retreat: RetreatProfile;
@@ -109,11 +119,11 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     label: 'CUB',
     displayName: 'Cub',
     tagline: 'Learns to walk',
-    description: 'Wanders toward the nearest foe and swings. Slow to react, wild aim, ignores pickups and never retreats.',
+    description: 'Wanders toward the nearest foe and swings. Slow to react, hesitant between swings, wild aim, ignores pickups and never retreats.',
     behaviors: [
       'Chases the nearest fighter',
       'Slow reactions (600 ms), wild aim',
-      'Single swings, rarely blocks',
+      'Hesitant single swings, rarely blocks',
       'Never retreats or grabs pickups',
     ],
     reactionMs: 600,
@@ -121,13 +131,15 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     blockOnTelegraphChance: 0.05,
     perfectBlockTry: false,
     comboDepth: 1,
+    swingPauseMult: 2.0,
     feints: false,
     whiffPunish: false,
     baitsBlocks: false,
     specialUse: 'randomOffCd',
-    specialRandomChance: 0.1,
+    specialRandomChance: 0.03,
     ultimateUse: 'enemyWithinRange',
     ultimateRangeM: 10,
+    ultHesitateS: 3,
     retreat: { mode: 'never', hpThreshold: 0, avoidMultiTarget: false, losBreak: false },
     pickupPolicy: 'ignore',
     pickupRangeM: 0,
@@ -152,6 +164,7 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     blockOnTelegraphChance: 0.25,
     perfectBlockTry: false,
     comboDepth: 2,
+    swingPauseMult: 0,
     feints: false,
     whiffPunish: false,
     baitsBlocks: false,
@@ -159,6 +172,7 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     specialRandomChance: 0,
     ultimateUse: 'targetInUltRange',
     ultimateRangeM: 0,
+    ultHesitateS: 0,
     retreat: { mode: 'healSeek', hpThreshold: 0.4, avoidMultiTarget: false, losBreak: false },
     pickupPolicy: 'ifWithinRange',
     pickupRangeM: 8,
@@ -183,6 +197,7 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     blockOnTelegraphChance: 0.55,
     perfectBlockTry: false,
     comboDepth: 3,
+    swingPauseMult: 0,
     feints: false,
     whiffPunish: true,
     baitsBlocks: false,
@@ -190,6 +205,7 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     specialRandomChance: 0,
     ultimateUse: 'afterFinisherOrCluster',
     ultimateRangeM: 0,
+    ultHesitateS: 0,
     retreat: { mode: 'kite', hpThreshold: 0.35, avoidMultiTarget: false, losBreak: false },
     pickupPolicy: 'proactiveWhenSafe',
     pickupRangeM: 0,
@@ -214,6 +230,7 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     blockOnTelegraphChance: 0.8,
     perfectBlockTry: true,
     comboDepth: 3,
+    swingPauseMult: 0,
     feints: true,
     whiffPunish: true,
     baitsBlocks: true,
@@ -221,6 +238,7 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     specialRandomChance: 0,
     ultimateUse: 'optimalWindows',
     ultimateRangeM: 0,
+    ultHesitateS: 0,
     retreat: { mode: 'kiteAdvanced', hpThreshold: 0.35, avoidMultiTarget: true, losBreak: true },
     pickupPolicy: 'contestAndDeny',
     pickupRangeM: 0,
@@ -241,4 +259,30 @@ export const AI_TUNING = {
   currentGoalBonus: 0.15,
   /** Only switch target when a new one scores at least this fraction higher. */
   targetSwitchMargin: 0.25,
+  /**
+   * v1.1 anti-stall: longest continuous retreat (s) with no heal pad to run to.
+   * After it the bot turns and fights for {@link AI_TUNING.reengageS} — a
+   * wounded fighter as fast as its pursuer used to kite until the 300 s cap.
+   */
+  retreatMaxS: 4,
+  /** Forced re-engage window (s) after a retreat hit {@link AI_TUNING.retreatMaxS}. */
+  reengageS: 5,
+  /** Bloodlust multiplier at/above which retreat & pickup detours are damped. */
+  bloodlustDampAt: 1.5,
+  /** Bloodlust multiplier at/above which bots stop retreating altogether. */
+  bloodlustNoRetreatAt: 1.75,
+  /**
+   * v1.1 ult economy: once an ult has been held this long (s), Veteran/Apex
+   * drop their "perfect window" conditions and cast whenever the target is in
+   * the ult's effective range (Apex still refuses 3+-enemy bad trades).
+   */
+  ultPatienceS: 6,
+  /** v1.1 unstick: displacement is sampled over this window (s) while travelling … */
+  stuckWindowS: 1.0,
+  /** … and a move shorter than this (m) counts as stuck. */
+  stuckMinMoveM: 0.6,
+  /** Stuck next to a crate: swing at it for this long (s) — crates break (§9). */
+  smashS: 0.9,
+  /** Stuck elsewhere: sidestep (and hop) for this long (s). */
+  unstickS: 0.7,
 } as const;

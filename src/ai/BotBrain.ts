@@ -13,7 +13,7 @@ import { mulberry32, dirToYaw, angleDelta, DEG2RAD, type Rng } from '../core/mat
 import { Perception, MEMORY_SECONDS, type TrackedEnemy } from './Perception';
 import { BlockControl, sampleAimNoise, timeToImpact } from './CombatMicro';
 import { decideAbilities, type Situation, type AbilityWish } from './scripts';
-import { seek, flee, orbit, avoidObstacles, separation, type Move2 } from './Steering';
+import { seek, flee, orbit, avoidObstacles, separation, lowWallDetour, type Move2 } from './Steering';
 
 type Goal = 'engage' | 'retreat' | 'pickup' | 'defend' | 'special' | 'ultimate';
 
@@ -66,6 +66,17 @@ export class BotBrain {
   private nextBaitPokeAt = 0; // rate-limits pokes into a raised block
   private pickupIdx = -1;
   private retreatHealIdx = -1;
+  private retreatSince = -1; // when the current retreat began
+  private reengageUntil = -1; // retreat budget spent → fight until then
+  private ultReadySince = -1; // when the ult charge last became full
+  private stuckRefT = 0; // unstick detector: last displacement sample
+  private stuckRefX = 0;
+  private stuckRefZ = 0;
+  private smashUntil = -1; // swinging at a crate that walls us in
+  private smashYaw = 0;
+  private unstickUntil = -1; // sidestepping out of a corner
+  private unstickX = 0;
+  private unstickZ = 0;
 
   constructor(id: number, animal: FighterState['animal'], profile: BotProfile, seed: number) {
     this.id = id;
@@ -84,6 +95,7 @@ export class BotBrain {
       guardFrac: 1,
       specialReady: false,
       ultReady: false,
+      ultHeldS: 0,
       retreating: false,
       hasTarget: false,
       tdist: 0,
@@ -330,6 +342,9 @@ export class BotBrain {
     sit.guardFrac = self.maxGuard > 0 ? self.guard / self.maxGuard : 0;
     sit.specialReady = self.specialCd <= 0;
     sit.ultReady = self.ultCharge >= 100;
+    if (!sit.ultReady) this.ultReadySince = -1;
+    else if (this.ultReadySince < 0) this.ultReadySince = now;
+    sit.ultHeldS = sit.ultReady ? now - this.ultReadySince : 0;
     sit.retreating = this.goal === 'retreat';
     sit.hasTarget = t !== null;
     sit.enemiesNearSelf5 = near5;
@@ -405,6 +420,17 @@ export class BotBrain {
     if (retreat.mode !== 'never' && hpFrac <= retreat.hpThreshold) {
       retreatScore = 0.75 + (retreat.hpThreshold - hpFrac);
       if (retreat.mode === 'healSeek' && healIdx < 0) retreatScore = 0; // nothing to run to
+      if (healIdx < 0) {
+        // v1.1 stall fixes: with no heal to run to, fleeing only makes sense
+        // from a known threat (it used to freeze the bot idle forever), and
+        // only for a bounded time before it must turn and fight.
+        if (t === null && this.freshestMemory(now) === null) retreatScore = 0;
+        if (now < this.reengageUntil) retreatScore = 0;
+        else if (this.goal === 'retreat' && now - this.retreatSince > AI_TUNING.retreatMaxS) {
+          this.reengageUntil = now + AI_TUNING.reengageS;
+          retreatScore = 0;
+        }
+      }
     }
 
     let pickupScore = 0;
@@ -466,7 +492,10 @@ export class BotBrain {
 
     // Crowd's Bloodlust anti-stall (§6): as the ramp climbs, passivity stops
     // paying — press the fight instead of looping heals.
-    if (delayed.bloodlustMult >= 1.5) {
+    if (delayed.bloodlustMult >= AI_TUNING.bloodlustNoRetreatAt) {
+      retreatScore = 0;
+      pickupScore *= 0.5;
+    } else if (delayed.bloodlustMult >= AI_TUNING.bloodlustDampAt) {
       retreatScore *= 0.4;
       pickupScore *= 0.5;
     }
@@ -487,6 +516,9 @@ export class BotBrain {
     consider('defend', defendScore);
     consider('special', specialScore);
     consider('ultimate', ultScore);
+    // (`consider` assigns bestGoal inside a closure, so TS narrows it to its
+    // initializer here — widen it back.)
+    if ((bestGoal as Goal) === 'retreat' && this.goal !== 'retreat') this.retreatSince = now;
     this.goal = bestGoal;
   }
 
@@ -593,8 +625,10 @@ export class BotBrain {
         } else {
           // No live contact: chase the freshest memory, else drift to centre.
           const m = this.freshestMemory(now);
-          if (m !== null) seek(move, sx, sz, m.x, m.z);
-          else if (sx * sx + sz * sz > 36) seek(move, sx, sz, 0, 0);
+          if (m !== null) {
+            seek(move, sx, sz, m.x, m.z);
+            lowWallDetour(move, sx, sz, m.x, m.z, this.def.radius);
+          } else if (sx * sx + sz * sz > 36) seek(move, sx, sz, 0, 0);
           aimYaw = move.x !== 0 || move.z !== 0 ? dirToYaw(move.x, move.z) : self.yaw;
         }
         break;
@@ -606,6 +640,7 @@ export class BotBrain {
         if (healIdx >= 0 && current.pickups[healIdx] !== undefined && current.pickups[healIdx].active) {
           const pad = current.pickups[healIdx];
           seek(move, sx, sz, pad.pos.x, pad.pos.z);
+          lowWallDetour(move, sx, sz, pad.pos.x, pad.pos.z, this.def.radius);
         } else if (threat !== null) {
           if (p.retreat.losBreak) this.losBreakMove(move, sx, sz, threat);
           else flee(move, sx, sz, threat.x, threat.z);
@@ -630,6 +665,7 @@ export class BotBrain {
         const pad = idx >= 0 ? current.pickups[idx] : undefined;
         if (pad !== undefined && pad.active) {
           seek(move, sx, sz, pad.pos.x, pad.pos.z);
+          lowWallDetour(move, sx, sz, pad.pos.x, pad.pos.z, this.def.radius);
           aimYaw =
             t !== null ? dirToYaw(t.x - sx, t.z - sz) + this.aimNoise : dirToYaw(move.x, move.z);
         } else {
@@ -648,8 +684,9 @@ export class BotBrain {
       }
     }
 
-    // Panther stealth approach: swing around behind the target (§10 script).
-    if (t !== null && this.def.id === 'panther' && p.specialUse === 'fullScripts') {
+    // Panther stealth approach: swing around behind the target (§10 script;
+    // v1.1: Veterans too — without it an L3 Night Prowl walked in face-first).
+    if (t !== null && this.def.id === 'panther' && (p.specialUse === 'fullScripts' || p.specialUse === 'gapCloseEscapePeel')) {
       let stealthed = false;
       for (let i = 0; i < self.buffs.length; i++) {
         if (self.buffs[i].kind === 'stealth') {
@@ -675,6 +712,18 @@ export class BotBrain {
       this.jumpHoldUntil = Math.max(this.jumpHoldUntil, now + 0.35);
     }
 
+    // v1.1 unstick: travelling but going nowhere (e.g. a big body wedged in
+    // the gap between a crate pile and a fallen column) → smash the crate in
+    // the way, else sidestep and hop for a moment.
+    this.updateStuck(now, self, current, move, wantAttack, t);
+    if (now < this.smashUntil) {
+      wantAttack = true;
+      aimYaw = this.smashYaw;
+    } else if (now < this.unstickUntil) {
+      move.x = this.unstickX;
+      move.z = this.unstickZ;
+    }
+
     intent.moveX = move.x;
     intent.moveZ = move.z;
     intent.aimYaw = aimYaw;
@@ -691,15 +740,74 @@ export class BotBrain {
     }
     intent.block = false;
 
-    if (wantAttack && now >= this.lastAttackPress + 0.12 && now >= this.feintHoldUntil) {
+    const pressGap = p.swingPauseMult > 0 ? (1 + p.swingPauseMult) / this.def.attackRate : 0.12;
+    if (wantAttack && now >= this.lastAttackPress + pressGap && now >= this.feintHoldUntil) {
       intent.attack = true;
       this.lastAttackPress = now;
-      // Hit-and-run exit once the combo is spent (eagle script; panther when hurt).
+      // Hit-and-run exit once the combo is spent (eagle script; panther when
+      // hurt). v1.1: Veterans run the simplified eagle version (§10 "Veteran
+      // uses simplified versions") — a shorter hop-out, no glide.
       if (p.specialUse === 'fullScripts' && self.comboIndex === 2) {
         if (this.def.id === 'eagle') this.disengageUntil = now + 1.6;
         else if (this.def.id === 'panther' && this.sit.hpFrac < 0.6) this.disengageUntil = now + 1.2;
+      } else if (p.specialUse === 'gapCloseEscapePeel' && self.comboIndex === 2 && this.def.id === 'eagle') {
+        this.disengageUntil = now + 1.0;
       }
     }
+  }
+
+  /** Stuck detector for {@link execute}: samples displacement every stuckWindowS. */
+  private updateStuck(
+    now: number,
+    self: FighterState,
+    current: WorldSnapshot,
+    move: Move2,
+    wantAttack: boolean,
+    t: TrackedEnemy | null,
+  ): void {
+    const sx = self.pos.x;
+    const sz = self.pos.z;
+    const travelling =
+      !wantAttack &&
+      move.x * move.x + move.z * move.z > 0.25 &&
+      (t === null || t.dist > this.def.range + 0.5) &&
+      (self.action === 'run' || self.action === 'idle');
+    if (!travelling || now < this.smashUntil || now < this.unstickUntil) {
+      this.stuckRefT = now;
+      this.stuckRefX = sx;
+      this.stuckRefZ = sz;
+      return;
+    }
+    if (now - this.stuckRefT < AI_TUNING.stuckWindowS) return;
+    const moved = Math.hypot(sx - this.stuckRefX, sz - this.stuckRefZ);
+    this.stuckRefT = now;
+    this.stuckRefX = sx;
+    this.stuckRefZ = sz;
+    if (moved >= AI_TUNING.stuckMinMoveM) return;
+
+    // Stuck. A crate within swing reach? Swings break crates (§9).
+    let best = -1;
+    let bestD = this.def.range + 0.5;
+    for (let i = 0; i < current.crates.length; i++) {
+      const c = current.crates[i];
+      if (!c.alive) continue;
+      const d = Math.hypot(c.pos.x - sx, c.pos.z - sz);
+      if (d <= bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (best >= 0) {
+      const c = current.crates[best];
+      this.smashUntil = now + AI_TUNING.smashS;
+      this.smashYaw = dirToYaw(c.pos.x - sx, c.pos.z - sz);
+      return;
+    }
+    const sign = this.rng() < 0.5 ? 1 : -1;
+    this.unstickUntil = now + AI_TUNING.unstickS;
+    this.unstickX = -move.z * sign;
+    this.unstickZ = move.x * sign;
+    this.jumpHoldUntil = Math.max(this.jumpHoldUntil, now + 0.35);
   }
 
   /** Engage-goal movement: close to spacing, then strafe-orbit per skill. */
@@ -721,6 +829,8 @@ export class BotBrain {
     if (dist > spacing + 1.2 || p.strafeSkill <= 0.05) {
       seek(move, sx, sz, tx, tz);
       if (dist < spacing * 0.8) flee(move, sx, sz, tx, tz); // unskilled: back off overlap
+      // Walk round a fallen column instead of pressing into it (v1.1 stall fix).
+      else if (dist > range) lowWallDetour(move, sx, sz, tx, tz, this.def.radius);
     } else {
       orbit(move, sx, sz, t.x, t.z, this.orbitSign, spacing, p.strafeSkill);
     }

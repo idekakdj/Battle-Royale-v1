@@ -18,6 +18,7 @@ import type { AnimalId, BuffState, WorldSnapshot } from '../core/types';
 import { ANIMALS } from '../config/animals';
 import { el } from './dom';
 import { animalHeadSvg } from './icons';
+import { abilityGlyphSvg } from './abilityIcons';
 
 /** One kill-feed line: killer icon ▸ victim icon (BLUEPRINT §12). */
 export interface KillFeedEntry {
@@ -68,8 +69,13 @@ export class HUD {
   private buffBar!: HTMLElement;
   private specialCell!: HTMLElement;
   private specialCdText!: HTMLElement;
+  private specialGlyph!: HTMLElement;
+  private specialName!: HTMLElement;
   private ultCell!: HTMLElement;
   private ultReady!: HTMLElement;
+  private ultGlyph!: HTMLElement;
+  private ultPct!: HTMLElement;
+  private ultName!: HTMLElement;
   private aliveText!: HTMLElement;
   private killFeedEl!: HTMLElement;
   private bloodlustEl!: HTMLElement;
@@ -85,6 +91,8 @@ export class HUD {
   private lastAnimal: AnimalId | null = null;
   private buffKey = '';
   private hintHidden = false;
+  private lastCdText = '';
+  private lastUltPct = -1;
   private hitmarkerTimer: number | null = null;
   private bloodlustTimer: number | null = null;
   private countdownTimer: number | null = null;
@@ -107,16 +115,28 @@ export class HUD {
     // Bottom-center buffs.
     this.buffBar = el('div', { class: 'gk-hud__buffs' });
 
-    // Bottom-right ability cluster.
+    // Bottom-right ability cluster: per-animal glyph (set on first update),
+    // radial cooldown + numerals (special), charge ring + % / Q READY (ult),
+    // key caps on the rim and the ability name underneath.
+    this.specialGlyph = el('span', { class: 'gk-hud__ability-glyph' });
     this.specialCdText = el('span', { class: 'gk-hud__cd-text' });
+    this.specialName = el('span', { class: 'gk-hud__ability-name' });
     this.specialCell = el('div', { class: 'gk-hud__ability gk-hud__ability--special' }, [
-      el('span', { class: 'gk-hud__ability-key', text: 'SHIFT' }),
+      this.specialGlyph,
       this.specialCdText,
+      el('span', { class: 'gk-hud__keycap gk-display', text: 'SHIFT' }),
+      this.specialName,
     ]);
+    this.ultGlyph = el('span', { class: 'gk-hud__ability-glyph' });
+    this.ultPct = el('span', { class: 'gk-hud__ult-pct' });
     this.ultReady = el('span', { class: 'gk-hud__ult-ready gk-display', text: 'Q READY' });
+    this.ultName = el('span', { class: 'gk-hud__ability-name' });
     this.ultCell = el('div', { class: 'gk-hud__ability gk-hud__ability--ult' }, [
-      el('span', { class: 'gk-hud__ability-key', text: 'Q' }),
+      this.ultGlyph,
+      this.ultPct,
       this.ultReady,
+      el('span', { class: 'gk-hud__keycap gk-display', text: 'Q' }),
+      this.ultName,
     ]);
     const abilities = el('div', { class: 'gk-hud__abilities' }, [this.specialCell, this.ultCell]);
 
@@ -134,6 +154,8 @@ export class HUD {
       hintKey('SHIFT', 'Special'),
       hintKey('Q', 'Ultimate'),
       hintKey('SPACE', 'Jump'),
+      hintKey('E / MMB', 'Lock-on'),
+      hintKey('TAB', 'Next target'),
     ]);
     this.spectateEl = el('div', { class: 'gk-hud__spectate gk-display' });
 
@@ -156,6 +178,17 @@ export class HUD {
     this.lastAnimal = null;
     this.buffKey = '';
     this.hintHidden = false;
+    this.lastCdText = '';
+    this.lastUltPct = -1;
+  }
+
+  /**
+   * The HUD's full-screen, pointer-transparent root (null when unmounted).
+   * World-anchored overlays (nameplates, threat arrows) mount inside it so
+   * they inherit its stacking and `pointer-events: none`.
+   */
+  get layer(): HTMLElement | null {
+    return this.root;
   }
 
   unmount(): void {
@@ -191,6 +224,10 @@ export class HUD {
       const def = ANIMALS[player.animal];
       this.root.style.setProperty('--hud-accent', def.accent);
       this.nameplate.textContent = def.displayName;
+      this.specialGlyph.innerHTML = abilityGlyphSvg(player.animal, 'special');
+      this.ultGlyph.innerHTML = abilityGlyphSvg(player.animal, 'ultimate');
+      this.specialName.textContent = def.special.name;
+      this.ultName.textContent = def.ultimate.name;
     }
 
     // HP bar + white damage-chip trail. Bars fill via scaleX (transform-only
@@ -225,12 +262,22 @@ export class HUD {
     const cdFrac = cdMax > 0 ? Math.min(1, player.specialCd / cdMax) : 0;
     this.specialCell.style.setProperty('--cd', String(cdFrac));
     this.specialCell.classList.toggle('is-ready', player.specialCd <= 0);
-    this.specialCdText.textContent = player.specialCd > 0 ? `${Math.ceil(player.specialCd)}` : '';
+    const cd = player.specialCd;
+    const cdText = cd <= 0 ? '' : cd < 1 ? cd.toFixed(1) : `${Math.ceil(cd)}`;
+    if (cdText !== this.lastCdText) {
+      this.lastCdText = cdText;
+      this.specialCdText.textContent = cdText;
+    }
 
-    // Ultimate ring 0–100 with pulse + "Q READY" at full.
-    const ultFrac = Math.min(1, player.ultCharge / 100);
+    // Ultimate ring 0–100 with charge %, then pulse + "Q READY" at full.
+    const ultFrac = Math.min(1, Math.max(0, player.ultCharge / 100));
     this.ultCell.style.setProperty('--ult', String(ultFrac));
     this.ultCell.classList.toggle('is-ready', player.ultCharge >= 100);
+    const pct = Math.floor(ultFrac * 100);
+    if (pct !== this.lastUltPct) {
+      this.lastUltPct = pct;
+      this.ultPct.textContent = pct >= 100 ? '' : `${pct}%`;
+    }
 
     // Low-HP vignette below 30% — deeper the lower you get.
     const low = player.alive && hpFrac < LOW_HP_FRAC;
@@ -306,7 +353,7 @@ export class HUD {
         <span class="gk-hud__spectate-label">SPECTATING</span>
         <span class="gk-hud__spectate-icon" style="color:${ANIMALS[target.animal].accent}">${animalHeadSvg(target.animal, 'gk-hud__kf-head')}</span>
         <span class="gk-hud__spectate-name">${escapeHtml(target.name)}</span>
-        <span class="gk-hud__spectate-hint">· LMB next</span>`;
+        <span class="gk-hud__spectate-hint">· LMB / TAB next</span>`;
     }
   }
 

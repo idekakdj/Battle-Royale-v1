@@ -2,6 +2,10 @@ node_modules
 dist
 desktop.ini
 
+# Desktop installers / unpacked app (npm run dist, npm run dist:dir)
+release/
+release-notes.md
+
 # Editor / OS cruft
 .DS_Store
 *.log

@@ -15,7 +15,16 @@ import { isTargetable, circleHit, coneHit } from './hitbox';
 import { chargeStep, clampToWall, groundHeightAt } from './MovementSystem';
 import { DEG2RAD, rotateToward, dirToYaw } from '../core/math';
 import { MOVE } from '../config/balance';
-import { DASH_SPEED, STAMPEDE_SPEED, DFA_DIVE_RANGE, LAND_RECOVER, CONTACT_PAD } from './simTuning';
+import {
+  DASH_SPEED,
+  STAMPEDE_SPEED,
+  DFA_DIVE_RANGE,
+  LAND_RECOVER,
+  CONTACT_PAD,
+  AIM_SNAP_LATERAL,
+  AIM_SNAP_SLACK,
+  AIM_SNAP_MIN,
+} from './simTuning';
 
 // ── Shared scaffolding ───────────────────────────────────────────────────────
 
@@ -25,6 +34,39 @@ export function aimX(f: Fighter, dist: number): number {
 }
 export function aimZ(f: Fighter, dist: number): number {
   return f.state.pos.z + Math.cos(f.intent.aimYaw) * dist;
+}
+
+/**
+ * v1.1 aimed-point rule. FighterIntent carries only a yaw (no aim distance),
+ * so aimed ground-point abilities (lion Pounce, gorilla Leap, eagle Death From
+ * Above, mole Sinkhole) used to land at their MAX range every time: a Pounce
+ * thrown at a foe 4 m away sailed 8 m past them. Now the point lands on the
+ * nearest targetable enemy lying on the aim line (within
+ * {@link AIM_SNAP_LATERAL} m of the ray and at most `maxRange` +
+ * {@link AIM_SNAP_SLACK} away); with nobody on the line it is max range as
+ * before. Returns the distance along the aim yaw.
+ */
+export function aimPointDist(sim: Sim, f: Fighter, maxRange: number): number {
+  const dx = Math.sin(f.intent.aimYaw);
+  const dz = Math.cos(f.intent.aimYaw);
+  let best = maxRange;
+  let found = false;
+  for (let i = 0; i < sim.fighters.length; i++) {
+    const t = sim.fighters[i];
+    if (t === f || !isTargetable(t)) continue;
+    const rx = t.state.pos.x - f.state.pos.x;
+    const rz = t.state.pos.z - f.state.pos.z;
+    const along = rx * dx + rz * dz;
+    if (along <= 0 || along > maxRange + AIM_SNAP_SLACK) continue;
+    const lateral = Math.abs(rx * dz - rz * dx);
+    if (lateral > AIM_SNAP_LATERAL + t.def.radius) continue;
+    if (!found || along < best) {
+      best = along;
+      found = true;
+    }
+  }
+  if (!found) return maxRange;
+  return Math.min(maxRange, Math.max(AIM_SNAP_MIN, best));
 }
 
 /** Allocate + attach an ability runtime, snap yaw, reset combo (§7.2). */
@@ -164,12 +206,14 @@ export function startUlt(sim: Sim, f: Fighter): void {
 
   if (f.def.id === 'eagle') {
     // Death From Above: dive point aimed ahead; soar telegraphed as the windup.
-    rt.px = aimX(f, DFA_DIVE_RANGE);
-    rt.pz = aimZ(f, DFA_DIVE_RANGE);
+    const d = aimPointDist(sim, f, DFA_DIVE_RANGE);
+    rt.px = aimX(f, d);
+    rt.pz = aimZ(f, d);
     emitCastEvents(sim, f, rt, rt.px, rt.pz, spec.radius ?? 1.2, 0, spec.untargetableT ?? 0);
   } else if (f.def.id === 'mole') {
-    rt.px = aimX(f, spec.range ?? 10);
-    rt.pz = aimZ(f, spec.range ?? 10);
+    const d = aimPointDist(sim, f, spec.range ?? 10);
+    rt.px = aimX(f, d);
+    rt.pz = aimZ(f, d);
     emitCastEvents(sim, f, rt, rt.px, rt.pz, spec.radius ?? 4, 0, spec.windup);
   } else if (spec.arcDeg !== undefined && spec.arcDeg < 360 && spec.range !== undefined) {
     emitCastEvents(sim, f, rt, f.state.pos.x, f.state.pos.z, spec.range, spec.arcDeg, spec.windup);
@@ -287,7 +331,7 @@ function activateUlt(sim: Sim, f: Fighter, rt: AbilityRuntime): void {
         base: spec.damage ?? 150,
         opts: ultOpts('stagger'),
         effects: spec.effects,
-        bonusVsRooted: spec.bonusVsRooted,
+        // +25% vs rooted is applied for all mole damage in dealDamage.
       });
       rt.didHit = true;
       toRecovery(rt);

@@ -2,12 +2,33 @@
  * HIPPO — "The Riverlord" (§8 #4). Huge barrel body and a colossal tusked maw.
  * Head-swing combo with a chomping finisher, River Rush charge special, and
  * the Colossal Chomp ultimate (maw gapes through the windup, slams at 55%).
+ *
+ * v1.1: shoulder hump + barrel with pink undertones and skin blotches, broad
+ * muzzle with nostril bumps, eye turrets and little round ears on top, a pink
+ * mouth with big curved tusks and incisors, stout four-toed legs.
  */
 
+import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, ramp, smooth01, IMPACT } from './Animator';
-import { makeMat, mesh, pivot, boxGeo, sphGeo, coneGeo, cylGeo, leg } from './parts';
+import {
+  makeMat,
+  part,
+  pivot,
+  sphGeo,
+  coneGeo,
+  cylGeo,
+  solidLeg,
+  eye,
+  noTone,
+  noOutline,
+  paint,
+  cellular,
+  col,
+  mixColor,
+  shade,
+} from './parts';
 
 export class HippoRig extends BaseRig {
   private readonly jaw: Joint;
@@ -16,63 +37,95 @@ export class HippoRig extends BaseRig {
     super(ANIMALS.hippo);
     this.hipDrop = 0.38;
     this.strideRate = 0.26;
+    this.stepScale = 1.05;
+    this.outlineScale = 1.25;
+    this.slams = [
+      { action: 'special', at: 0.3, radius: 1.9, kind: 'ring', forward: 1.3 },
+      { action: 'ultimate', at: IMPACT, radius: 2.3, kind: 'crack', forward: 1.5 },
+    ];
     const p = this.pal;
-    const mBody = makeMat(p.accent);
-    const mDark = makeMat(p.dark);
-    const mBelly = makeMat(p.belly);
-    const mTusk = makeMat(p.bone);
-    const mBlack = makeMat(p.eye);
+    const skin = mixColor(p.accent, 0x7d6a78, 0.3);
+    const pink = mixColor(p.belly, 0xe7a79c, 0.55);
+    const mBody = makeMat(skin);
+    const mDark = makeMat(shade(skin, -0.25));
+    const mPink = makeMat(pink);
+    const mMouth = makeMat(0xc9657a);
+    const mTusk = makeMat(0xf2e8cf);
+    const mNostril = makeMat(0x2a1d22);
+    const mNail = makeMat(0x4a3a3e);
+
+    const pinkC = col(pink);
+    const cell: [number, number] = [0, 0];
+    const hide = (pp: THREE.Vector3, n: THREE.Vector3, c: THREE.Color): void => {
+      // Pink flush on the lower flanks + faint mottling.
+      const low = n.y < -0.1 ? Math.min(1, (-n.y - 0.1) * 1.6) : 0;
+      c.lerp(pinkC, low * 0.7);
+      cellular(pp.x * 1.3, pp.y, pp.z, 0.28, cell);
+      if (cell[0] < 0.07) c.multiplyScalar(0.9);
+    };
 
     const bodyN = pivot(0, 0.98, 0);
     this.bodyRoot.add(bodyN);
-    const barrel = mesh(sphGeo(0.62, 9, 7), mBody, 0, 0, -0.1);
-    barrel.scale.set(1.05, 0.95, 1.7);
-    bodyN.add(barrel);
-    const belly = mesh(sphGeo(0.55, 8, 6), mBelly, 0, -0.22, -0.1);
-    belly.scale.set(0.95, 0.75, 1.55);
-    bodyN.add(belly);
+    bodyN.add(paint(part(sphGeo(0.62, 11, 8), mBody, 0, 0, -0.1, 1.05, 0.95, 1.7), hide));
+    bodyN.add(paint(part(sphGeo(0.5, 9, 6), mBody, 0, 0.12, 0.45, 1.05, 0.95, 0.9), hide)); // shoulder hump
+    bodyN.add(part(sphGeo(0.55, 9, 6), mPink, 0, -0.26, -0.1, 0.92, 0.7, 1.5)); // belly
 
     // Massive head + hinged maw.
     const headN = pivot(0, 0.02, 0.95);
     bodyN.add(headN);
-    headN.add(mesh(boxGeo(0.72, 0.52, 0.6), mBody, 0, 0.1, 0.1));
-    headN.add(mesh(boxGeo(0.6, 0.34, 0.55), mBody, 0, -0.02, 0.55)); // snout
-    headN.add(mesh(coneGeo(0.06, 0.14, 5), mDark, -0.28, 0.42, -0.1)); // ears
-    headN.add(mesh(coneGeo(0.06, 0.14, 5), mDark, 0.28, 0.42, -0.1));
-    headN.add(mesh(sphGeo(0.06, 5, 4), mDark, -0.24, 0.34, 0.28)); // eye bumps
-    headN.add(mesh(sphGeo(0.06, 5, 4), mDark, 0.24, 0.34, 0.28));
-    headN.add(mesh(sphGeo(0.028, 5, 4), mBlack, -0.24, 0.37, 0.33));
-    headN.add(mesh(sphGeo(0.028, 5, 4), mBlack, 0.24, 0.37, 0.33));
+    headN.add(paint(part(sphGeo(0.34, 10, 7), mBody, 0, 0.12, 0.06, 1.08, 0.85, 1.0), hide)); // cranium
+    headN.add(paint(part(sphGeo(0.32, 10, 7), mBody, 0, 0.0, 0.5, 1.08, 0.62, 0.92), hide)); // broad muzzle
+    headN.add(part(sphGeo(0.26, 8, 5), mPink, 0, -0.1, 0.56, 1.15, 0.45, 0.85)); // upper lip
+    for (const sx of [-1, 1]) {
+      headN.add(part(sphGeo(0.08, 7, 5), mBody, sx * 0.12, 0.17, 0.74, 1, 0.75, 1)); // nostril bump
+      headN.add(noOutline(noTone(part(sphGeo(0.03, 5, 3), mNostril, sx * 0.12, 0.22, 0.77, 1.3, 0.5, 0.8))));
+      headN.add(part(sphGeo(0.085, 7, 5), mBody, sx * 0.23, 0.33, 0.24, 1, 0.8, 1)); // eye turret
+      const e = eye({ r: 0.04, iris: 0x4a2a1c, side: sx, lateral: 0.55 });
+      e.position.set(sx * 0.24, 0.36, 0.29);
+      headN.add(e);
+      headN.add(part(sphGeo(0.07, 6, 4), mDark, sx * 0.25, 0.4, -0.1, 1, 1.1, 0.5)); // round ears
+      headN.add(noOutline(part(sphGeo(0.04, 5, 3), mPink, sx * 0.25, 0.4, -0.075, 1, 1, 0.3)));
+    }
     const jawN = pivot(0, -0.2, 0.12);
     headN.add(jawN);
-    jawN.add(mesh(boxGeo(0.62, 0.26, 0.68), mDark, 0, -0.1, 0.38));
-    // Tusks rising from the lower jaw.
-    const tuskL = mesh(coneGeo(0.05, 0.28, 5), mTusk, -0.24, 0.1, 0.68);
-    const tuskR = mesh(coneGeo(0.05, 0.28, 5), mTusk, 0.24, 0.1, 0.68);
-    tuskL.rotation.x = 0.25;
-    tuskR.rotation.x = 0.25;
-    jawN.add(tuskL, tuskR);
-    jawN.add(mesh(coneGeo(0.035, 0.14, 5), mTusk, -0.12, 0.06, 0.72));
-    jawN.add(mesh(coneGeo(0.035, 0.14, 5), mTusk, 0.12, 0.06, 0.72));
+    jawN.add(part(sphGeo(0.33, 9, 6), mDark, 0, -0.1, 0.38, 1.02, 0.55, 1.1)); // lower jaw
+    jawN.add(noOutline(part(sphGeo(0.27, 8, 4), mMouth, 0, 0.02, 0.42, 1.0, 0.18, 0.95))); // mouth
+    // Big curved tusks + incisors from the lower jaw.
+    for (const sx of [-1, 1]) {
+      const tusk = part(coneGeo(0.06, 0.32, 6), mTusk, sx * 0.25, 0.12, 0.66, 1, 1, 0.8, 0.3, 0, -sx * 0.18);
+      jawN.add(noTone(tusk));
+      jawN.add(noTone(part(coneGeo(0.035, 0.15, 5), mTusk, sx * 0.1, 0.07, 0.74, 1, 1, 1, 0.35)));
+    }
 
-    // Stout legs.
-    const mkLeg = (x: number, z: number): Joint => {
-      const g = leg(mBody, 0.17, 0.15, 0.62, mDark);
+    // Stout four-toed legs.
+    const mkLeg = (x: number, z: number, back: boolean): Joint => {
+      const g = solidLeg({
+        mat: mBody,
+        footMat: mDark,
+        clawMat: mNail,
+        len: 0.62,
+        rTop: back ? 0.26 : 0.23,
+        rBot: 0.15,
+        foot: 'pad',
+        toes: 4,
+        bend: 0,
+      });
       g.position.set(x, -0.36, z);
       bodyN.add(g);
       return this.joint(g);
     };
 
-    // Tiny tail.
+    // Little paddle tail.
     const tailN = pivot(0, 0.22, -1.05);
     tailN.rotation.x = 0.9;
     bodyN.add(tailN);
-    tailN.add(mesh(cylGeo(0.045, 0.03, 0.3, 5), mDark, 0, -0.15, 0));
+    tailN.add(part(cylGeo(0.045, 0.03, 0.26, 5), mDark, 0, -0.13, 0));
+    tailN.add(part(sphGeo(0.05, 5, 3), mDark, 0, -0.28, 0, 1.3, 1, 0.4));
 
     this.body = this.joint(bodyN);
     this.head = this.joint(headN);
     this.jaw = this.joint(jawN);
-    this.legs = [mkLeg(-0.42, 0.62), mkLeg(0.42, 0.62), mkLeg(-0.42, -0.68), mkLeg(0.42, -0.68)];
+    this.legs = [mkLeg(-0.42, 0.62, false), mkLeg(0.42, 0.62, false), mkLeg(-0.42, -0.68, true), mkLeg(0.42, -0.68, true)];
     this.tail = this.joint(tailN);
     this.finalize();
   }

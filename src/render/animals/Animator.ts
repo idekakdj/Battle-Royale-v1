@@ -17,7 +17,21 @@
 import * as THREE from 'three';
 import type { AnimalId, BuffState, FighterAction, FighterState } from '../../core/types';
 import { ANIMALS, type AnimalDef } from '../../config/animals';
-import { makePalette, type Palette, makeMat, mesh, coneGeo, sphGeo } from './parts';
+import { makePalette, type Palette, makeMat, mesh, coneGeo, sphGeo, mixColor } from './parts';
+import { bakeRig } from './bake';
+import { getQualityVersion, tierProfile } from '../quality';
+import { getFxSink, type SlamKind } from '../fxBus';
+
+/** A ground-impact moment inside an action (fires the slam decal / dust ring). */
+export interface SlamSpec {
+  action: FighterAction;
+  /** Action progress u at which it fires (e.g. IMPACT). */
+  at: number;
+  radius: number;
+  kind: SlamKind;
+  /** Metres in front of the fighter where the impact lands. */
+  forward: number;
+}
 
 /** Render contract for one fighter's visual body (BLUEPRINT §5.1, verbatim). */
 export interface AnimalRig {
@@ -218,11 +232,31 @@ export abstract class BaseRig implements AnimalRig {
   protected timePhase = 0;
   protected deathT = 0;
 
+  /** Countershading strengths used by the bake (darker back / lighter belly). */
+  protected toneBack = 0.2;
+  protected toneBelly = 0.28;
+  /** Outline thickness multiplier (bigger animals → slightly thicker). */
+  protected outlineScale = 1;
+  /** Footstep dust size (0 = no footsteps, e.g. the python). */
+  protected stepScale = 0.7;
+  /** Ground-impact moments (slam decals) — per animal. */
+  protected slams: SlamSpec[] = [];
+
+  /** Baked triangle count (budget check / demo readout). */
+  triangleCount = 0;
+
   private readonly jointList: Joint[] = [];
-  private readonly mats: THREE.MeshStandardMaterial[] = [];
+  private readonly mats: THREE.Material[] = [];
   private readonly mound: THREE.Group;
+  private outlineMesh: THREE.SkinnedMesh | null = null;
+  private depthMesh: THREE.SkinnedMesh | null = null;
+  private outlineWidth: { value: number } | null = null;
+  private outlineOn = false;
+  private qualityVer = -1;
   private prevAction: FighterAction = 'idle';
   private prevActionT = 0;
+  private prevU = 0;
+  private lastStep = 0;
   private fadeT = FADE_DUR;
   private curOpacity = 1;
 
@@ -251,13 +285,35 @@ export abstract class BaseRig implements AnimalRig {
     return j;
   }
 
-  /** Collect materials for opacity control. Call once at the end of the ctor. */
+  /**
+   * Bake every part into one skinned mesh (+ glow + outline hull) and collect
+   * materials for opacity control. Call once at the end of the ctor, after
+   * all joints are registered.
+   */
   protected finalize(): void {
-    this.bodyRoot.traverse((o) => {
-      if (o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
-        if (!this.mats.includes(o.material)) this.mats.push(o.material);
-      }
+    const nodes = new Set<THREE.Object3D>();
+    for (const j of this.jointList) nodes.add(j.node);
+    const res = bakeRig(this.bodyRoot, nodes, {
+      back: this.toneBack,
+      belly: this.toneBelly,
+      outlineColor: mixColor(this.pal.darker, 0x140d08, 0.72),
     });
+    for (const m of res.materials) this.mats.push(m);
+    this.depthMesh = res.depth;
+    this.outlineMesh = res.outline;
+    this.outlineWidth = res.outlineWidth;
+    this.triangleCount = res.triangles;
+    this.applyQuality();
+  }
+
+  private applyQuality(): void {
+    this.qualityVer = getQualityVersion();
+    this.outlineOn = tierProfile().outlines;
+    if (this.outlineWidth !== null) {
+      const base = 0.021 * this.outlineScale;
+      this.outlineWidth.value = base;
+    }
+    if (this.outlineMesh !== null) this.outlineMesh.visible = this.outlineOn && this.curOpacity > 0.97;
   }
 
   /** Free all geometries/materials owned by this rig. */
@@ -284,13 +340,23 @@ export abstract class BaseRig implements AnimalRig {
     this.gaitPhase += dt * speed * this.strideRate * Math.PI * 2;
 
     // Action-change detection (also re-trigger when the same action restarts).
+    const u0 = state.actionDur > 1e-6 ? Math.min(1, state.actionT / state.actionDur) : 0;
     if (state.action !== this.prevAction || state.actionT + 0.05 < this.prevActionT) {
       for (let i = 0; i < this.jointList.length; i++) this.jointList[i].snapshot();
       this.fadeT = 0;
       if (state.action === 'dead') this.deathT = 0;
+      const was = this.prevAction;
+      if ((was === 'jump' || was === 'glide') && state.action !== 'jump' && state.action !== 'glide') {
+        const sink = getFxSink();
+        if (sink !== null) sink.land(this.root, this.root.position.x, this.root.position.z, 0.9 + this.def.radius * 0.5);
+      }
       this.prevAction = state.action;
+      this.prevU = 0;
     }
     this.prevActionT = state.actionT;
+    this.emitFx(state, u0, speed);
+    this.prevU = u0;
+    if (getQualityVersion() !== this.qualityVer) this.applyQuality();
     this.fadeT += dt;
     if (state.action === 'dead') this.deathT += dt;
 
@@ -333,6 +399,31 @@ export abstract class BaseRig implements AnimalRig {
       const m = this.mats[i];
       m.opacity = o;
       m.transparent = transparent;
+    }
+    if (this.depthMesh !== null) this.depthMesh.visible = transparent;
+    if (this.outlineMesh !== null) this.outlineMesh.visible = this.outlineOn && o > 0.97;
+  }
+
+  /** Footfall dust, slam decals (at the exact animation instant). */
+  private emitFx(state: FighterState, u: number, speed: number): void {
+    const sink = getFxSink();
+    if (sink === null) return;
+    const x = this.root.position.x;
+    const z = this.root.position.z;
+    if (state.action === 'run' && this.stepScale > 0 && speed > 1.2 && !state.airborne) {
+      const step = Math.floor(this.gaitPhase / Math.PI);
+      if (step !== this.lastStep) {
+        this.lastStep = step;
+        sink.footstep(this.root, x, z, this.stepScale * (0.6 + 0.4 * Math.min(1, speed / this.def.speed)));
+      }
+    }
+    for (let i = 0; i < this.slams.length; i++) {
+      const s = this.slams[i];
+      if (s.action !== state.action) continue;
+      if (this.prevU < s.at && u >= s.at) {
+        const yaw = this.root.rotation.y;
+        sink.slam(this.root, x + Math.sin(yaw) * s.forward, z + Math.cos(yaw) * s.forward, s.radius, this.accent, s.kind);
+      }
     }
   }
 
