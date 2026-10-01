@@ -2898,3 +2898,33 @@
   background: radial-gradient(ellipse at 50% 50%, rgba(238, 230, 255, 0.55) 0%, rgba(168, 128, 255, 0.5) 55%, rgba(110, 70, 220, 0.4) 100%);
   mix-blend-mode: screen;
 }
+
+/* ── v1.3.1: FPS counter overlay (src/ui/FpsCounter.ts) ──────────────────── */
+.gk-fps {
+  position: fixed;
+  top: 64px;
+  right: 26px;
+  z-index: 9000;
+  pointer-events: none;
+  padding: 4px 9px;
+  border-radius: 3px;
+  border: 1px solid var(--gk-panel-border, rgba(217, 164, 65, 0.35));
+  background: rgba(20, 17, 13, 0.62);
+  font: 600 12px/1.2 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  letter-spacing: 0.02em;
+  color: #e8d8b0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  font-variant-numeric: tabular-nums;
+}
+.gk-fps[hidden] {
+  display: none;
+}
+.gk-fps.is-good {
+  color: #9be37a;
+}
+.gk-fps.is-ok {
+  color: #f0c24a;
+}
+.gk-fps.is-bad {
+  color: #ff6a55;
+}

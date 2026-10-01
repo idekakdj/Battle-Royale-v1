@@ -260,6 +260,15 @@ export class SettingsPanel {
       this.commit();
     });
 
+    // v1.3.1: FPS counter overlay (`showFps`, default off). The overlay re-reads
+    // the stored setting itself, so committing is all that is needed.
+    const fpsInput = el('input', { class: 'gk-settings__check', attrs: { type: 'checkbox' } });
+    fpsInput.checked = this.settings.showFps;
+    fpsInput.addEventListener('change', () => {
+      this.settings = { ...this.settings, showFps: fpsInput.checked };
+      this.commit();
+    });
+
     return el('div', { class: 'gk-settings__group' }, [
       el('h3', { class: 'gk-settings__heading gk-display', text: 'View' }),
       el('div', { class: 'gk-settings__row gk-settings__row--seg' }, [
@@ -274,6 +283,10 @@ export class SettingsPanel {
       el('label', { class: 'gk-settings__toggle' }, [
         cross,
         el('span', { class: 'gk-settings__label', text: 'Crosshair dot (first person)' }),
+      ]),
+      el('label', { class: 'gk-settings__toggle' }, [
+        fpsInput,
+        el('span', { class: 'gk-settings__label', text: 'Show FPS counter' }),
       ]),
       el('p', {
         class: 'gk-settings__hint',

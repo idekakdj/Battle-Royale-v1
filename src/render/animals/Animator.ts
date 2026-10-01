@@ -31,6 +31,7 @@ import { getQualityVersion, tierProfile } from '../quality';
 import { getFxSink, type SlamKind } from '../fxBus';
 import type { FpEyeSample, FpLimb, FpPoseCtx, FpProfile } from './fp/types';
 import { clampLength3, eyeWorldOffset, runBob, runSway } from './fp/math';
+import { FpClipControl } from './fp/clip';
 
 /** A ground-impact moment inside an action (fires the slam decal / dust ring). */
 export interface SlamSpec {
@@ -297,6 +298,8 @@ export abstract class BaseRig implements AnimalRig {
   private fpxShadow: THREE.SkinnedMesh | null = null;
   /** Full index of a filtered mesh's original (non-indexed) draw = null; filtered = these. */
   private readonly fpxFiltered = new Map<THREE.BufferGeometry, THREE.BufferAttribute>();
+  /** Screen-space clear-zone control for this rig's colour materials (fp/clip.ts). */
+  private fpxClip: FpClipControl | null = null;
   private fpxNames: Map<string, Joint> | null = null;
   private fpxProfile: FpProfile | null = null;
   /** Profile whose pose hook is still blending (kept while the FP weight fades out). */
@@ -369,6 +372,10 @@ export abstract class BaseRig implements AnimalRig {
     this.fpxBaked = [res.body];
     if (res.glow !== null) this.fpxBaked.push(res.glow);
     if (res.outline !== null) this.fpxBaked.push(res.outline);
+    // Own-rig colour materials (per rig): the first-person clear zone patches these, never another fighter's.
+    const colorMats: THREE.Material[] = [...res.materials];
+    if (res.outlineMaterial !== null) colorMats.push(res.outlineMaterial);
+    this.fpxClip = new FpClipControl(colorMats);
     this.fpxResolveNames();
     this.applyQuality();
   }
@@ -453,6 +460,8 @@ export abstract class BaseRig implements AnimalRig {
     const wantOn = on && prof !== null && prof.hide.length > 0;
     if (wantOn === this.fpxHiddenOn) return;
     this.fpxHiddenOn = wantOn;
+    // The screen-space clear zone is on exactly while the profile's parts are hidden (camera at the eye).
+    if (this.fpxClip !== null) this.fpxClip.set(wantOn && prof !== null ? prof.clip : undefined);
     if (!wantOn || prof === null) {
       for (const [geo] of this.fpxFiltered) geo.setIndex(null);
       if (this.fpxShadow !== null) this.fpxShadow.visible = false;
@@ -480,19 +489,31 @@ export abstract class BaseRig implements AnimalRig {
       let attr = this.fpxFiltered.get(geo);
       // Rebuild each time: the hide list is per profile (cheap, init-time-ish).
       const si = geo.getAttribute('skinIndex');
+      const sw = geo.getAttribute('skinWeight');
       const pos = geo.getAttribute('position');
       const nv = pos.count;
       const idx = new Uint32Array(nv);
       let n = 0;
       let dropped = 0;
       for (let t = 0; t + 2 < nv; t += 3) {
-        const rule = hide.get(si.getX(t));
+        // A triangle is hidden when ANY of its vertices is influenced (weight > 0) by a hidden bone, so no fragment of a hidden
+        // part (a triangle straddling the head / jaw / horn, an outline-hull sliver, a glow eye) can ever survive. A bone with a
+        // `keepFront` threshold keeps the triangles whose centroid lies at or ahead of it (profiles that want a visible snout tip).
         let visible = true;
-        if (rule !== undefined) {
-          visible = false;
-          if (rule !== Infinity) {
+        for (let v = 0; v < 3 && visible; v++) {
+          for (let k = 0; k < 4; k++) {
+            if (sw.getComponent(t + v, k) <= 0) continue;
+            const rule = hide.get(si.getComponent(t + v, k));
+            if (rule === undefined) continue;
+            if (rule === Infinity) {
+              visible = false;
+              break;
+            }
             const z = (pos.getZ(t) + pos.getZ(t + 1) + pos.getZ(t + 2)) / 3;
-            if (z >= rule) visible = true;
+            if (z < rule) {
+              visible = false;
+              break;
+            }
           }
         }
         if (visible) {

@@ -114,18 +114,41 @@ export interface FpEyeSample {
   near: number;
 }
 
+/**
+ * Screen-space "safe zone" (centre of the screen, fractions of the screen WIDTH / HEIGHT) in which NO fragment of the own
+ * rig is ever drawn in first person — where the crosshair and the aim live. See `fp/clip.ts`.
+ */
+export interface FpClip {
+  /** Width of the safe zone as a fraction of the screen width (0..1), centred. */
+  w: number;
+  /** Height of the safe zone as a fraction of the screen height (0..1), centred. */
+  h: number;
+}
+
 export interface FpProfile {
   animal: AnimalId;
   /** Camera eye in rig-local rest space. */
   eye: FpEye;
-  /** Joint names whose OWN triangles are hidden for the local player (head, neck, mane, ears, beak, …). */
+  /**
+   * Joint names whose OWN triangles are hidden for the local player (head, neck, mane, ears, beak, jaw …). A triangle is hidden
+   * when ANY of its vertices is skinned to a hidden bone (so no half-drawn head part can survive), in the body, glow and
+   * outline-hull meshes alike.
+   */
   hide: string[];
   /**
    * Partial hide: for a joint listed in `hide`, triangles whose rest-pose
    * forward coordinate is ≥ this value stay visible (snout tips, beaks, jaws
    * that should appear at the bottom of the view). Key = joint name.
+   * NOT used by the animals with an enforced clear view (crocodile, hippo, rhino, eagle): a cut through a head mesh leaves
+   * fragmentary geometry.
    */
   keepFront?: Record<string, number>;
+  /**
+   * Generic screen-space clear zone: every own-rig fragment (body, glow, outline hull) inside it is discarded in first
+   * person, whatever the pose / camera. Enabled for the animals whose own model used to get in the way (crocodile, hippo,
+   * rhino, eagle); absent = no clipping, the rig renders as before.
+   */
+  clip?: FpClip;
   /** Camera near plane (m) — small enough that visible limbs never clip. */
   nearPlane: number;
   /** Joint whose motion the eye follows (default `head`). */

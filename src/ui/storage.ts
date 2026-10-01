@@ -36,6 +36,8 @@ export interface GkSettings {
   fpFov: number;
   /** Centre crosshair dot in first person (default on). */
   crosshair: boolean;
+  /** v1.3.1: FPS counter overlay at the top-right (default off). */
+  showFps: boolean;
 }
 
 /** Camera view mode (v1.3). */
@@ -67,6 +69,7 @@ export const DEFAULT_SETTINGS: GkSettings = {
   view: 'third',
   fpFov: FP_FOV_DEFAULT_SETTING,
   crosshair: true,
+  showFps: false,
 };
 
 function clampSensitivity(v: unknown): number {
@@ -118,6 +121,7 @@ export function loadSettings(): GkSettings {
       view: parsed.view === 'first' ? 'first' : 'third',
       fpFov: clampFpFovSetting(parsed.fpFov),
       crosshair: parsed.crosshair !== false,
+      showFps: parsed.showFps === true,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

@@ -30,6 +30,7 @@ import {
   loadDifficulty,
 } from './ui';
 import { MatchController } from './match/MatchController';
+import { mountFpsCounter } from './ui/FpsCounter';
 
 /** Create (once) the canvas the renderer will draw into, behind the UI. */
 function ensureCanvas(): HTMLCanvasElement {
@@ -143,6 +144,7 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement): void {
 async function boot(): Promise<void> {
   const canvas = ensureCanvas();
   const root = ensureAppRoot();
+  mountFpsCounter(); // v1.3.1: shown only when Settings → "Show FPS counter" is on
 
   const params = new URLSearchParams(window.location.search);
   const demoName = params.get('demo');

@@ -17,6 +17,14 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.3.1] - 2026-10-01
+
+### Added
+- **FPS counter:** an optional readout at the top-right showing your frame rate and frame time, coloured green, amber or red. Turn it on in Settings → View → "Show FPS counter". It works in the lobby, menus and matches.
+
+### Fixed
+- **First person is no longer blocked by your own model** for the Crocodile, Hippo, Rhino and Eagle. Their head, snout, jaws, tusks, horn and beak are fully hidden (no more half-drawn jaws), the middle of the screen is always clear of your own body in every pose including jumping, attacking and ultimates, and the limbs and wings that remain are smaller and tucked into the screen edges. The Eagle now shows only its wingtips at the sides.
+
 ## [1.3.0] - 2026-10-01
 
 ### Added
@@ -117,7 +125,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.0.0...v1.1.0

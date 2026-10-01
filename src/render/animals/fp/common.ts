@@ -66,6 +66,35 @@ export function pin(c: FpPoseCtx, joint: string, len: number, t: Tip, w = 1): vo
   c.limb(joint, tipLimb(len, t.x, t.y, t.z, t.down, t.out ?? 0, t.roll ?? 0, w));
 }
 
+/** Reference view the edge viewmodels are authored against: 85 degree horizontal FOV at 16:9 (the defaults). */
+const REF_TAN_H = Math.tan((85 / 2) * (Math.PI / 180));
+const REF_TAN_V = REF_TAN_H / (16 / 9);
+
+/**
+ * A tip target from SCREEN coordinates of the reference view: `nx` / `ny` are NDC (−1..1, +x right, +y up) of the tip at
+ * `depth` metres ahead of the eye. Authoring aid for viewmodels that must hug the screen edges (the clear-view animals).
+ */
+export function edgeTip(nx: number, ny: number, depth: number, down: number, out = 0, roll = 0): Tip {
+  return { x: nx * depth * REF_TAN_H, y: ny * depth * REF_TAN_V, z: depth, down, out, roll };
+}
+
+/**
+ * Pull body joints toward their rest pose (`k` 0 = fully at rest, 1 = unchanged): lunges, rears and pitches would otherwise
+ * swing the barrel / shoulders / hips up around the eye of a low-slung animal. Run after the shared pose.
+ */
+export function calmJoints(c: FpPoseCtx, names: readonly string[], k: number): void {
+  for (const n of names) {
+    const j = c.j(n);
+    if (j === undefined) continue;
+    j.rx *= k;
+    j.ry *= k;
+    j.rz *= k;
+    j.px *= k;
+    j.py *= k;
+    j.pz *= k;
+  }
+}
+
 /** Options for the shared two-forelimb (paws / arms / claws) viewmodel. */
 export interface PawOpts {
   /** Limb shaft length (m). */
@@ -89,6 +118,10 @@ export interface PawOpts {
   wind3?: Tip;
   /** Which limb strikes on attack1 / attack2: 'right' | 'left'. */
   first: 'right' | 'left';
+  /** Uniform scale of the pinned limbs (default 1): the clear-view animals use small, edge-hugging limbs. */
+  scale?: number;
+  /** Airborne (jump / fall) tip of the RIGHT limb (left mirrors): held still instead of striding. Default: the run stride. */
+  air?: Tip;
 }
 
 /**
@@ -112,6 +145,9 @@ export function pawPose(c: FpPoseCtx, o: PawOpts): void {
     const b = Math.sin(t * 1.7) * 0.012;
     rightTip = { ...right, y: right.y + b };
     leftTip = { ...left, y: left.y + b };
+  } else if (act === 'jump' && o.air !== undefined) {
+    rightTip = { ...o.air };
+    leftTip = mirrorTip(o.air);
   } else if (act === 'run' || act === 'jump') {
     const k = act === 'run' ? c.run : 0.5;
     const pR = c.gait;
@@ -165,6 +201,11 @@ export function pawPose(c: FpPoseCtx, o: PawOpts): void {
     wR = 0;
     wL = 0; // ultimate / knockdown / dead / grabbed …: paws stay on the body
   }
-  if (wR > 0) pin(c, o.right, o.len, rightTip, wR);
-  if (wL > 0) pin(c, o.left, o.len, leftTip, wL);
+  const sc = o.scale ?? 1;
+  if (sc !== 1) {
+    c.J(o.right).s = sc;
+    c.J(o.left).s = sc;
+  }
+  if (wR > 0) pin(c, o.right, o.len * sc, rightTip, wR);
+  if (wL > 0) pin(c, o.left, o.len * sc, leftTip, wL);
 }
