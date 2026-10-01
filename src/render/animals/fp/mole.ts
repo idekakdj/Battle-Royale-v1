@@ -12,6 +12,7 @@ export const MOLE_FP: FpProfile = {
   animal: 'mole',
   eye: { forward: 0.42, up: 0.72, side: 0 },
   hide: ['head'],
+  ultClip: { w: 0.5, h: 0.6 },
   nearPlane: 0.035,
   follow: 1,
   bob: 0.012,

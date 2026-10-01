@@ -49,6 +49,7 @@ export const CLIP_CHUNKS = {
   vertexSet: 'vGkClip = gl_Position;',
   fragmentDecl: 'varying vec4 vGkClip;\nuniform vec3 uGkClip;',
   fragmentTest:
+    'if (uGkClip.z > 1.5) discard;\n' +
     'if (uGkClip.z > 0.5) { vec2 gkN = vGkClip.xy / vGkClip.w; if (abs(gkN.x) < uGkClip.x && abs(gkN.y) < uGkClip.y) discard; }',
 };
 
@@ -75,7 +76,7 @@ export function patchClipShader(shader: ShaderLike, uniform: { value: THREE.Vect
  * (`undefined`) the discard; the first enable patches the materials (one recompile), later toggles only flip the uniform.
  */
 export class FpClipControl {
-  /** x, y = half extents (NDC); z = 1 when active. */
+  /** x, y = half extents (NDC); z = 1 when the zone is active, 2 when the whole rig is discarded. */
   readonly uniform = { value: new THREE.Vector3(0, 0, 0) };
   private readonly mats: THREE.Material[];
   private patched = false;
@@ -84,17 +85,46 @@ export class FpClipControl {
     this.mats = mats.slice();
   }
 
+  private base = 0;
+  private all = false;
+
   get active(): boolean {
     return this.uniform.value.z > 0.5;
   }
 
+  /** True while the whole rig is discarded (see {@link hideAll}). */
+  get hidingAll(): boolean {
+    return this.uniform.value.z > 1.5;
+  }
+
   set(clip: FpClip | undefined): void {
     if (clip === undefined) {
-      this.uniform.value.z = 0;
-      return;
+      this.base = 0;
+    } else {
+      const h = clipHalfExtents(clip);
+      this.uniform.value.x = h.x;
+      this.uniform.value.y = h.y;
+      this.base = 1;
+      if (!this.patched) this.patch();
     }
-    const h = clipHalfExtents(clip);
-    this.uniform.value.set(h.x, h.y, 1);
+    this.apply();
+  }
+
+  /**
+   * Discard EVERY fragment of the rig (the eye is far from the body, e.g. while an ultimate director slides it away): only
+   * takes effect while a clip is active, and never recompiles once {@link prepare}d.
+   */
+  hideAll(on: boolean): void {
+    this.all = on;
+    this.apply();
+  }
+
+  private apply(): void {
+    this.uniform.value.z = this.base > 0 && this.all ? 2 : this.base;
+  }
+
+  /** Patch the materials now (one recompile) without enabling the clip, so a later `set` is only a uniform flip. */
+  prepare(): void {
     if (!this.patched) this.patch();
   }
 

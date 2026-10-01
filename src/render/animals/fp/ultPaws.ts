@@ -6,7 +6,7 @@
  */
 
 import type { FpPoseCtx } from './types';
-import { type Tip, mirrorTip, mixTip, pin } from './common';
+import { type Tip, bandTip, mirrorTip, mixTip, pin } from './common';
 import { bump, sm, ultClock } from './ultCam';
 
 export interface UltPawSet {
@@ -21,6 +21,10 @@ export interface UltPawSet {
   lunge: Tip;
   raised: Tip;
   slam: Tip;
+  /** Uniform scale of the pinned paws during the ultimate (default 1). */
+  scale?: number;
+  /** Keep the paws out of the centre of the screen: tips are pushed to the nearest edge band ({@link bandTip}). */
+  band?: boolean;
 }
 
 /** rest → wind → hit → rest, with the contact at ~0.1 s after the beat (claws land 0.08-0.09 s after it). */
@@ -46,8 +50,17 @@ export function lungeTip(o: UltPawSet, st: number, up = 0.0, peak = 0.09, down =
 
 /** Pin both paws; the left mirrors `l` (pass the mirrored-or-not tips explicitly). */
 export function pinPaws(c: FpPoseCtx, o: UltPawSet, r: Tip, l: Tip): void {
-  pin(c, o.right, o.len, r);
-  pin(c, o.left, o.len, l);
+  const sc = o.scale ?? 1;
+  if (o.band === true) {
+    r = bandTip(r);
+    l = bandTip(l);
+  }
+  if (sc !== 1) {
+    c.J(o.right).s = sc;
+    c.J(o.left).s = sc;
+  }
+  pin(c, o.right, o.len * sc, r);
+  pin(c, o.left, o.len * sc, l);
 }
 
 export function ultStageClock(): number {

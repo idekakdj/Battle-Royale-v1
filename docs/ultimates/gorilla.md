@@ -69,9 +69,10 @@ matches the flying boulder's geometry / colours / size (radius 0.65) so the hand
   Tracking cadence silent. Everything attenuated by `gainAt`.
 
 ## First-person notes (for the camera pass)
-- Beats: two short chest thumps (tiny pitch-down kicks of ≈ 1.5°, 40 ms). The FP viewmodel profile (`fp/gorilla.ts`) only pins the arms for attacks, so the ultimate should leave the arms unpinned (the body pose from `poseUltimate` is what the camera rides).
-- Rip: pitch the view DOWN ≈ 25° into the squat (eye drops ≈ 0.35 m), a 60 ms shudder; the slab rises into the bottom of the frame.
-- Hoist: pitch back up; the slab passes above the view (keep the near plane so it is not clipped); the dashed arc is the aid to aim.
+- **Clear view (ultimate only):** while the ultimate runs (`action === 'ultimate'`, every phase / stage) the own rig is screen-space clipped out of the centre 50% x 60% of the screen (`ultClip` in the FP profile, `fp/clip.ts`). The held slab is not drawn in first person (`hideProps: ['boulder-slab']`, its shadow still casts) and both arms are pinned as small fists at the screen edges keyed to the same keyframes (beats high and wide, rip low, hoist up the sides, throw forward-down). The normal first-person look (idle, run, attacks, block, ...) is unchanged. Measure with `await __gkFp.report()` (dev build): 0 safe-zone pixels, <= ~12% of the frame in every stage.
+- Beats: two short chest thumps (tiny pitch-down kicks of ≈ 1.5°, 40 ms). The FP viewmodel profile (`fp/gorilla.ts`) pins the arms as a viewmodel for the normal attacks; during the ultimate it pins them as small edge-hugging fists (see above) instead of letting the body pose swing the big arms into the lens.
+- Rip: pitch the view DOWN ≈ 25° into the squat (eye drops ≈ 0.35 m), a 60 ms shudder; the slab itself is not drawn in first person (it would fill the view) — the small edge fists and the dust / crack VFX carry the beat.
+- Hoist: pitch back up; the fists rise along the screen sides (the slab is not drawn); the dashed arc is the aid to aim.
 - Throw: a sharp pitch-forward kick (+3°) and FOV +4 % at the release, then the view follows the boulder's arc for ≈ 0.3 s and settles.
 - The yaw keeps following the aim during the heave (the sim turns the body toward the lock / aim), so the camera can stay on the mouse.
 

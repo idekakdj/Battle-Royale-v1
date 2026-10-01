@@ -46,6 +46,7 @@ Collapse: big dust cloud, shock rings, crack, flash, sparks; the crater decals f
 Dig scrabble + a swelling underground rumble + crackling crack sweep; pit opening boom then the sucking-whoosh bed (low-passed noise, cutoff rising and swirl-AM'd) over a trembling sub for the 2 s; collapse boom + crash + falling debris. Beds fade on an aborted cast (`onEnd`).
 
 ## First-person notes
+- **Clear view (ultimate only):** while the ultimate runs (`action === 'ultimate'`, every phase / stage) the own rig is screen-space clipped out of the centre 50% x 60% of the screen (`ultClip` in the FP profile, `fp/clip.ts`). The normal first-person look (idle, run, attacks, block, ...) is unchanged. Measure with `await __gkFp.report()` (dev build): 0 safe-zone pixels, <= ~12% of the frame in every stage.
 - Dig-in: pitch down and sink (eye height drops 0.3 m), dirt spray at the edges.
 - Tunnel: hide the body, keep a low ground-skimming view with the crack ahead; screen rumble.
 - Surface: rise to full eye height with a slight pitch up, then look at the pit centre (`ultimateStage` 1 `pos`) — the swirl should fill the lower view.

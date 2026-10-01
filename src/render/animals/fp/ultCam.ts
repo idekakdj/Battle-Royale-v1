@@ -53,6 +53,8 @@ export interface V3 {
 
 /** Rate (1/s) at which every channel relaxes to neutral once the ultimate ends (~0.35 s to settle). */
 export const RETURN_RATE = 7;
+/** Same hard pitch limit as the CameraRig applies with the director's offsets. */
+const ULT_VIEW_MAX = 1.5;
 
 // ── tiny maths helpers for directives ─────────────────────────────────────────
 
@@ -259,7 +261,7 @@ export interface UltDirector {
  * `pose(c)`): `stage` / `phase` mirror the snapshot, `st` = seconds since the last stage/phase change,
  * `pt` = seconds since the phase began, `t` = seconds since the cast began. Updated by {@link UltCamera}.
  */
-export const ultClock = { casting: false, stage: 0, phase: 'windup' as UltPhase, st: 0, pt: 0, t: 0 };
+export const ultClock = { casting: false, stage: 0, phase: 'windup' as UltPhase, st: 0, pt: 0, t: 0, view: 0, slide: 0 };
 
 /** Per-frame inputs the host supplies (reused object). */
 export interface UltEnv {
@@ -555,6 +557,14 @@ export class UltCamera {
     ultClock.pt = this.pt;
     ultClock.t = this.t;
     this.integrate(dt);
+    // The camera's effective pitch (mouse look + the director's offsets, as CameraRig composes it) so viewmodels that must stay
+    // glued to the screen during the ultimate (`ultViewLock`) can follow it 1:1. View kick / shake noise are left out.
+    const o = this.out;
+    let vp = clampNum(env.pitch, -ULT_VIEW_MAX, ULT_VIEW_MAX) + o.pitch;
+    if (o.lookW > 0) vp += (o.lookPitch - vp) * o.lookW;
+    ultClock.view = clampNum(vp + o.kick, -ULT_VIEW_MAX, ULT_VIEW_MAX);
+    // How far (m) the director has slid the eye away from the body (blink slides): while large the own body is seen from outside.
+    ultClock.slide = Math.hypot(this.slideX, this.slideY, this.slideZ);
   }
 
   // ── internals ─────────────────────────────────────────────────────────────

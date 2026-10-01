@@ -22,12 +22,18 @@ const HUNT_PAWS: UltPawSet = {
   lunge: { x: 0.28, y: -0.12, z: 1.55, down: -0.3, out: -0.1 },
   raised: { x: 0.5, y: 0.25, z: 0.75, down: -0.9, out: 0.2 },
   slam: { x: 0.25, y: -0.6, z: 1.3, down: 0.3, out: -0.05 },
+  // Clear-view rule for the ULTIMATE only (the normal look is approved and unchanged): small paws that stay at the edges.
+  scale: 0.5,
+  band: true,
 };
 
 export const LION_FP: FpProfile = {
   animal: 'lion',
   eye: { forward: 1.0, up: 1.36, side: 0 },
   hide: ['head', 'neck', 'mane', 'jaw'],
+  ultClip: { w: 0.5, h: 0.6 },
+  ultViewLock: true,
+  ultHide: ['body', 'legs.2', 'legs.3', 'tail', 'tail2'], // only the pinned fore paws remain during the ultimate
   nearPlane: 0.06,
   follow: 0.6,
   bob: 0.026,

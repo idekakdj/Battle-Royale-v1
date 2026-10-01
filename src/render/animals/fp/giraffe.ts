@@ -15,6 +15,7 @@ export const GIRAFFE_FP: FpProfile = {
   animal: 'giraffe',
   eye: { forward: 0.05, up: 3.7, side: 0 },
   hide: ['head', 'neck2'],
+  ultClip: { w: 0.5, h: 0.6 },
   nearPlane: 0.08,
   attackKick: 1.8,
   follow: 0.35,

@@ -29,9 +29,10 @@ import { makePalette, type Palette, makeMat, mesh, coneGeo, sphGeo, mixColor } f
 import { bakeRig } from './bake';
 import { getQualityVersion, tierProfile } from '../quality';
 import { getFxSink, type SlamKind } from '../fxBus';
-import type { FpEyeSample, FpLimb, FpPoseCtx, FpProfile } from './fp/types';
+import type { FpClip, FpEyeSample, FpLimb, FpPoseCtx, FpProfile } from './fp/types';
 import { clampLength3, eyeWorldOffset, runBob, runSway } from './fp/math';
 import { FpClipControl } from './fp/clip';
+import { ultClock } from './fp/ultCam';
 
 /** A ground-impact moment inside an action (fires the slam decal / dust ring). */
 export interface SlamSpec {
@@ -215,6 +216,8 @@ export class Joint {
 
 // ── BaseRig ──────────────────────────────────────────────────────────────────
 
+/** Director eye slide (m) above which the own rig is not drawn at all (first person, ult-only clip animals). */
+const SLIDE_HIDE = 0.45;
 const FADE_DUR = 0.1; // §11.3: 0.1 s cross-fade between actions
 const DEATH_FADE_START = 3.0; // §11.3: fade after 3 s ...
 const DEATH_FADE_DUR = 1.5; // ... over this long ...
@@ -375,6 +378,9 @@ export abstract class BaseRig implements AnimalRig {
     // Own-rig colour materials (per rig): the first-person clear zone patches these, never another fighter's.
     const colorMats: THREE.Material[] = [...res.materials];
     if (res.outlineMaterial !== null) colorMats.push(res.outlineMaterial);
+    // The depth-only twin (visible while the rig is translucent, e.g. the panther's stealth) must be clipped too, or it keeps
+    // occluding the world inside the clear zone with an invisible body.
+    colorMats.push(res.depth.material as THREE.Material);
     this.fpxClip = new FpClipControl(colorMats);
     this.fpxResolveNames();
     this.applyQuality();
@@ -453,27 +459,61 @@ export abstract class BaseRig implements AnimalRig {
 
   private fpxEyeInit = false;
   private fpxHiddenOn = false;
+  /** True while the local fighter's action is `ultimate` (drives the profile's `ultClip`). */
+  private fpxUlt = false;
+  /** Materials of the hidden props with their saved write flags (restored when first person ends). */
+  private fpxDepthOff = false;
+  private lastTransparent = false;
+  private fpxPropMats: { m: THREE.Material; c: boolean; d: boolean }[] = [];
 
-  /** Apply (`on`) or clear the triangle filter on the baked meshes for the active profile's hide list. */
-  private fpxFilter(on: boolean): void {
+  /** The screen-space clear zone that applies right now: `clip` always, `ultClip` during the own ultimate, none otherwise. */
+  private fpxClipSync(): void {
+    if (this.fpxClip === null) return;
     const prof = this.fpxProfile;
-    const wantOn = on && prof !== null && prof.hide.length > 0;
-    if (wantOn === this.fpxHiddenOn) return;
-    this.fpxHiddenOn = wantOn;
-    // The screen-space clear zone is on exactly while the profile's parts are hidden (camera at the eye).
-    if (this.fpxClip !== null) this.fpxClip.set(wantOn && prof !== null ? prof.clip : undefined);
-    if (!wantOn || prof === null) {
-      for (const [geo] of this.fpxFiltered) geo.setIndex(null);
-      if (this.fpxShadow !== null) this.fpxShadow.visible = false;
-      return;
+    let clip: FpClip | undefined;
+    if (this.fpxHiddenOn && prof !== null) clip = prof.clip ?? (this.fpxUlt ? prof.ultClip : undefined);
+    this.fpxClip.set(clip);
+    // While a clear zone applies, the translucent body's depth-only twin is switched off as well: it would keep occluding the
+    // world (victim, VFX) at the screen edges with an invisible body (the panther's stealth during its ultimate).
+    this.fpxDepthOff = clip !== undefined;
+    if (this.depthMesh !== null) this.depthMesh.visible = this.lastTransparent && !this.fpxDepthOff;
+  }
+
+  /** Stop drawing (colour + depth; the shadow caster keeps working) the named non-skinned props, or restore them. */
+  private fpxHideProps(names: readonly string[] | undefined): void {
+    for (const p of this.fpxPropMats) {
+      p.m.colorWrite = p.c;
+      p.m.depthWrite = p.d;
     }
+    this.fpxPropMats.length = 0;
+    if (names === undefined) return;
+    for (const name of names) {
+      const o = this.root.getObjectByName(name);
+      if (o === undefined) continue;
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) continue;
+      const ms = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const m of ms) {
+        this.fpxPropMats.push({ m, c: m.colorWrite, d: m.depthWrite });
+        m.colorWrite = false;
+        m.depthWrite = false;
+      }
+    }
+  }
+
+  /**
+   * Build the triangle filter of the baked meshes for the profile's hide list (+ `ultHide` while the own ultimate runs).
+   * Cheap (one pass over a few thousand vertices) and only run when first person hides parts or the ultimate starts / ends.
+   */
+  private fpxBuildIndex(prof: FpProfile): void {
     const body = this.fpxBodyMesh;
     if (body === null) return;
     // Bones to hide (name → bone index), with optional keep-front thresholds.
     const bones = body.skeleton.bones as THREE.Object3D[];
     const hide = new Map<number, number>();
     const names = this.fpxNames as Map<string, Joint>;
-    for (const name of prof.hide) {
+    const list = this.fpxUlt && prof.ultHide !== undefined ? [...prof.hide, ...prof.ultHide] : prof.hide;
+    for (const name of list) {
       let bi = -1;
       if (name === '_root') bi = 0;
       else {
@@ -530,6 +570,27 @@ export abstract class BaseRig implements AnimalRig {
       this.fpxFiltered.set(geo, attr);
       geo.setIndex(attr);
     }
+  }
+
+  /** Apply (`on`) or clear the triangle filter on the baked meshes for the active profile's hide list. */
+  private fpxFilter(on: boolean): void {
+    const prof = this.fpxProfile;
+    const wantOn = on && prof !== null && prof.hide.length > 0;
+    if (wantOn === this.fpxHiddenOn) return;
+    this.fpxHiddenOn = wantOn;
+    // The screen-space clear zone is on exactly while the profile's parts are hidden (camera at the eye); `ultClip` only
+    // while the own ultimate runs. Patch the materials now (entering first person) so the ultimate itself never recompiles.
+    if (wantOn && prof !== null && prof.ultClip !== undefined && this.fpxClip !== null) this.fpxClip.prepare();
+    this.fpxClipSync();
+    this.fpxHideProps(wantOn && prof !== null ? prof.hideProps : undefined);
+    if (!wantOn || prof === null) {
+      for (const [geo] of this.fpxFiltered) geo.setIndex(null);
+      if (this.fpxShadow !== null) this.fpxShadow.visible = false;
+      return;
+    }
+    const body = this.fpxBodyMesh;
+    if (body === null) return;
+    this.fpxBuildIndex(prof);
     // Shadow proxy: the full silhouette keeps casting (colour/depth writes off).
     if (this.fpxShadow === null) {
       const src = body.geometry;
@@ -596,6 +657,13 @@ export abstract class BaseRig implements AnimalRig {
   private fpxTick(state: FighterState, speed: number, dt: number): void {
     const prof = this.fpxPose;
     if (prof === null) return;
+    const ult = state.action === 'ultimate';
+    if (ult !== this.fpxUlt) {
+      this.fpxUlt = ult;
+      this.fpxClipSync();
+      // `ultHide`: more parts (the body, hind legs, tail …) are hidden while the own ultimate runs.
+      if (this.fpxHiddenOn && prof.ultHide !== undefined && this.fpxProfile !== null) this.fpxBuildIndex(this.fpxProfile);
+    }
     const target = this.fpxProfile !== null ? 1 : 0;
     this.fpxW += (target - this.fpxW) * Math.min(1, dt * 9);
     if (target === 0 && this.fpxW < 0.01) {
@@ -719,6 +787,14 @@ export abstract class BaseRig implements AnimalRig {
   fpxAnchorPass(cx: number, cy: number, cz: number, yaw: number, look: number, amount: number): void {
     const list = this.fpxAnch;
     const prof = this.fpxPose;
+    // The ultimate director slid the eye away from the body (a blink): the own body would be seen from outside for a few
+    // frames, so while the slide is large the whole rig is discarded (only for the animals with an ult-only clear zone). Done
+    // here, right before the render, so it uses this frame's director output (no one-frame lag).
+    if (this.fpxClip !== null) {
+      const off =
+        prof !== null && this.fpxUlt && this.fpxHiddenOn && prof.ultClip !== undefined && ultClock.casting && ultClock.slide > SLIDE_HIDE;
+      if (off !== this.fpxClip.hidingAll) this.fpxClip.hideAll(off);
+    }
     if (list.length === 0 || prof === null) return;
     const camW = smooth01(amount);
     // Ease every pin toward its target (requested → 1, dropped → 0) and forget finished ones.
@@ -730,7 +806,9 @@ export abstract class BaseRig implements AnimalRig {
     }
     if (camW <= 0.001 || list.length === 0) return;
     this.root.updateMatrixWorld(true);
-    const a = look * (prof.viewPitch ?? 0.7);
+    // During the own ultimate a profile may lock the viewmodel to the camera's real (director-composed) pitch.
+    const locked = this.fpxUlt && prof.ultViewLock === true && ultClock.casting;
+    const a = locked ? ultClock.view : look * (prof.viewPitch ?? 0.7);
     const ca = Math.cos(a);
     const sa = Math.sin(a);
     const sy = Math.sin(yaw);
@@ -939,7 +1017,8 @@ export abstract class BaseRig implements AnimalRig {
       m.opacity = o;
       m.transparent = transparent;
     }
-    if (this.depthMesh !== null) this.depthMesh.visible = transparent;
+    this.lastTransparent = transparent;
+    if (this.depthMesh !== null) this.depthMesh.visible = transparent && !this.fpxDepthOff;
     if (this.outlineMesh !== null) this.outlineMesh.visible = this.outlineOn && o > 0.97 && !this.outlineClip;
   }
 

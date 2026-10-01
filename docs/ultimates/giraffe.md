@@ -51,6 +51,7 @@ Timeline to impact: 1.1 + 0.14 = 1.24 s.
   rising tension hum on the commit, the downswing whoosh timed to peak at the impact; slam: sub thud, timber-splitting crack, dust rumble, debris. Tracking cadence silent.
 
 ## First-person notes (for the camera pass)
+- **Clear view (ultimate only):** while the ultimate runs (`action === 'ultimate'`, every phase / stage) the own rig is screen-space clipped out of the centre 50% x 60% of the screen (`ultClip` in the FP profile, `fp/clip.ts`). The normal first-person look (idle, run, attacks, block, ...) is unchanged. Measure with `await __gkFp.report()` (dev build): 0 safe-zone pixels, <= ~12% of the frame in every stage.
 - Rear: pitch the view UP with the neck whip-back (the eye is ≈ 3.7 m up and moves with neck2; ≈ −8° to +20°), slow tremble roll ±0.5° through the tension hold.
 - Commit: settle the view on the circle; the eye tips forward as the neck arcs over: the slam is a fast pitch-DOWN (≈ 35°) over 0.14 s ending on the crater, FOV +6 % at the impact,
   a hard shake, then a bounce and a slow pitch back to level over the recovery (the head is hidden in first person, the forelegs stay hidden).

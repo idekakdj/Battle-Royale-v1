@@ -19,12 +19,18 @@ const EXEC_PAWS: UltPawSet = {
   lunge: { x: 0.26, y: -0.12, z: 1.45, down: -0.3, out: -0.1 },
   raised: { x: 0.5, y: 0.3, z: 0.7, down: -0.9, out: 0.2 },
   slam: { x: 0.25, y: -0.65, z: 1.25, down: 0.3, out: -0.05 },
+  // Clear-view rule for the ULTIMATE only (the normal look is approved and unchanged): small paws that stay at the edges.
+  scale: 0.5,
+  band: true,
 };
 
 export const PANTHER_FP: FpProfile = {
   animal: 'panther',
   eye: { forward: 0.86, up: 1.2, side: 0 },
   hide: ['head', 'neck', 'jaw'],
+  ultClip: { w: 0.5, h: 0.6 },
+  ultViewLock: true,
+  ultHide: ['body', 'legs.2', 'legs.3', 'tail', 'tail2'], // only the pinned fore paws remain during the ultimate
   nearPlane: 0.05,
   follow: 0.6,
   bob: 0.022,

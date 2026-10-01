@@ -11,6 +11,8 @@ export const PYTHON_FP: FpProfile = {
   animal: 'python',
   eye: { forward: 0.12, up: 1.62, side: 0 },
   hide: ['head', 'jaw', 'tongue', 'neckJ.2', 'neckJ.3'],
+  ultClip: { w: 0.5, h: 0.6 },
+  ultHide: ['coil', 'neckJ.0', 'neckJ.1', 'tailTip'], // the ultimate's camera can look down the whole length of the snake
   nearPlane: 0.06,
   attackKick: 1.5,
   follow: 0.75,

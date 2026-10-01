@@ -17,6 +17,11 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.3.2] - 2026-10-01
+
+### Fixed
+- **First-person ultimates no longer fill your screen** for the Lion, Gorilla, Giraffe, Mole, Python and Panther. While one of their ultimates runs, nothing of your own body is drawn in the middle of the screen, the limbs that remain are small and kept at the edges, the Gorilla's held boulder is no longer drawn in front of your face, and the Panther's ghost body no longer hides the target. Their normal first-person view is unchanged.
+
 ## [1.3.1] - 2026-10-01
 
 ### Added
@@ -125,7 +130,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.1.0...v1.2.0

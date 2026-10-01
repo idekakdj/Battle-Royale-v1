@@ -149,6 +149,23 @@ export interface FpProfile {
    * rhino, eagle); absent = no clipping, the rig renders as before.
    */
   clip?: FpClip;
+  /**
+   * Like `clip`, but the screen-space clear zone is active ONLY while the local player's ultimate runs (`action ===
+   * 'ultimate'`, every phase / stage including windup and recovery); the normal first-person look is untouched. Ignored when
+   * `clip` is set (always on). The materials are patched when first person is entered (not mid-fight), so the switch
+   * itself is just a uniform flip.
+   */
+  ultClip?: FpClip;
+  /**
+   * Joints hidden IN ADDITION to `hide` only while the own ultimate runs (the body / hind legs / tail of an animal whose
+   * ultimate camera looks down at its own back). The viewmodel limbs are pinned joints and stay out of this list.
+   */
+  ultHide?: string[];
+  /**
+   * Names (`Object3D.name`) of NON-skinned props under the rig root (the gorilla's held slab, …) that are not drawn in colour
+   * while the profile's parts are hidden (their shadow keeps casting). For props that would fill the view.
+   */
+  hideProps?: string[];
   /** Camera near plane (m) — small enough that visible limbs never clip. */
   nearPlane: number;
   /** Joint whose motion the eye follows (default `head`). */
@@ -164,6 +181,12 @@ export interface FpProfile {
   attackKick?: number;
   /** How much of the camera's look-pitch pinned limbs follow (0..1, default 0.7). */
   viewPitch?: number;
+  /**
+   * During the own ultimate the pinned limbs follow the camera's REAL pitch 1:1 (mouse look plus the ultimate director's
+   * pitch / look-at / kick), so the viewmodel stays where it was authored on the screen however the director tilts the view.
+   * Normal poses keep `viewPitch`.
+   */
+  ultViewLock?: boolean;
   /** Idle breathing sway amplitude in metres. Default 0.006. */
   idleSway?: number;
   /** Eye offsets (added to `eye`) while an action runs; eased on the rig side. */

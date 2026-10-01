@@ -78,6 +78,41 @@ export function edgeTip(nx: number, ny: number, depth: number, down: number, out
   return { x: nx * depth * REF_TAN_H, y: ny * depth * REF_TAN_V, z: depth, down, out, roll };
 }
 
+/** Rectangle (NDC half extents) that {@link bandTip} keeps tips out of: the 50% x 60% safe zone plus room for the limb's thickness. */
+const BAND_FX = 0.66;
+const BAND_FY = 0.74;
+/** Minimum depth (m) of a banded tip. */
+const BAND_DEPTH = 1.3;
+
+/**
+ * Push a tip that would land in the centre of the (reference) view out to the nearest edge band — preferably the BOTTOM band
+ * (a sweep then skims along the lower edge instead of crossing the middle), else the left / right side or the top. Tips already
+ * outside the centre keep their screen position. Every tip is also moved no nearer than {@link BAND_DEPTH} (same screen
+ * position, smaller limb) and points at least 0.25 rad down. Used by the ultimate viewmodels of the animals whose normal look
+ * is approved but whose ultimates must keep the middle of the screen clear.
+ */
+export function bandTip(t: Tip): Tip {
+  const nx = t.x / (t.z * REF_TAN_H);
+  const ny = t.y / (t.z * REF_TAN_V);
+  // Same screen position, but never nearer than BAND_DEPTH: a paw pinned close to the lens at the screen side is huge.
+  const z = Math.max(t.z, BAND_DEPTH);
+  // ... and always pointing forward-down (a raised / upward-pointing paw would stretch a tall shape along the screen side).
+  const down = Math.max(t.down, 0.25);
+  if (Math.abs(nx) >= BAND_FX || Math.abs(ny) >= BAND_FY) return { ...t, x: nx * z * REF_TAN_H, y: ny * z * REF_TAN_V, z, down };
+  const dR = BAND_FX - nx;
+  const dL = BAND_FX + nx;
+  const dT = BAND_FY - ny;
+  const dB = (BAND_FY + ny) * 0.6; // biased: most of the middle maps to the bottom edge
+  const m = Math.min(dR, dL, dT, dB);
+  let ox = nx;
+  let oy = ny;
+  if (m === dB) oy = -(BAND_FY + 0.24);
+  else if (m === dT) oy = BAND_FY + 0.16;
+  else if (m === dR) ox = BAND_FX + 0.2;
+  else ox = -(BAND_FX + 0.2);
+  return { ...t, x: ox * z * REF_TAN_H, y: oy * z * REF_TAN_V, z, down };
+}
+
 /**
  * Pull body joints toward their rest pose (`k` 0 = fully at rest, 1 = unchanged): lunges, rears and pitches would otherwise
  * swing the barrel / shoulders / hips up around the eye of a low-slung animal. Run after the shared pose.
