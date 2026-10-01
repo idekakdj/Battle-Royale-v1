@@ -1,4 +1,44 @@
-# Gladiator Kingdom — Balance Report (v1.2 WP-N on top of v1.1 WP-J)
+# Gladiator Kingdom — Balance Report (v1.3 ultimates on top of v1.2 WP-N and v1.1 WP-J)
+
+## v1.3: ten redesigned ultimates
+
+All ten ultimates were redesigned in v1.3 (one module, config, bot script, rig pose, VFX and audio file per animal; design notes in `docs/ultimates/<animal>.md`, raw sweeps in `docs/ultimates/<animal>-balance.txt`). Each animal's numbers live only in `src/config/ultimates/<animal>.ts`. Cost stays 100 charge. Targets: L3/L4 win rate about 4–18 %, L1/L2 at most about 30 %, 0 timeouts, about 1 ult per fighter per match.
+
+Win rate % by bot level (L1 Cub, L2 Fighter, L3 Veteran, L4 Apex). Method as in the v1.1 report: `N=60 LEVELS=1,2,3,4 npm run balance`, same seeds, shuffled seats, traps on. An N=60 cell carries roughly ±5 points of noise. The per-animal files were taken while the other animals' ultimates were still changing, so only each animal's own rows are read; the last column gives the larger sample taken for L3/L4.
+
+| Animal | Ultimate (old → new) | Before L1 / L2 / L3 / L4 | After L1 / L2 / L3 / L4 | Larger sample L3 / L4 |
+|---|---|---|---|---|
+| Lion | King's Roar → **Royal Hunt** | 8 / 10 / 8 / 7 | 12 / 7 / 3 / 7 | 3 / 8 (N=120) |
+| Gorilla | Primal Rampage → **Boulder Hurl** | 13 / 3 / 5 / 10 | 13 / 7 / 7 / 12 | 8 / 10 (N=200) |
+| Crocodile | Death Roll (v1.2 grab lunge) → **Death Roll** (lock, clamp, 3-revolution roll, toss) | 23 / 12 / 12 / 7 | 17 / 25 / 3 / 5 | 5 / 6 (N=120, from `crocodile.md`) |
+| Hippo | Colossal Chomp → **Riverlord's Flood** | 20 / 15 / 12 / 5 | 22 / 17 / 12 / 2 | 10 / 5 (N=300) |
+| Rhino | Seismic Stampede (3 s run-through) → **Seismic Stampede** (homing gore, carry, crush) | 13 / 13 / 7 / 2 | 13 / 13 / 8 / 8 | 8 / 5 (N=300) |
+| Eagle | Death From Above (aimed dive) → **Death From Above** (lock, reticle, committed stoop) | 3 / 12 / 5 / 8 | 3 / 13 / 20 / 17 | 16 / 12 (N=120) |
+| Panther | Night Prowl → **Shadow Execution** | 3 / 7 / 7 / 17 | 13 / 7 / 7 / 7 | 15 / 8 (N=120) |
+| Python | Constrictor's Embrace → **Coil Snare** | 5 / 5 / 15 / 7 | 5 / 7 / 12 / 12 | not taken |
+| Giraffe | Guillotine Spin → **Timber Fall** | 3 / 10 / 10 / 17 | 3 / 7 / 5 / 22 | 9 / 13 (N=200) |
+| Mole | Sinkhole → **Sinkhole Vortex** | 2 / 2 / 13 / 18 | 12 / 3 / 10 / 12 | 12 / 14 (N=120) |
+
+Combined run with all ten new ultimates in the same roster (`N=60 LEVELS=1,2,3,4`, final v1.3 phase 3 sim): win % L1 / L2 / L3 / L4
+
+| Animal | L1 | L2 | L3 | L4 |
+|---|---|---|---|---|
+| Lion | 10 | 7 | 2 | 7 |
+| Gorilla | 13 | 7 | 7 | 12 |
+| Crocodile | 15 | 30 | 12 | 13 |
+| Hippo | 22 | 17 | 12 | 2 |
+| Rhino | 13 | 13 | 8 | 8 |
+| Eagle | 3 | 5 | 20 | 7 |
+| Panther | 13 | 7 | 10 | 7 |
+| Python | 3 | 3 | 8 | 10 |
+| Giraffe | 3 | 7 | 5 | 22 |
+| Mole | 3 | 5 | 17 | 13 |
+
+0 timeouts at every level; ults per fighter per match 0.57 / 0.99 / 1.04 / 1.17 (L1 to L4). Average match 44 / 41 / 89 / 93 s.
+
+Watch list (cells at or near the edge of the band): lion at L3 (2–3 % at N=60 and 3–4 % at N=120, the lowest cell in the roster; a full sequence also costs the lion about 170 HP from third parties), crocodile at L2 (25–30 % at N=60, at the L1/L2 ceiling) and at L3/L4 (3–5 % at N=60, 5 / 6 % at N=120: Veteran and Apex bots dodge the lock zone), hippo at L4 (5 % at N=300, unchanged from v1.2: Apex bots sidestep the marked flood path), giraffe at L4 (13 % at N=200; the 22 % N=60 cell is seed noise), eagle at L3 (16–20 %, the top of the band). Python has no larger sample (N=60 only: 12 % at L3 and L4 in its own run, 8 % / 10 % in the combined run).
+
+No-effect sim cleanups in phase 3 (the N=60 table above is byte-identical before and after, apart from the wall-time suffix): the knockdown fall/hold/rise clock (`Fighter.knockdownClock` feeding `state.actionT/actionDur`, cosmetic only) and the removal of the dead Night Prowl stealth-crit code path (`stealthCritPending`).
 
 ## v1.2 (WP-N): body hitboxes, eagle soar, arena traps
 

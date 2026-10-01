@@ -7,7 +7,17 @@
  * WP-B reads combat/ability numbers; WP-F reads presentation (pips, lore, prose).
  */
 
-import type { AnimalId } from '../core/types';
+import type { AnimalId, UltTargetKind } from '../core/types';
+import { LION_ULTIMATE } from './ultimates/lion';
+import { GORILLA_ULTIMATE } from './ultimates/gorilla';
+import { CROCODILE_ULTIMATE } from './ultimates/crocodile';
+import { HIPPO_ULTIMATE } from './ultimates/hippo';
+import { RHINO_ULTIMATE } from './ultimates/rhino';
+import { EAGLE_ULTIMATE } from './ultimates/eagle';
+import { PANTHER_ULTIMATE } from './ultimates/panther';
+import { PYTHON_ULTIMATE } from './ultimates/python';
+import { GIRAFFE_ULTIMATE } from './ultimates/giraffe';
+import { MOLE_ULTIMATE } from './ultimates/mole';
 
 /** The kinds of status/positional effect an ability or finisher can apply. */
 export type EffectKind =
@@ -59,6 +69,50 @@ export interface FinisherSpec {
   blockIgnore?: number;
   /** Rhino Horn Fling: launch distance (m). */
   launch?: number;
+}
+
+/**
+ * v1.3 AI hook: how bots see this ultimate's targeted area as a danger zone (see
+ * docs/ultimates/ai-hooks.md and src/ai/dangerZones.ts). Without it bots ignore the
+ * ultimate's `ultimateTarget` event (today's behaviour).
+ *  - `mode: 'fixed'`  the zone is fixed from the `ultimateTarget` event for `windup + activeS` s.
+ *  - `mode: 'commit'` a tracking reticle: the zone follows `ultimateStage` beats — stage 0 =
+ *                       still tracking (not dodged yet), stage 1 = committed at `pos` (dodge now,
+ *                       lasts `commitS`), stage >= 2 = over.
+ */
+export interface UltDodge {
+  mode: 'fixed' | 'commit';
+  /** Seconds the hazard stays after the windup ends (fixed) — default 0.3. */
+  activeS?: number;
+  /** Seconds a committed reticle stays dangerous after its commit beat — default 0.6. */
+  commitS?: number;
+  /** Lock kinds: zone radius around the victim (m) — default 1.6. */
+  radius?: number;
+}
+
+/**
+ * v1.3 declarative ultimate targeting (resolved by `sim/ultimates/targeting.ts`
+ * at cast time from `aimYaw`; previewed by the HUD via `previewUltTarget`).
+ *  - `kind`         lock | line | ground | self (see {@link UltTargetKind})
+ *  - `range`        lock: max reach to the victim's body; line: path length;
+ *                   ground: max distance of the zone centre; self: informational reach
+ *  - `coneDeg`      full angle of the aim cone for lock candidates (default 70);
+ *                   on line/ground it turns on lock-assist (snap to a foe inside the cone)
+ *  - `width`        line: full path width (m)
+ *  - `radius`       ground: zone radius; self: AoE radius (m)
+ *  - `requireTarget` cast fizzles (no charge spent) when no valid target exists
+ *  - `hitsAir`      also targets fighters above the ground-reach altitude (soaring eagle)
+ */
+export interface UltTargeting {
+  kind: UltTargetKind;
+  range: number;
+  coneDeg?: number;
+  width?: number;
+  radius?: number;
+  requireTarget?: boolean;
+  hitsAir?: boolean;
+  /** AI: treat the targeted area as a danger zone bots dodge (see {@link UltDodge}). */
+  dodge?: UltDodge;
 }
 
 /**
@@ -124,10 +178,10 @@ export interface AbilitySpec {
   followupBonus?: number;
   /** Window (s) for the follow-up bonus (croc 1). */
   followupWindow?: number;
-  /** First-attack-from-stealth bonus damage (panther Night Prowl 200). */
-  stealthBonusDamage?: number;
   /** Extra damage fraction vs rooted targets (mole Sinkhole +0.25). */
   bonusVsRooted?: number;
+  /** v1.3: ultimate targeting block (ultimates only; see {@link UltTargeting}). */
+  targeting?: UltTargeting;
 }
 
 /** Per-animal passive perks and block quirks (§8). */
@@ -254,7 +308,7 @@ export interface AnimalDef {
  * gap and are the single place to retune it.
  */
 const SPECIAL_WINDUP = 0.35;
-const ULT_WINDUP = 0.5;
+// ULT_WINDUP (0.5 s) now lives in ./ultimates/shared; ultimate specs are per-animal files in ./ultimates/.
 
 /** Roster order (§8 numbering); used for the 5×2 character-select grid. */
 export const ANIMAL_IDS: readonly AnimalId[] = [
@@ -304,19 +358,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
       radius: 1.5,
       effects: [{ kind: 'knockdown', mag: 0, dur: 0.5 }],
     },
-    ultimate: {
-      name: "King's Roar",
-      description: 'Instant 8 m roar: 100 damage and fear 2 s; feared foes take +20% damage for 5 s; the Lion gains +20% speed for 5 s.',
-      cooldown: 0,
-      windup: 0,
-      damage: 100,
-      radius: 8,
-      effects: [
-        { kind: 'fear', mag: 0, dur: 2 },
-        { kind: 'dmgTakenUp', mag: 0.2, dur: 5 },
-      ],
-      selfBuffs: [{ kind: 'speedUp', mag: 0.2, dur: 5 }],
-    },
+    ultimate: LION_ULTIMATE,
     perks: {},
   },
 
@@ -354,19 +396,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
       radius: 2.5,
       knockback: 4,
     },
-    ultimate: {
-      name: 'Primal Rampage',
-      description: 'For 6 s: +40% attack speed, +25% damage, basic hits knock back 2 m, immune to flinch and stagger.',
-      cooldown: 0,
-      windup: ULT_WINDUP,
-      duration: 6,
-      knockback: 2,
-      ccImmune: true,
-      selfBuffs: [
-        { kind: 'atkSpeedUp', mag: 0.4, dur: 6 },
-        { kind: 'dmgUp', mag: 0.25, dur: 6 },
-      ],
-    },
+    ultimate: GORILLA_ULTIMATE,
     perks: {
       parryShove: { window: 0.25, damage: 30, knockback: 4 },
     },
@@ -404,19 +434,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
       followupBonus: 1.0,
       followupWindow: 1,
     },
-    ultimate: {
-      name: 'Death Roll',
-      description: 'Lunge 4.5 m; on hit, grab and roll for 2.5 s dealing 300 damage while the target is stunned (grabs ignore block); the Crocodile takes 50% reduced damage during the roll. On a miss, 1 s recovery.',
-      cooldown: 0,
-      windup: ULT_WINDUP,
-      range: 4.5,
-      damage: 300,
-      duration: 2.5,
-      grab: true,
-      damageReduction: 0.5,
-      recovery: 1,
-      effects: [{ kind: 'stun', mag: 0, dur: 2.5 }],
-    },
+    ultimate: CROCODILE_ULTIMATE,
     perks: {},
   },
 
@@ -449,16 +467,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
       maxTime: 1.2,
       knockback: 2.5,
     },
-    ultimate: {
-      name: 'Colossal Chomp',
-      description: '1.0 s windup, then a 4 m / 130° cone: 250 damage and 30% slow for 2 s.',
-      cooldown: 0,
-      windup: 1.0,
-      damage: 250,
-      range: 4,
-      arcDeg: 130,
-      effects: [{ kind: 'slow', mag: 0.3, dur: 2 }],
-    },
+    ultimate: HIPPO_ULTIMATE,
     perks: {},
   },
 
@@ -497,18 +506,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
       bonusDamage: 60,
       bonusEffects: [{ kind: 'stun', mag: 0, dur: 1 }],
     },
-    ultimate: {
-      name: 'Seismic Stampede',
-      description: '3 s steerable charge (turn ≤90°/s), CC-immune, breaking crates and dealing 160 damage plus a knockdown to each fighter run through (once per target).',
-      cooldown: 0,
-      windup: ULT_WINDUP,
-      duration: 3,
-      damage: 160,
-      turnRateDeg: 90,
-      ccImmune: true,
-      breaksCrates: true,
-      effects: [{ kind: 'knockdown', mag: 0, dur: 0.8 }],
-    },
+    ultimate: RHINO_ULTIMATE,
     perks: {
       thornDamage: 15,
     },
@@ -548,18 +546,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
       knockback: 5,
       effects: [{ kind: 'disarm', mag: 0, dur: 0.5 }],
     },
-    ultimate: {
-      name: 'Death From Above',
-      description: 'Soar untargetable for 1.5 s, then dive onto the foe you aimed at (up to 8 m): 240 direct damage (1.2 m) and 60 splash (3 m). 1 s recovery on a whiff.',
-      cooldown: 0,
-      windup: 0,
-      untargetableT: 1.5,
-      damage: 240,
-      radius: 1.2,
-      splashDamage: 60,
-      splashRadius: 3,
-      recovery: 1,
-    },
+    ultimate: EAGLE_ULTIMATE,
     perks: {
       blockMoveMult: 1.2,
       glide: { duration: 4, speed: 8, cooldown: 8 },
@@ -610,18 +597,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
       range: 7,
       resetCombo: true,
     },
-    ultimate: {
-      name: 'Night Prowl',
-      description: '5 s stealth with +30% speed; the first attack from stealth deals 200 bonus crit damage and breaks stealth (the crit expires with the stealth).',
-      cooldown: 0,
-      windup: 0,
-      duration: 5,
-      stealthBonusDamage: 200,
-      selfBuffs: [
-        { kind: 'stealth', mag: 0, dur: 5 },
-        { kind: 'speedUp', mag: 0.3, dur: 5 },
-      ],
-    },
+    ultimate: PANTHER_ULTIMATE,
     perks: {
       backstabMult: 1.3,
       backstabArcDeg: 75,
@@ -658,18 +634,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
       arcDeg: 360,
       effects: [{ kind: 'slow', mag: 0.3, dur: 2 }],
     },
-    ultimate: {
-      name: "Constrictor's Embrace",
-      description: 'Grab lunge 5 m: wrap for 3 s dealing 240 damage while the target is stunned; the Python takes 30% less damage while constricting.',
-      cooldown: 0,
-      windup: ULT_WINDUP,
-      range: 5,
-      damage: 240,
-      duration: 3,
-      grab: true,
-      damageReduction: 0.3,
-      effects: [{ kind: 'stun', mag: 0, dur: 3 }],
-    },
+    ultimate: PYTHON_ULTIMATE,
     perks: {
       tensionBonus: 0.3,
     },
@@ -707,18 +672,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
       arcDeg: 60,
       knockback: 5,
     },
-    ultimate: {
-      name: 'Guillotine Spin',
-      description: 'Two 360° neck sweeps over 2 s (4.5 m): 90 damage each; the second sweep knocks down.',
-      cooldown: 0,
-      windup: ULT_WINDUP,
-      duration: 2,
-      damage: 90,
-      range: 4.5,
-      arcDeg: 360,
-      hits: 2,
-      effects: [{ kind: 'knockdown', mag: 0, dur: 0.8 }],
-    },
+    ultimate: GIRAFFE_ULTIMATE,
     perks: {},
   },
 
@@ -758,17 +712,7 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
       untargetableT: 3,
       effects: [{ kind: 'knockup', mag: 0, dur: 0.8 }],
     },
-    ultimate: {
-      name: 'Sinkhole',
-      description: '4 m zone centred on the foe you aim at (≤10 m) with a 1 s telegraph, then 150 damage and root 2 s; the Mole deals +25% to rooted targets with every attack.',
-      cooldown: 0,
-      windup: 1.0,
-      damage: 150,
-      radius: 4,
-      range: 10,
-      bonusVsRooted: 0.25,
-      effects: [{ kind: 'root', mag: 0, dur: 2 }],
-    },
+    ultimate: MOLE_ULTIMATE,
     perks: {
       stationaryBlockBonus: 0.15,
     },

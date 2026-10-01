@@ -12,9 +12,11 @@
 import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
-import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, IMPACT } from './Animator';
+import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, easeInCubic, easeOutCubic, IMPACT } from './Animator';
+import { MOLE_VORTEX } from '../../config/ultimates/mole';
 import {
   makeMat,
+  mesh,
   part,
   pivot,
   sphGeo,
@@ -33,6 +35,8 @@ export class MoleRig extends BaseRig {
   private readonly armL: Joint;
   private readonly armR: Joint;
   private readonly snout: Joint;
+  /** Churning dirt heap shown while the mole tunnels under the tremor crack (Sinkhole Vortex windup). */
+  private readonly ultMound: THREE.Group;
 
   constructor() {
     super(ANIMALS.mole);
@@ -42,10 +46,8 @@ export class MoleRig extends BaseRig {
     this.toneBack = -0.18; // velvet sheen
     this.toneBelly = 0.15;
     this.outlineScale = 0.85;
-    this.slams = [
-      { action: 'special', at: IMPACT, radius: 1.6, kind: 'crack', forward: 0 },
-      { action: 'ultimate', at: IMPACT, radius: 1.4, kind: 'crack', forward: 0.5 },
-    ];
+    // (the ultimate dig / crack / collapse decals come from src/render/ultFx/mole.ts at the sim events)
+    this.slams = [{ action: 'special', at: IMPACT, radius: 1.6, kind: 'crack', forward: 0 }];
     const p = this.pal;
     const fur = mixColor(p.dark, 0x3a3230, 0.45);
     const mBody = makeMat(fur);
@@ -127,6 +129,45 @@ export class MoleRig extends BaseRig {
     this.legs = [this.armL, this.armR, mkLeg(-1), mkLeg(1)];
     this.tail = this.joint(tailN);
     this.finalize();
+
+    // Tunnelling mound: a fat heap with a trailing ridge (not baked: it lives outside bodyRoot).
+    const soil = makeMat(0x5b432c);
+    const soil2 = makeMat(0x6e5438);
+    const mound = new THREE.Group();
+    mound.add(mesh(coneGeo(0.95, 0.62, 9), soil, 0, 0.3, 0));
+    mound.add(mesh(coneGeo(0.55, 0.46, 7), soil2, 0.38, 0.22, 0.3));
+    mound.add(mesh(sphGeo(0.18, 5, 4), soil2, -0.5, 0.12, -0.25));
+    const ridge = mesh(coneGeo(0.55, 1.9, 7), soil, 0, 0.16, -1.15);
+    ridge.rotation.x = -Math.PI / 2;
+    ridge.scale.set(1, 1, 0.45);
+    mound.add(ridge);
+    mound.visible = false;
+    this.root.add(mound);
+    this.ultMound = mound;
+  }
+
+  /**
+   * Sinkhole Vortex windup: while tunnelling the body is hidden and the heap shows; it shrinks away as the mole
+   * surfaces at the rim of the pit. (BaseRig only hides the body for the burrow special.)
+   */
+  override update(state: FighterState, dtRender: number): void {
+    super.update(state, dtRender);
+    let heap = 0;
+    if (state.action === 'ultimate') {
+      const t = state.actionT;
+      if (state.ultPhase === 'windup' && t >= MOLE_VORTEX.hideAtS) {
+        this.bodyRoot.visible = false;
+        heap = smooth01(ramp(t, MOLE_VORTEX.hideAtS, MOLE_VORTEX.hideAtS + 0.12));
+      } else if (state.ultPhase === 'active' && t < 0.32) {
+        heap = 1 - smooth01(ramp(t, 0.04, 0.32));
+      }
+    }
+    this.ultMound.visible = heap > 0.01;
+    if (heap > 0.01) {
+      const w = 1 + 0.07 * Math.sin(this.timePhase * 15);
+      this.ultMound.scale.set(w * heap, (2 - w) * heap, w * heap);
+      this.ultMound.rotation.y = Math.sin(this.timePhase * 7) * 0.12;
+    }
   }
 
   protected poseIdle(t: number): void {
@@ -205,22 +246,88 @@ export class MoleRig extends BaseRig {
     this.legs[3].rx = 0.5 * crouch - 0.6 * erupt;
   }
 
-  protected poseUltimate(u: number, _state: FighterState): void {
-    // Sinkhole: rear up tall, then drive both claws into the earth at 55%
-    // and hold them buried while the zone collapses.
-    const rear = smooth01(ramp(u, 0, 0.38));
-    const slam = impactPulse(u, 0.1);
-    const hold = ramp(u, 0.58, 0.7) * (1 - ramp(u, 0.88, 1));
-    const down = Math.max(slam, hold);
-    this.body.rx = -0.55 * rear * (1 - down) + 0.5 * down;
-    this.body.py = 0.12 * rear * (1 - down) - 0.16 * down;
-    const rx = -2.4 * rear * (1 - down) + 1.3 * down;
-    this.armL.rx = rx;
-    this.armR.rx = rx;
-    this.head.rx = -0.4 * rear * (1 - down) + 0.3 * down;
-    this.snout.rx = Math.sin(this.timePhase * 20) * 0.06 * down; // straining
-    this.legs[2].rx = 0.4 * rear;
-    this.legs[3].rx = 0.4 * rear;
+  /**
+   * Sinkhole Vortex (v1.3). Driven ONLY by `ultPhase / actionT / actionDur` (the sim restarts the phase clock at
+   * each phase: windup = dig 0.4 s + tunnel 0.9 s, active = the 2 s vortex, recovery = slam + shake-off):
+   *  - dig-in        rear up, then claws scoop alternately while the body drives nose-first into the dirt;
+   *  - tunnel        sunk pose (the body is hidden, the heap is shown by `update`);
+   *  - surface       bursts up at the rim of the pit: sunk to standing with the arms thrown up (cubic ease-out);
+   *  - directing     arms raised and spread, circling as if winding the vortex, head up, body swaying; in the last
+   *                  0.3 s it coils back (arms higher, body rearing) for the slam;
+   *  - slam          both claws hammer into the earth (cubic ease-in), held buried briefly;
+   *  - shake-off     decaying full-body shake, arms flick the dirt off, then back to idle.
+   */
+  protected poseUltimate(_u: number, state: FighterState): void {
+    const t = state.actionT;
+    const dur = state.actionDur;
+    const ph = state.ultPhase;
+    if (ph === 'recovery') {
+      this.ultRecovery(t, dur);
+    } else if (ph === 'active') {
+      this.ultVortex(t, dur);
+    } else {
+      this.ultDig(t);
+    }
+  }
+
+  private ultDig(t: number): void {
+    const rear = smooth01(ramp(t, 0, 0.12));
+    const dig = smooth01(ramp(t, 0.08, 0.3));
+    const scoop = Math.sin(t * 30);
+    this.body.rx = -0.4 * rear * (1 - dig) + 0.9 * dig;
+    this.body.py = 0.08 * rear * (1 - dig) - 0.34 * dig;
+    this.armL.rx = -1.3 * rear * (1 - dig) + (1.1 + scoop * 0.6) * dig;
+    this.armR.rx = -1.3 * rear * (1 - dig) + (1.1 - scoop * 0.6) * dig;
+    this.head.rx = -0.3 * rear * (1 - dig) + 0.35 * dig;
+    this.legs[2].rx = 0.5 * rear;
+    this.legs[3].rx = 0.5 * rear;
+    this.snout.rx = Math.sin(this.timePhase * 20) * 0.06 * dig;
+  }
+
+  private ultVortex(t: number, dur: number): void {
+    const sunk = 1 - easeOutCubic(ramp(t, 0, 0.35));
+    const rise = smooth01(ramp(t, 0.1, 0.5));
+    const wind = smooth01(ramp(t, dur - 0.3, dur));
+    const w = this.timePhase * 6.2;
+    const sway = Math.sin(this.timePhase * 1.9);
+    // Standing "directing" pose blended with the sunk pose it surfaces from.
+    this.body.py = -0.34 * sunk + 0.1 * rise * (1 - sunk) + 0.04 * wind;
+    this.body.rx = 0.9 * sunk + (-0.3 * rise - 0.32 * wind) * (1 - sunk);
+    this.body.rz = sway * 0.05 * rise * (1 - wind);
+    this.body.ry = Math.sin(this.timePhase * 1.3) * 0.12 * rise * (1 - wind);
+    const up = (-2.3 - 0.5 * wind) * rise;
+    this.armL.rx = 1.1 * sunk + up * (1 - sunk) + 0.18 * Math.sin(w) * rise * (1 - wind);
+    this.armR.rx = 1.1 * sunk + up * (1 - sunk) + 0.18 * Math.sin(w + Math.PI) * rise * (1 - wind);
+    // Claws spread outward (left: -rz, right: +rz) and circle.
+    this.armL.rz = -(0.4 + 0.14 * Math.cos(w)) * rise * (1 - sunk);
+    this.armR.rz = (0.4 + 0.14 * Math.cos(w + Math.PI)) * rise * (1 - sunk);
+    this.head.rx = 0.35 * sunk + (-0.3 * rise - 0.15 * wind) * (1 - sunk);
+    this.head.ry = Math.sin(this.timePhase * 0.9) * 0.2 * rise;
+    this.snout.rx = Math.sin(this.timePhase * 20) * 0.06 * (1 + wind);
+    this.legs[2].rx = 0.3 * rise;
+    this.legs[3].rx = 0.3 * rise;
+  }
+
+  private ultRecovery(t: number, dur: number): void {
+    // Slam: arms from the coiled position into the earth, then held buried, then the shake-off.
+    const strike = easeInCubic(ramp(t, 0, 0.1));
+    const buried = 1 - smooth01(ramp(t, 0.22, 0.42));
+    const k = ramp(t, 0.3, Math.max(0.35, dur));
+    const shake = Math.sin(t * 40) * 0.28 * (1 - k) * smooth01(ramp(t, 0.24, 0.36));
+    const rx = (-2.8 + 4.1 * strike) * buried;
+    this.armL.rx = rx + Math.sin(t * 32) * 0.4 * (1 - k) * (1 - buried);
+    this.armR.rx = rx + Math.sin(t * 32 + 1.7) * 0.4 * (1 - k) * (1 - buried);
+    this.armL.rz = -0.3 * (1 - strike) * buried;
+    this.armR.rz = 0.3 * (1 - strike) * buried;
+    this.body.rx = (-0.62 + 1.12 * strike) * buried;
+    this.body.py = (0.08 - 0.24 * strike) * buried;
+    this.body.ry = shake;
+    this.body.rz = shake * 0.4;
+    this.head.rx = (-0.4 + 0.7 * strike) * buried;
+    this.head.ry = -shake * 0.7;
+    this.snout.rx = Math.sin(this.timePhase * 22) * 0.08 * (1 - k);
+    this.legs[2].rx = 0.3 * (1 - strike) * buried;
+    this.legs[3].rx = 0.3 * (1 - strike) * buried;
   }
 
   protected poseBlock(t: number): void {

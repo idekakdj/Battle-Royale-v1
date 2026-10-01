@@ -27,6 +27,26 @@ export interface GkSettings {
   sensitivity: number;
   /** v1.2: faint ground sector showing the player's real basic-attack reach (default on). */
   rangeIndicator: boolean;
+  /** v1.3: ready-state ultimate targeting preview (range ring / path / LOCK bracket; default on). */
+  ultPreview: boolean;
+  // ── v1.3 WP-Q: first-person mode ──
+  /** Camera view: `'third'` (default orbit camera) or `'first'` (eye camera). Toggled with V. */
+  view: ViewMode;
+  /** First-person horizontal field of view in degrees (60–110, default 85). */
+  fpFov: number;
+  /** Centre crosshair dot in first person (default on). */
+  crosshair: boolean;
+}
+
+/** Camera view mode (v1.3). */
+export type ViewMode = 'third' | 'first';
+export const FP_FOV_DEFAULT_SETTING = 85;
+export const FP_FOV_MIN_SETTING = 60;
+export const FP_FOV_MAX_SETTING = 110;
+
+function clampFpFovSetting(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return FP_FOV_DEFAULT_SETTING;
+  return v < FP_FOV_MIN_SETTING ? FP_FOV_MIN_SETTING : v > FP_FOV_MAX_SETTING ? FP_FOV_MAX_SETTING : Math.round(v);
 }
 
 /** Matches `CameraRig`'s default `sensitivity` (0.0024 rad/px). */
@@ -43,6 +63,10 @@ export const DEFAULT_SETTINGS: GkSettings = {
   checkUpdates: true,
   sensitivity: DEFAULT_SENSITIVITY,
   rangeIndicator: true,
+  ultPreview: true,
+  view: 'third',
+  fpFov: FP_FOV_DEFAULT_SETTING,
+  crosshair: true,
 };
 
 function clampSensitivity(v: unknown): number {
@@ -90,6 +114,10 @@ export function loadSettings(): GkSettings {
       checkUpdates: parsed.checkUpdates !== false,
       sensitivity: clampSensitivity(parsed.sensitivity),
       rangeIndicator: parsed.rangeIndicator !== false,
+      ultPreview: parsed.ultPreview !== false,
+      view: parsed.view === 'first' ? 'first' : 'third',
+      fpFov: clampFpFovSetting(parsed.fpFov),
+      crosshair: parsed.crosshair !== false,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

@@ -26,6 +26,17 @@
  *    fighter) and a fire-crackle bed swells near burning fire pits;
  *  - kill feed `cause: 'trap'` for environment deaths (`killerId === -1`);
  *  - `hud.pickupToast(kind)` for the player's own pickups.
+ *
+ * WP-T (v1.3) additions (ultimate targeting UI + render/audio infra):
+ *  - `UltIndicators` (pooled ring / ribbon / reticle / arc / zone) + the
+ *    `UltFxDispatcher` that routes `ultimateTarget` / `ultimateStage` / `blink` /
+ *    `projectileImpact` to per-animal ult VFX modules (`render/ultFx/<animal>.ts`);
+ *  - `blink` snaps the fighter's interpolation (no slide across the teleport);
+ *  - `snapshot.projectiles` drawn by `ProjectileRenderer` (boulder + trail);
+ *  - READY-state preview (`UltPreview`): range ring / path / zone + a LOCK bracket
+ *    and HUD tag on the would-be target; "NO TARGET" on the icon; a brief
+ *    "NO TARGET IN RANGE" hint on `ultimateFizzle` (Settings: Ultimate targeting
+ *    preview, `gk-settings.ultPreview`).
  *  - §5b hitbox fidelity: swing ribbons are drawn from `swingImpact` (the
  *    exact sector the sim tested, at the impact instant) and the player gets
  *    a faint attack-range wedge (Settings → Combat → Attack range indicator).
@@ -33,7 +44,7 @@
 
 import * as THREE from 'three';
 import type { Screen } from '../core/ScreenManager';
-import { GameLoop } from '../core/GameLoop';
+import { GameLoop, FIXED_DT } from '../core/GameLoop';
 import { EventBus } from '../core/EventBus';
 import { wrapAngle, clamp } from '../core/math';
 import type {
@@ -42,6 +53,7 @@ import type {
   FighterAction,
   FighterIntent,
   FighterState,
+  ProjectileState,
   TrapKind,
   TrapState,
   Vec3,
@@ -56,11 +68,24 @@ import { CameraRig } from '../render/CameraRig';
 import { Effects } from '../render/Effects';
 import { TrapRenderer } from '../render/traps/TrapRenderer';
 import { RangeIndicator } from '../render/RangeIndicator';
+import { UltIndicators } from '../render/ultFx/primitives';
+import { UltFxDispatcher } from '../render/ultFx';
+import { UltPreview } from '../render/ultFx/preview/UltPreview';
+import { ProjectileRenderer } from '../render/ultFx/projectiles/ProjectileRenderer';
 import { AnimalFactory } from '../render/animals/AnimalFactory';
 import type { BaseRig } from '../render/animals/Animator';
 import type { AudioEngine } from '../audio/AudioEngine';
 import { InputManager } from '../input/InputManager';
-import { HUD, PauseMenu, loadSettings, type MatchResults } from '../ui';
+import { HUD, PauseMenu, loadSettings, saveSettings, type MatchResults } from '../ui';
+// v1.3 WP-Q: first-person mode.
+import { getFpProfile } from '../render/animals/fp';
+import type { FpEyeSample } from '../render/animals/fp/types';
+import { angleDiff, easeAngle } from '../render/animals/fp/math';
+import { NearCameraFade } from '../render/fpFade';
+// v1.3 FP ult: first-person ultimate camera director (per-animal view directives + vignette / flash overlay).
+import { UltCamera, type UltEnv } from '../render/animals/fp/ultCam';
+import { getUltDirector } from '../render/animals/fp/ult';
+import { UltOverlay } from '../render/animals/fp/ultOverlay';
 import { seatRoster } from './seating';
 import {
   LOCK_ON,
@@ -112,6 +137,8 @@ const NO_TRAPS: readonly TrapState[] = [];
 /** Landing-slam shake reaches this far past the slam radius (m). */
 const LANDING_SHAKE_PAD = 6;
 
+const NO_PROJECTILES: readonly ProjectileState[] = [];
+
 const _size = new THREE.Vector2();
 const _box = new THREE.Box3();
 
@@ -142,8 +169,28 @@ export class MatchController implements Screen {
   private stadium!: Stadium;
   private cameraRig!: CameraRig;
   private effects!: Effects;
+  private fpFade!: NearCameraFade; // v1.3 WP-Q: own effects fade out around the first-person camera
   private traps!: TrapRenderer;
   private rangeIndicator!: RangeIndicator;
+  // v1.3 ultimate targeting UI / VFX (WP-T).
+  private indicators!: UltIndicators;
+  private ultFx!: UltFxDispatcher;
+  private ultPreview!: UltPreview;
+  private projectiles!: ProjectileRenderer;
+  private ultPreviewOn = true;
+  /** Fighters that blinked during the last sim step (snap interpolation, no slide). */
+  private blinkSnap: boolean[] = [];
+  private accentHex: number[] = [];
+  private tagHeights: number[] = [];
+  private readonly projMerge: ProjectileState[] = [];
+  /** QA / demo hook (set by `match.demo.ts`): extra projectiles drawn on top of `snapshot.projectiles`. */
+  debugProjectiles: ProjectileState[] | null = null;
+  private readonly tagV = new THREE.Vector3();
+  private readonly targetPosFn = (id: number, out: number[]): void => {
+    const r = this.rigs[id].root.position;
+    out[0] = r.x;
+    out[1] = r.z;
+  };
   /** Set once the sim emits `swingImpact` (then the start-of-swing fallback ribbon stops). */
   private swingImpactSeen = false;
   /** Kind of the last trap that hurt each fighter (kill-feed glyph for trap deaths). */
@@ -189,6 +236,29 @@ export class MatchController implements Screen {
   private lockBias = 0;
   private aimTargets: AimTarget[] = [];
 
+  // v1.3 WP-Q: first-person mode (view toggle `V`, `gk-settings.view`).
+  private fpWanted = false;
+  /** True while the own rig's head/neck/… are hidden (camera close to the eye). */
+  private fpHidden = false;
+  /** Own rig's visual yaw in first person (eases toward the camera yaw). */
+  private fpVisYaw = 0;
+  private fpVisYawInit = false;
+  private crosshairEl: HTMLElement | null = null;
+  private crosshairOn = true;
+  // v1.3 FP ult: the director writes into `cameraRig.ult`; the overlay paints its vignette / flash.
+  private ultCam!: UltCamera;
+  private readonly ultOverlay = new UltOverlay();
+  private readonly ultEnv: UltEnv = {
+    yaw: 0,
+    pitch: 0,
+    eye: { x: 0, y: 0, z: 0 },
+    eyeForward: 0,
+    victim: (id) => (id >= 0 && id < this.rigs.length ? this.rigs[id].root.position : null),
+    setYaw: (y) => {
+      this.cameraRig.yaw = y;
+    },
+  };
+
   constructor(opts: MatchControllerOptions) {
     this.opts = opts;
   }
@@ -218,14 +288,21 @@ export class MatchController implements Screen {
     this.sceneManager = new SceneManager(canvas);
     this.stadium = new Stadium();
     this.sceneManager.scene.add(this.stadium.root);
+    const fxBefore = new Set(this.sceneManager.scene.children); // v1.3 WP-Q
     this.effects = new Effects(this.sceneManager.scene);
+    this.fpFade = new NearCameraFade(this.sceneManager.scene, fxBefore);
     this.traps = new TrapRenderer(this.sceneManager.scene, this.effects);
     this.rangeIndicator = new RangeIndicator(this.sceneManager.scene);
     this.rangeIndicator.setEnabled(settings.rangeIndicator);
+    this.indicators = new UltIndicators(this.sceneManager.scene);
+    this.ultPreview = new UltPreview(this.indicators);
+    this.ultPreviewOn = settings.ultPreview;
+    this.projectiles = new ProjectileRenderer(this.sceneManager.scene, this.effects);
     this.swingImpactSeen = false;
     this.lastTrapKind = roster.map(() => undefined);
     this.cameraRig = new CameraRig(this.sceneManager.camera, { sensitivity: this.rigSensitivity });
     this.cameraRig.shakeSource = () => this.effects.getShakeOffset();
+    this.ultCam = new UltCamera(getUltDirector, this.cameraRig.ult); // v1.3 FP ult
 
     // Fighter rigs; roster order = fighter id.
     this.rigs = roster.map((r) => AnimalFactory.createRig(r.animal));
@@ -247,6 +324,22 @@ export class MatchController implements Screen {
     this.aimTargets = roster.map((_, id): AimTarget => ({ id, x: 0, z: 0, valid: false }));
     this.lockId = -1;
     this.lockBias = 0;
+
+    // v1.3 ult VFX dispatcher (needs the rigs + first snapshot).
+    this.blinkSnap = roster.map(() => false);
+    this.accentHex = roster.map((r) => new THREE.Color(ANIMALS[r.animal].accent).getHex());
+    this.tagHeights = this.measurePlateHeights();
+    this.ultFx = new UltFxDispatcher({
+      scene: this.sceneManager.scene,
+      effects: this.effects,
+      indicators: this.indicators,
+      camera: this.sceneManager.camera,
+      snapshot: () => this.snap,
+      root: (id) => this.rigs[id].root,
+      focusId: () => this.focusId(),
+      playerId: 0,
+      onUltEnd: (id) => this.opts.audio.ultEnd(id),
+    });
 
     // Camera follows the player until spectate.
     this.spectateId = 0;
@@ -278,8 +371,18 @@ export class MatchController implements Screen {
         audio.setMuted(s.muted);
         this.sensitivity = s.sensitivity;
         this.rangeIndicator.setEnabled(s.rangeIndicator);
+        this.ultPreviewOn = s.ultPreview;
+        if (!s.ultPreview) this.ultPreview.hide(true);
+        this.applyViewSettings(s.view, s.fpFov, s.crosshair); // v1.3 WP-Q
       },
     });
+
+    // v1.3 WP-Q: first-person set-up from the persisted settings (crosshair
+    // element lives in the HUD layer; the camera samples the own rig's eye).
+    this.cameraRig.setFpAnchor((s) => this.sampleFpEye(s));
+    this.mountCrosshair();
+    if (this.hud.layer !== null) this.ultOverlay.mount(this.hud.layer); // v1.3 FP ult
+    this.applyViewSettings(settings.view, settings.fpFov, settings.crosshair, true);
 
     this.wireEvents();
 
@@ -302,6 +405,9 @@ export class MatchController implements Screen {
     this.opts.audio.stopCrowd();
     this.opts.audio.stopFireBed();
     this.overlay.unmount();
+    if (this.crosshairEl !== null) this.crosshairEl.remove(); // v1.3 WP-Q
+    this.ultOverlay.dispose(); // v1.3 FP ult
+    this.crosshairEl = null;
     this.hud.unmount();
     this.pauseMenu.unmount();
     this.bus.clear();
@@ -312,6 +418,10 @@ export class MatchController implements Screen {
     this.rigs = [];
     this.traps.dispose();
     this.rangeIndicator.dispose();
+    this.ultFx.dispose();
+    this.ultPreview.hide(true);
+    this.projectiles.dispose();
+    this.indicators.dispose();
     this.effects.dispose();
     this.stadium.dispose();
     this.sceneManager.dispose();
@@ -326,6 +436,8 @@ export class MatchController implements Screen {
     const intent = this.input.getIntent(this.cameraRig.yaw);
     const lockToggle = this.input.consumeLockToggle();
     const lockCycle = this.input.consumeLockCycle();
+    // v1.3 WP-Q: V toggles first/third person (ignored while dead / spectating).
+    if (this.input.consumeViewToggle() && !this.playerDead) this.toggleView();
     if (!this.playerDead) {
       this.refreshAimTargets();
       this.updateLock(lockToggle, lockCycle);
@@ -347,6 +459,7 @@ export class MatchController implements Screen {
     this.world.step(dt);
     this.snap = this.world.snapshot();
     this.captureTransforms();
+    this.applyBlinkSnaps();
 
     this.checkCountdown();
     this.checkBloodlust();
@@ -534,7 +647,7 @@ export class MatchController implements Screen {
 
   private render(alpha: number, dtRender: number): void {
     const md = this.input.consumeMouseDelta();
-    const mdx = md.dx;
+    const mdx = md.dx * this.cameraRig.ult.mouseYaw; // v1.3 FP ult: a directive may briefly lock the yaw look
     if (md.dx !== 0 || md.dy !== 0) {
       const k = this.sensitivity / this.rigSensitivity;
       this.cameraRig.applyMouseDelta(md.dx * k, md.dy * k);
@@ -552,9 +665,15 @@ export class MatchController implements Screen {
       );
       const y0 = this.yawPrev[i];
       rig.root.rotation.y = y0 + wrapAngle(this.yawCurr[i] - y0) * alpha;
+      if (i === 0 && this.fpWanted && !this.playerDead) {
+        // v1.3 WP-Q: in first person the own body faces where the player looks.
+        rig.root.rotation.y = this.fpBodyYaw(fighters[0], rig.root.rotation.y, dtRender);
+        rig.fpxLook = this.cameraRig.fpPitch;
+      }
       rig.update(fighters[i], dtRender);
     }
     this.updateLockCamera(mdx, dtRender);
+    this.updateFpView(dtRender); // v1.3 WP-Q: grabbed → look at the attacker; hide/show own head
 
     // Excitement: spikes decay back to the ambient baseline.
     this.excitement +=
@@ -570,10 +689,21 @@ export class MatchController implements Screen {
     this.opts.audio.setListener(focus.x, focus.z, focusId);
     this.opts.audio.setFireBed(this.traps.fireProximity(focus.x, focus.z));
     this.updateRangeIndicator(dtRender);
+    this.updateUltSystems(alpha, dtRender);
 
     this.effects.update(dtRender);
     this.stadium.update(dtRender, this.excitement);
+    this.updateFpUlt(dtRender); // v1.3 FP ult: first-person ultimate camera director
     this.cameraRig.update(dtRender);
+    this.fpClipOutlines(); // v1.3 FP ult: no black screen when the eye is inside another fighter
+    this.syncFpRig(); // v1.3 WP-Q: own head hidden once the camera is close to the eye
+    this.fpFade.setEnabled(this.cameraRig.fpAmount > 0.2);
+    this.fpFade.apply(this.sceneManager.camera);
+    this.ultFx.nearFade(this.sceneManager.camera, this.cameraRig.fpAmount > 0.2); // v1.3 FP ult: own ult VFX fade near the eye
+    if (this.rigs[0].fpxActive) {
+      const cp = this.sceneManager.camera.position;
+      this.rigs[0].fpxAnchorPass(cp.x, cp.y, cp.z, this.cameraRig.yaw, this.cameraRig.fpPitch, this.cameraRig.fpAmount);
+    }
     this.sceneManager.render();
 
     this.sceneManager.renderer.getSize(_size);
@@ -589,6 +719,7 @@ export class MatchController implements Screen {
       performance.now(),
     );
     this.hud.update(this.snap, 0);
+    this.updateUltHud();
     this.syncPickups();
 
     // Results hand-off ~2.5 s after the sim declares the match over.
@@ -596,6 +727,87 @@ export class MatchController implements Screen {
       this.finished = true;
       this.opts.onMatchEnd(this.buildResults());
     }
+  }
+
+  // ── v1.3 ultimate targeting UI / VFX (WP-T) ─────────────────────────────────
+
+  /** `blink`: the sim teleported a fighter, so draw it at the destination with no slide. */
+  private applyBlinkSnaps(): void {
+    const flags = this.blinkSnap;
+    for (let i = 0; i < flags.length; i++) {
+      if (!flags[i]) continue;
+      flags[i] = false;
+      const i3 = i * 3;
+      this.posPrev[i3] = this.posCurr[i3];
+      this.posPrev[i3 + 1] = this.posCurr[i3 + 1];
+      this.posPrev[i3 + 2] = this.posCurr[i3 + 2];
+    }
+  }
+
+  /** Per render frame: ult VFX modules, READY preview, boulders, then the indicator fades. */
+  private updateUltSystems(alpha: number, dtRender: number): void {
+    this.ultFx.update(dtRender);
+    this.updateUltPreview(dtRender);
+    let list: readonly ProjectileState[] = this.snap.projectiles ?? NO_PROJECTILES;
+    const dbg = this.debugProjectiles;
+    if (dbg !== null && dbg.length > 0) {
+      const merged = this.projMerge;
+      merged.length = 0;
+      for (let i = 0; i < list.length; i++) merged.push(list[i]);
+      for (let i = 0; i < dbg.length; i++) merged.push(dbg[i]);
+      list = merged;
+    }
+    this.projectiles.update(list, dtRender, (1 - alpha) * FIXED_DT);
+    this.indicators.update(dtRender);
+  }
+
+  /**
+   * READY-state preview (plan section 4): only with a full ultimate bar, alive, in
+   * the match, not casting, not paused. The aim is the one the sim will use
+   * (locked target direction, else camera yaw).
+   */
+  private updateUltPreview(dtRender: number): void {
+    const p = this.snap.fighters[0];
+    const enabled =
+      this.ultPreviewOn &&
+      !this.paused &&
+      !this.playerDead &&
+      p.alive &&
+      this.matchOverAt < 0 &&
+      this.snap.time >= 0 &&
+      p.ultCharge >= 100 &&
+      p.ultPhase === undefined &&
+      p.action !== 'ultimate' &&
+      p.action !== 'dead';
+    let aimYaw = this.cameraRig.yaw;
+    if (this.lockId >= 0) {
+      const t = this.aimTargets[this.lockId];
+      if (t.valid && (t.x - p.pos.x) ** 2 + (t.z - p.pos.z) ** 2 > 1e-4) aimYaw = yawTo(p.pos.x, p.pos.z, t.x, t.z);
+    }
+    const root = this.rigs[0].root.position;
+    this.ultPreview.update(
+      dtRender,
+      { enabled, player: p, fighters: this.snap.fighters, aimYaw, px: root.x, py: root.y, pz: root.z },
+      this.targetPosFn,
+    );
+  }
+
+  /** HUD side of the preview: NO TARGET on the ult icon + the LOCK tag over the would-be target. */
+  private updateUltHud(): void {
+    this.hud.setUltPreview(this.ultPreview.status);
+    const id = this.ultPreview.targetId;
+    if (id < 0) {
+      this.hud.setLockTag(false);
+      return;
+    }
+    const pos = this.rigs[id].root.position;
+    const v = this.tagV.set(pos.x, pos.y + (this.tagHeights[id] ?? 2) + 0.35, pos.z).project(this.sceneManager.camera);
+    if (v.z >= 1 || Math.abs(v.x) > 1.2 || Math.abs(v.y) > 1.2) {
+      this.hud.setLockTag(false);
+      return;
+    }
+    this.sceneManager.renderer.getSize(_size);
+    this.hud.setLockTag(true, (v.x * 0.5 + 0.5) * _size.x, (-v.y * 0.5 + 0.5) * _size.y);
   }
 
   /** Mirror snapshot pickup availability onto the stadium pad icons. */
@@ -648,16 +860,19 @@ export class MatchController implements Screen {
       if (e.attackerId === 0) this.hud.hitmarker();
       if (e.targetId === 0 && e.attackerId !== 0) this.overlay.onPlayerHit(e.attackerId, performance.now());
       if (e.heavy) this.effects.addShake(0.05);
+      if (e.targetId === 0) this.fpHitKick(e.attackerId, e.damage / 22, e.heavy ? 1.5 : 1); // v1.3 WP-Q
     });
 
     bus.on('blocked', (e) => {
       this.effects.onHit(e.pos, e.damage, { blocked: true });
+      if (e.targetId === 0) this.fpHitKick(e.attackerId, e.damage / 40, 0.6); // v1.3 WP-Q
     });
 
     bus.on('guardBreak', (e) => {
       this.effects.onGuardBreak(e.pos);
       this.overlay.onGuardBreak(e.targetId, performance.now());
       this.spike(0.08);
+      if (e.targetId === 0) this.fpHitKick(-1, 1, 2); // v1.3 WP-Q
     });
 
     bus.on('telegraph', (e) => {
@@ -713,11 +928,41 @@ export class MatchController implements Screen {
       this.spike(0.6);
     });
 
+    // ── v1.3 ultimates: targeting events, blink, boulders, fizzle ────────────
+    bus.on('ultimateTarget', (e) => {
+      if (e.fighterId === 0) this.ultCam.onTarget(e.to); // v1.3 FP ult
+      this.ultFx.target(e);
+    });
+
+    bus.on('ultimateStage', (e) => {
+      if (e.fighterId === 0) this.ultCam.onStage(e.stage, e.pos); // v1.3 FP ult
+      this.ultFx.stage(e);
+    });
+
+    bus.on('blink', (e) => {
+      if (e.fighterId >= 0 && e.fighterId < this.blinkSnap.length) this.blinkSnap[e.fighterId] = true;
+      this.effects.onBlink(e.from, e.to, this.accentHex[e.fighterId] ?? 0x8a5cff);
+      if (e.fighterId === 0 && this.fpWanted) this.ultCam.onBlink(e.from, e.to); // v1.3 FP ult
+      this.ultFx.blink(e);
+    });
+
+    bus.on('projectileImpact', (e) => {
+      const near = this.nearness(e.pos, e.radius + 8);
+      this.effects.onBoulderImpact(e.pos, e.radius, near);
+      this.ultFx.impact(e);
+      if (near > 0.3) this.spike(0.08);
+    });
+
+    bus.on('ultimateFizzle', (e) => {
+      if (e.fighterId === 0) this.hud.ultFizzle();
+    });
+
     // ── v1.2 §5b: the swing ribbon IS the tested sector, at the impact instant.
     bus.on('swingImpact', (e) => {
       this.swingImpactSeen = true;
       this.effects.onSwing(e.pos, e.yaw, e.range, e.arcDeg, e.fighterId === 0);
       if (e.fighterId === 0) this.rangeIndicator.pulse(1);
+      if (e.fighterId === 0) this.fpAttackKick(); // v1.3 WP-Q
     });
 
     // ── v1.2: arena traps, eagle landing slam, pickup toast ─────────────────
@@ -782,6 +1027,7 @@ export class MatchController implements Screen {
 
   private enterSpectate(): void {
     this.playerDead = true;
+    this.ultPreview.hide(true);
     this.cameraRig.setSpectate(true);
     this.cycleSpectate();
   }
@@ -805,12 +1051,183 @@ export class MatchController implements Screen {
     this.hud.setSpectate({ name: `${animal.toUpperCase()} (BOT)`, animal });
   }
 
+  // ── v1.3 WP-Q: first-person mode ────────────────────────────────────────────
+  // The view mode is a pure render/camera concern: the sim, intents and aim
+  // (aimYaw = camera yaw) are untouched. Spectating / the death cam always use
+  // the third-person camera (CameraRig.setSpectate forces it).
+
+  /** Apply persisted / live view settings (pause menu, mount). */
+  private applyViewSettings(view: 'third' | 'first', fpFov: number, crosshair: boolean, initial = false): void {
+    this.cameraRig.setFpFov(fpFov);
+    this.crosshairOn = crosshair;
+    const wantFirst = view === 'first';
+    if (wantFirst !== this.fpWanted) this.setViewMode(wantFirst, initial);
+    else this.refreshCrosshair();
+  }
+
+  /** V key: flip the mode and persist it as `gk-settings.view`. */
+  private toggleView(): void {
+    const next = !this.fpWanted;
+    this.setViewMode(next, false);
+    saveSettings({ ...loadSettings(), view: next ? 'first' : 'third' });
+  }
+
+  private setViewMode(first: boolean, immediate: boolean): void {
+    this.fpWanted = first;
+    this.fpVisYawInit = false;
+    if (!this.playerDead) {
+      this.cameraRig.setFirstPerson(first, immediate);
+      if (first) this.rigs[0].setFirstPerson(getFpProfile(this.opts.animal), immediate);
+    }
+    this.refreshCrosshair();
+  }
+
+  private mountCrosshair(): void {
+    const layer = this.hud.layer;
+    if (layer === null) return;
+    const el = document.createElement('div');
+    el.className = 'gk-crosshair';
+    el.setAttribute('aria-hidden', 'true');
+    layer.appendChild(el);
+    this.crosshairEl = el;
+  }
+
+  private refreshCrosshair(): void {
+    if (this.crosshairEl === null) return;
+    this.crosshairEl.classList.toggle('is-on', this.fpWanted && this.crosshairOn && !this.playerDead);
+  }
+
+  /** The camera's eye sample for the own rig. */
+  private sampleFpEye(out: FpEyeSample): void {
+    this.rigs[0].sampleFpEye(out);
+  }
+
+  /** Own body yaw in first person: follows the camera unless the sim is moving the body (fall / hold / flee). */
+  private fpBodyYaw(f: FighterState, simYaw: number, dt: number): number {
+    if (!this.fpVisYawInit) {
+      this.fpVisYaw = simYaw;
+      this.fpVisYawInit = true;
+    }
+    const a = f.action;
+    const simDriven = a === 'knockdown' || a === 'dead' || a === 'grabbed' || a === 'feared';
+    const target = simDriven ? simYaw : this.cameraRig.yaw;
+    this.fpVisYaw = wrapAngle(easeAngle(this.fpVisYaw, target, simDriven ? 10 : 24, dt));
+    return this.fpVisYaw;
+  }
+
+  /** Per-frame first-person behaviour: while held, look at the grabber (steady camera, no body spin). */
+  private updateFpView(dt: number): void {
+    if (!this.fpWanted || this.playerDead) return;
+    const f = this.snap.fighters[0];
+    if (f.action === 'grabbed' && f.grabbedById >= 0 && f.grabbedById < this.rigs.length) {
+      const g = this.rigs[f.grabbedById].root.position;
+      const p = this.rigs[0].root.position;
+      const dx = g.x - p.x;
+      const dz = g.z - p.z;
+      if (dx * dx + dz * dz > 0.36) {
+        const yaw = this.cameraRig.yaw;
+        this.cameraRig.yaw = wrapAngle(yaw + angleDiff(yaw, Math.atan2(dx, dz)) * (1 - Math.exp(-dt * 3.5)));
+      }
+    }
+  }
+
+  /**
+   * v1.3 FP ult: run the first-person ULTIMATE camera director for the local player (first person + alive only; otherwise
+   * it relaxes to neutral), mirror its head-follow scale onto the own rig and paint the vignette / flash overlay.
+   */
+  private updateFpUlt(dt: number): void {
+    const cr = this.cameraRig;
+    const env = this.ultEnv;
+    const on = this.fpWanted && !this.playerDead && cr.fpAmount > 0.5;
+    env.yaw = cr.yaw;
+    env.pitch = cr.fpPitch;
+    const cp = this.sceneManager.camera.position;
+    env.eye.x = cp.x;
+    env.eye.y = cp.y;
+    env.eye.z = cp.z;
+    env.eyeForward = getFpProfile(this.opts.animal).eye.forward;
+    this.ultCam.update(dt, on ? this.snap.fighters[0] : null, env);
+    this.rigs[0].fpxFollowScale = cr.ult.follow;
+    this.ultOverlay.update(cr.ult);
+  }
+
+  /**
+   * v1.3 FP ult: grapple-style ultimates (lion pin, python bind, croc roll, rhino carry …) put the eye inside / against
+   * another fighter's body, and the inverted-hull outline seen from inside fills the view with black. While the first-person
+   * camera is inside a fighter's (cylinder) body its outline hull is hidden, so the view stays clear (the body mesh itself is
+   * back-face culled from inside).
+   */
+  private fpClipOutlines(): void {
+    const on = this.fpWanted && !this.playerDead && this.cameraRig.fpAmount > 0.5;
+    const cam = this.sceneManager.camera.position;
+    for (let i = 1; i < this.rigs.length; i++) {
+      const p = this.rigs[i].root.position;
+      let inside = false;
+      if (on) {
+        const r = ANIMALS[this.rosterAnimals[i]].radius * 1.35 + 0.15; // generous: bodies are longer than they are wide
+        const dx = cam.x - p.x;
+        const dz = cam.z - p.z;
+        inside = dx * dx + dz * dz < r * r && cam.y > p.y - 0.1 && cam.y < p.y + (this.tagHeights[i] ?? 2) * 0.85;
+      }
+      this.rigs[i].setOutlineClip(inside);
+    }
+  }
+
+  /** Own head/neck/… hidden once the camera is near the eye; restored on the way out and on death. */
+  private syncFpRig(): void {
+    const rig = this.rigs[0];
+    const cr = this.cameraRig;
+    const amt = cr.fpAmount;
+    if (cr.isFirstPerson && !this.playerDead) {
+      if (!rig.fpxActive) rig.setFirstPerson(getFpProfile(this.opts.animal), false);
+      const hide = this.fpHidden ? amt > 0.55 : amt > 0.4;
+      if (hide !== this.fpHidden) {
+        this.fpHidden = hide;
+        rig.setFpHidden(hide);
+      }
+    } else {
+      if (this.fpHidden && (this.playerDead || amt < 0.65)) {
+        this.fpHidden = false;
+        rig.setFpHidden(false);
+      }
+      if (rig.fpxActive && (this.playerDead || amt <= 0)) rig.setFirstPerson(null);
+    }
+    this.refreshCrosshair();
+  }
+
+  /** The player's own swing lands: a small dip (and side tilt on the alternating swipes) so limbless / headless strikes still read. */
+  private fpAttackKick(): void {
+    if (!this.fpWanted || this.playerDead) return;
+    const mult = getFpProfile(this.opts.animal).attackKick ?? 1;
+    const a = this.snap.fighters[0].action;
+    const roll = a === 'attack1' ? 0.008 : a === 'attack2' ? -0.008 : 0;
+    this.cameraRig.addKick(-0.011 * mult * (a === 'attack3' ? 1.6 : 1), roll * mult);
+  }
+
+  /** Small camera jolt instead of body motion when the player is hit (first person only). */
+  private fpHitKick(attackerId: number, strength: number, mult: number): void {
+    if (!this.fpWanted || this.playerDead) return;
+    const mag = Math.min(0.05, (0.012 + 0.014 * Math.min(2.5, strength)) * mult);
+    let roll = (Math.random() - 0.5) * mag;
+    if (attackerId >= 0 && attackerId < this.rigs.length) {
+      const a = this.rigs[attackerId].root.position;
+      const p = this.rigs[0].root.position;
+      const rel = angleDiff(this.cameraRig.yaw, Math.atan2(a.x - p.x, a.z - p.z));
+      roll = -Math.sin(rel) * mag;
+    }
+    this.cameraRig.addKick(mag, roll);
+  }
+
   // ── Pause ───────────────────────────────────────────────────────────────────
 
   private requestPause(): void {
     if (this.paused || this.finished || this.root === null) return;
     if (this.matchOverAt >= 0) return; // match already decided — let it play out
     this.paused = true;
+    this.ultPreview.hide(true);
+    this.hud.setUltPreview('off');
+    this.hud.setLockTag(false);
+    this.sceneManager.render(); // refresh the frozen frame without the preview markers
     this.loop.pause();
     this.input.disable(); // also exits pointer lock
     this.pauseMenu.mount(this.root);

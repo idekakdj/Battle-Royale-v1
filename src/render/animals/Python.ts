@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, ramp, smooth01, easeInOutCubic, IMPACT } from './Animator';
+import { PythonUltPose } from './ultPose/python';
 import {
   makeMat,
   mesh,
@@ -41,6 +42,9 @@ export class PythonRig extends BaseRig {
   private readonly jaw: Joint;
   private readonly tailTip: Joint;
   private readonly tongue: Joint;
+  /** Coil Snare pose driver (phase/stage-driven, see ultPose/python.ts). */
+  private readonly ultPose = new PythonUltPose();
+  private ultDt = 1 / 60;
 
   constructor() {
     super(ANIMALS.python);
@@ -219,30 +223,24 @@ export class PythonRig extends BaseRig {
     this.jaw.rx = 0.3 * k;
   }
 
-  protected poseUltimate(u: number, _state: FighterState): void {
-    // Constrictor's Embrace: huge open-jawed lunge, jaws meeting at 55%.
-    const s = attackCurve(u);
-    const ext = Math.max(0, s);
-    this.neckExtend(ext * 1.1);
-    this.body.pz = 0.5 * ext;
-    const open = ramp(u, 0.1, 0.4);
-    const close = ramp(u, 0.46, IMPACT);
-    this.jaw.rx = 1.1 * open * (1 - close);
-    this.coil.s = 1 - 0.06 * ext;
+  override update(state: FighterState, dtRender: number): void {
+    this.ultDt = dtRender < 0 ? 0 : dtRender > 0.1 ? 0.1 : dtRender;
+    super.update(state, dtRender);
   }
 
-  protected override poseGrab(_u: number, _state: FighterState): void {
-    // Wrapped around the victim: rhythmic squeezing, head weaving for grip.
-    const t = this.timePhase;
-    const squeeze = 1 + Math.sin(t * 7) * 0.05;
-    this.coil.s = squeeze;
-    this.coil.py = 0.06;
-    for (let i = 0; i < 4; i++) {
-      this.neckJ[i].rx = 0.3 + Math.sin(t * 7 + i) * 0.08;
-      this.neckJ[i].ry = Math.sin(t * 3 + i * 1.2) * 0.25;
-    }
-    this.head.ry = Math.sin(t * 4) * 0.3;
-    this.jaw.rx = 0.15;
+  protected poseUltimate(_u: number, state: FighterState): void {
+    // Coil Snare (v1.3): cobra rear + hiss -> tether lash -> yank -> staged wraps tightening per
+    // ultimateStage with squeeze pulses -> crush -> settle. All from ultPhase / ultStage / actionT
+    // (ultPose/python.ts); the action stays 'ultimate' throughout.
+    this.ultPose.update(state, this.ultDt, {
+      body: this.body,
+      coil: this.coil,
+      neck: this.neckJ,
+      head: this.head,
+      jaw: this.jaw,
+      tailTip: this.tailTip,
+      tongue: this.tongue,
+    });
   }
 
   protected poseBlock(t: number): void {

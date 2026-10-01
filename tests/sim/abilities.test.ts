@@ -141,20 +141,19 @@ describe('specials — signature effects (§8)', () => {
 });
 
 describe('ultimates — signature effects (§8)', () => {
-  it('lion King\'s Roar: AoE damage + fear + feared-vuln', () => {
+  it('lion Royal Hunt: pounce pin + 4 piercing maul strikes + roar mark (290+ total, marked, speed buff)', () => {
     const fx = fixture('lion', 3);
-    fire(fx, 'ultimate', 30);
-    expect(fx.t.state.hp).toBeLessThan(HP0);
-    expect(fx.t.fearTimer).toBeGreaterThan(0);
-    expect(getBuff(fx.t, 'dmgTakenUp')).toBeDefined();
+    fire(fx, 'ultimate', 230); // ~3.9 s: the whole sequence
+    expect(fx.t.state.hp).toBeLessThanOrEqual(HP0 - 290);
+    expect(getBuff(fx.t, 'dmgTakenUp')).toBeDefined(); // the roar's mark
+    expect(getBuff(fx.c, 'speed')).toBeDefined(); // +20% speed for 4 s
   });
 
-  it('gorilla Primal Rampage: self buffs + CC-immunity', () => {
-    const fx = fixture('gorilla', 3);
-    fire(fx, 'ultimate', 40);
-    expect(getBuff(fx.c, 'atkSpeedUp')).toBeDefined();
-    expect(getBuff(fx.c, 'rage')).toBeDefined();
-    expect(fx.c.rampageTimer).toBeGreaterThan(0);
+  it('gorilla Boulder Hurl: heave, release, the boulder lands for 200 + a stagger (v1.3: ≈ 1.6 s to impact)', () => {
+    const fx = fixture('gorilla', 9);
+    fire(fx, 'ultimate', 130);
+    expect(fx.t.state.hp).toBeLessThanOrEqual(HP0 - 198);
+    expect(fx.t.staggerTimer).toBeGreaterThan(0);
   });
 
   it('crocodile Death Roll: grab drains heavy damage', () => {
@@ -163,31 +162,39 @@ describe('ultimates — signature effects (§8)', () => {
     expect(fx.t.state.hp).toBeLessThanOrEqual(HP0 - 100);
   });
 
-  it('hippo Colossal Chomp: cone damage + slow', () => {
+  it("hippo Riverlord's Flood (v1.3): a 130 wave along the path, then a slowing mud pool", () => {
     const fx = fixture('hippo', 3);
     fire(fx, 'ultimate', 100);
-    expect(fx.t.state.hp).toBeLessThanOrEqual(HP0 - 200);
+    expect(fx.t.state.hp).toBeLessThanOrEqual(HP0 - 130);
     expect(getBuff(fx.t, 'slow')).toBeDefined();
   });
 
-  it('rhino Seismic Stampede: run-through damage', () => {
+  it('rhino Seismic Stampede (v1.3): gores the locked foe for 120 on contact', () => {
     const fx = fixture('rhino', 3);
-    fire(fx, 'ultimate', 70);
-    expect(fx.t.state.hp).toBeLessThanOrEqual(HP0 - 150);
+    fire(fx, 'ultimate', 100);
+    expect(fx.t.state.hp).toBeLessThanOrEqual(HP0 - 120);
   });
 
-  it('eagle Death From Above: soar then dive for heavy damage', () => {
+  it('eagle Death From Above: spiral up, track, commit, then stoop for heavy damage (v1.3: ≈ 3.4 s to impact)', () => {
     const fx = fixture('eagle', 8);
-    fire(fx, 'ultimate', 140);
+    fire(fx, 'ultimate', 230);
     expect(fx.t.state.hp).toBeLessThanOrEqual(HP0 - 200);
   });
 
-  it('panther Night Prowl: stealth + speed + primed crit', () => {
+  it('panther Shadow Execution: shadow form during 5 shadow-step strikes + finisher (285 total)', () => {
     const fx = fixture('panther', 3);
-    fire(fx, 'ultimate', 20);
-    expect(getBuff(fx.c, 'stealth')).toBeDefined();
-    expect(getBuff(fx.c, 'speed')).toBeDefined();
-    expect(fx.c.stealthCritPending).toBe(true);
+    fire(fx, 'ultimate', 60); // mid-sequence
+    expect(getBuff(fx.c, 'stealth')).toBeDefined(); // melted into shadow
+    expect(fx.c.incomingDamageReduction).toBeCloseTo(0.6, 9); // −60% damage taken
+    expect(fx.c.ccImmune).toBe(true);
+    for (let i = 0; i < 200; i++) {
+      fx.world.setIntent(fx.c.id, neutral());
+      fx.world.setIntent(fx.t.id, neutral());
+      fx.world.step(DT);
+    }
+    expect(fx.t.state.hp).toBeLessThanOrEqual(HP0 - 270);
+    expect(getBuff(fx.c, 'stealth')).toBeUndefined(); // visible again after the finisher
+    expect(fx.c.incomingDamageReduction).toBe(0);
   });
 
   it('python Constrictor\'s Embrace: grab drains heavy damage', () => {
@@ -196,15 +203,16 @@ describe('ultimates — signature effects (§8)', () => {
     expect(fx.t.state.hp).toBeLessThanOrEqual(HP0 - 100);
   });
 
-  it('giraffe Guillotine Spin: two sweeps for ≥90 + knockdown', () => {
-    const fx = fixture('giraffe', 3);
-    fire(fx, 'ultimate', 160);
-    expect(fx.t.state.hp).toBeLessThanOrEqual(HP0 - 90);
+  it('giraffe Timber Fall: rear back, circle commits, the neck-hammer slam for 230 + a stun (v1.3: ≈ 1.25 s to impact)', () => {
+    const fx = fixture('giraffe', 5);
+    fire(fx, 'ultimate', 90);
+    expect(fx.t.state.hp).toBeLessThanOrEqual(HP0 - 228);
+    expect(fx.t.staggerTimer).toBeGreaterThan(0.5);
   });
 
-  it('mole Sinkhole: delayed zone damage + root', () => {
+  it('mole Sinkhole Vortex: dig + crack, vortex grind, then the collapse damages + roots (v1.3: ≈ 3.3 s)', () => {
     const fx = fixture('mole', 9.5);
-    fire(fx, 'ultimate', 100);
+    fire(fx, 'ultimate', 215);
     expect(fx.t.state.hp).toBeLessThan(HP0);
     expect(fx.t.rootTimer).toBeGreaterThan(0);
   });

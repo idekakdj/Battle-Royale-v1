@@ -6,12 +6,61 @@
  * v1.1: barrel torso with leathery chest, a real silver saddle across the
  * back, deltoid/bicep mass, knuckled fists, a sagittal-crest skull with a dark
  * face mask, heavy brow, eyes, nostrils and ears.
+ *
+ * v1.3: the ultimate is Boulder Hurl — two chest beats, a squat that rips a slab out of the ground, a heave
+ * overhead and a full-body throw (keyframed from `actionT` in ultPose/gorilla.ts). The held slab is a plain
+ * (un-baked) mesh on the rig root, re-placed every frame between the two fists.
  */
 
+import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
-import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, IMPACT } from './Animator';
+import { GORILLA_HURL } from '../../config/ultimates/gorilla';
+import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, easeOutCubic, IMPACT } from './Animator';
+import { GC, GORILLA_CH, SLAB_FULL_AT, SLAB_GONE_AT, SLAB_SHOW_AT, sampleGorillaUlt } from './ultPose/gorilla';
 import { makeMat, part, pivot, sphGeo, openCyl, capGeo, eye, noTone, noOutline, paint, mixColor, shade, col } from './parts';
+
+function hash3(x: number, y: number, z: number): number {
+  const s = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+/** Low-poly jittered slab of sandstone (same look as the flying boulder in ProjectileRenderer), radius ~1. */
+function makeSlabGeometry(): THREE.BufferGeometry {
+  const g = new THREE.IcosahedronGeometry(1, 1);
+  const pos = g.getAttribute('position') as THREE.BufferAttribute;
+  const n = pos.count;
+  for (let i = 0; i < n; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const k = 0.8 + hash3(Math.round(x * 100), Math.round(y * 100), Math.round(z * 100)) * 0.32;
+    pos.setXYZ(i, x * k, y * k * 0.94, z * k);
+  }
+  g.computeVertexNormals();
+  const colors = new Float32Array(n * 3);
+  for (let t = 0; t < n; t += 3) {
+    const cx = (pos.getX(t) + pos.getX(t + 1) + pos.getX(t + 2)) / 3;
+    const cy = (pos.getY(t) + pos.getY(t + 1) + pos.getY(t + 2)) / 3;
+    const cz = (pos.getZ(t) + pos.getZ(t + 1) + pos.getZ(t + 2)) / 3;
+    const shadeK = 0.62 + hash3(cx * 91, cy * 91, cz * 91) * 0.42;
+    const rust = hash3(cx * 33, cy * 47, cz * 29) > 0.86 ? 0.82 : 1;
+    // A dirt-brown underside where the slab was torn from the sand.
+    const soil = cy < -0.35 ? 0.78 : 1;
+    for (let v = 0; v < 3; v++) {
+      colors[(t + v) * 3] = 0.6 * shadeK * soil;
+      colors[(t + v) * 3 + 1] = 0.55 * shadeK * rust * soil * soil;
+      colors[(t + v) * 3 + 2] = 0.47 * shadeK * rust * rust * soil * soil;
+    }
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  return g;
+}
+
+/** Fist position in the forearm joint's frame (m). */
+const FIST_LOCAL = new THREE.Vector3(0, -0.74, 0.04);
+const _fl = new THREE.Vector3();
+const _fr = new THREE.Vector3();
 
 export class GorillaRig extends BaseRig {
   private readonly armL: Joint;
@@ -20,6 +69,9 @@ export class GorillaRig extends BaseRig {
   private readonly foreR: Joint;
   private readonly legL: Joint;
   private readonly legR: Joint;
+  // Boulder Hurl: the held slab (plain mesh on the rig root) and the sampled pose channels.
+  private readonly slab: THREE.Mesh;
+  private readonly ultV = new Float64Array(GORILLA_CH.length);
 
   constructor() {
     super(ANIMALS.gorilla);
@@ -119,6 +171,52 @@ export class GorillaRig extends BaseRig {
     this.legR = mkLeg(1);
     this.legs = [this.armL, this.armR, this.legL, this.legR];
     this.finalize();
+
+    // The slab is added AFTER the bake (it is not part of the skinned body).
+    this.slab = new THREE.Mesh(
+      makeSlabGeometry(),
+      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0.02, flatShading: true }),
+    );
+    this.slab.castShadow = true;
+    this.slab.visible = false;
+    this.slab.frustumCulled = false;
+    this.slab.name = 'boulder-slab';
+    this.root.add(this.slab);
+  }
+
+  /** Re-place the held slab between the fists after the pose was applied. */
+  override update(state: FighterState, dtRender: number): void {
+    super.update(state, dtRender);
+    this.placeSlab(state);
+  }
+
+  private placeSlab(state: FighterState): void {
+    const t = state.actionT;
+    const holding = state.action === 'ultimate' && state.alive && t >= SLAB_SHOW_AT && t < SLAB_GONE_AT;
+    if (!holding) {
+      this.slab.visible = false;
+      return;
+    }
+    // Fist midpoint in the rig root's frame (both matrices come from the same update, so it is consistent).
+    this.root.updateMatrixWorld(true);
+    _fl.copy(FIST_LOCAL);
+    _fr.copy(FIST_LOCAL);
+    this.foreL.node.localToWorld(_fl);
+    this.foreR.node.localToWorld(_fr);
+    _fl.add(_fr).multiplyScalar(0.5);
+    this.root.worldToLocal(_fl);
+    const grow = easeOutCubic(ramp(t, SLAB_SHOW_AT, SLAB_FULL_AT));
+    const s = 0.22 + 0.78 * grow;
+    const r = GORILLA_HURL.boulderRadius;
+    // Cradled on top of the fists; while it is still tearing out it sits low in the ground.
+    const lift = 0.3 * s * r * 1.6;
+    this.slab.position.set(_fl.x, Math.max(0.12 * s + 0.05, _fl.y + lift), _fl.z + 0.05);
+    this.slab.scale.set(r * 1.05 * s, r * 0.95 * s, r * 1.1 * s);
+    // Tilts back as it is cocked, forward through the throw; a tremor while it tears loose.
+    const cock = smooth01(ramp(t, 0.86, 0.93)) * (1 - smooth01(ramp(t, 0.95, 1)));
+    const tear = t > GORILLA_HURL.ripAt - 0.1 && t < GORILLA_HURL.ripAt + 0.12 ? Math.sin(t * 64) * 0.05 : 0;
+    this.slab.rotation.set(-0.5 * cock + tear + t * 0.9 * (1 - grow), 0.4 + t * 0.6, tear);
+    this.slab.visible = true;
   }
 
   protected poseIdle(t: number): void {
@@ -189,24 +287,31 @@ export class GorillaRig extends BaseRig {
     this.head.rx = -0.2 * air + 0.2 * slam;
   }
 
-  protected poseUltimate(u: number, _state: FighterState): void {
-    // Primal Rampage: rear up and drum the chest, alternating fists.
-    const k = smooth01(ramp(u, 0, 0.15)) * (1 - smooth01(ramp(u, 0.85, 1)));
-    const beat = this.timePhase * 16;
-    this.body.rx = -0.45 * k;
-    this.body.py = 0.1 * k;
-    this.head.rx = -0.3 * k;
-    this.head.ry = Math.sin(beat * 0.5) * 0.1 * k;
-    const bL = Math.max(0, Math.sin(beat));
-    const bR = Math.max(0, Math.sin(beat + Math.PI));
-    this.armL.rx = (-1.3 + 0.5 * bL) * k;
-    this.armL.ry = 0.5 * k;
-    this.foreL.rx = (-1.4 + 0.6 * bL) * k;
-    this.armR.rx = (-1.3 + 0.5 * bR) * k;
-    this.armR.ry = -0.5 * k;
-    this.foreR.rx = (-1.4 + 0.6 * bR) * k;
-    this.legL.rx = 0.4 * k;
-    this.legR.rx = 0.4 * k;
+  /**
+   * Boulder Hurl (v1.3): keyframed from `state.actionT` (see ultPose/gorilla.ts) — two chest beats, squat and rip,
+   * heave, overhead cock, the throw, follow-through, settle. The fixed timeline has the release at the end of the
+   * windup (1.0 s); the slab rides between the fists until then (see `placeSlab`).
+   */
+  protected poseUltimate(_u: number, state: FighterState): void {
+    const v = this.ultV;
+    sampleGorillaUlt(state.actionT, v);
+    this.body.py = v[GC.bodyPy];
+    this.body.pz = v[GC.bodyPz];
+    this.body.rx = v[GC.bodyRx];
+    this.body.ry = v[GC.bodyRy];
+    this.body.rz = v[GC.bodyRz];
+    this.head.rx = v[GC.headRx];
+    this.head.ry = v[GC.headRy];
+    this.armL.rx = v[GC.aLRx];
+    this.armL.ry = v[GC.aLRy];
+    this.armL.rz = v[GC.aLRz];
+    this.armR.rx = v[GC.aRRx];
+    this.armR.ry = v[GC.aRRy];
+    this.armR.rz = v[GC.aRRz];
+    this.foreL.rx = v[GC.fLRx];
+    this.foreR.rx = v[GC.fRRx];
+    this.legL.rx = v[GC.lLRx];
+    this.legR.rx = v[GC.lRRx];
   }
 
   protected poseBlock(t: number): void {

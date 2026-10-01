@@ -53,26 +53,30 @@ describe('ult charge from damage taken (v1.1 comeback lever)', () => {
   });
 });
 
-describe('panther Night Prowl crit is bound to the stealth window (v1.1 fix)', () => {
+// The v1.1 fix bound the old Night Prowl crit (+200 on the first swing from stealth) to the stealth window.
+// v1.3 removed Night Prowl entirely (Shadow Execution): stealth must never boost a plain basic swing.
+describe('panther stealth gives a basic swing no bonus (Night Prowl crit removed, v1.3)', () => {
   function swingOnce(stealthed: boolean): number {
     const p = makeFighter(0, 'panther', 0, 0, 0);
     const t = makeFighter(1, 'hippo', 0, 1.8, Math.PI); // faces the panther: no backstab
     const sim = makeSim([p, t]);
-    p.stealthCritPending = true;
     if (stealthed) addBuff(p, 'stealth', 0, 5);
     p.intent.aimYaw = 0;
     tryStartSwing(p);
     for (let i = 0; i < 200 && p.swinging; i++) updateSwing(sim, p, DT);
-    expect(p.stealthCritPending).toBe(false);
     return t.state.maxHp - t.state.hp;
   }
 
-  it('a swing from stealth crits for the bonus', () => {
-    expect(swingOnce(true)).toBeCloseTo(ANIMALS.panther.combo[0] + (ANIMALS.panther.ultimate.stealthBonusDamage ?? 0), 5);
+  it('a swing from stealth deals plain hit-1 damage (no crit bonus)', () => {
+    expect(swingOnce(true)).toBeCloseTo(ANIMALS.panther.combo[0], 5);
   });
 
-  it('once stealth has expired a lingering flag no longer crits', () => {
-    expect(swingOnce(false)).toBeCloseTo(ANIMALS.panther.combo[0], 5);
+  it('stealth does not change the swing at all', () => {
+    expect(swingOnce(true)).toBeCloseTo(swingOnce(false), 9);
+  });
+
+  it('no first-attack-from-stealth bonus is configured any more', () => {
+    expect('stealthBonusDamage' in ANIMALS.panther.ultimate).toBe(false);
   });
 });
 
@@ -140,8 +144,8 @@ describe('aimed ground-point abilities land on the aimed target (v1.1 fix)', () 
     expect(castAt('mole', 3, 'ultimate', 100)).toBeGreaterThan(0);
   });
 
-  it('eagle Death From Above at a foe 3 m away (dive range 8 m) hits them', () => {
-    expect(castAt('eagle', 3, 'ultimate', 140)).toBeGreaterThan(0);
+  it('eagle Death From Above at a foe 3 m away (lock range 16 m) hits them (v1.3: ≈ 3.4 s to impact)', () => {
+    expect(castAt('eagle', 3, 'ultimate', 230)).toBeGreaterThan(0);
   });
 });
 

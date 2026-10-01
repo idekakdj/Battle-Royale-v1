@@ -1277,29 +1277,32 @@ export class Effects implements FxSink {
     this.addShake(0.05);
   }
 
-  /** Ultimate activation: accent flash, blooming light column, ground aura. */
+  /**
+   * Ultimate activation: a subtle accent pulse at the caster's feet (small ground
+   * ring + a faint, short glow + a few low embers). Every animal now ships its own
+   * ultimate VFX (`render/ultFx/<animal>.ts`), so this shared cue stays out of the
+   * way — no tall light column, no chest-height flash that whitewashes close
+   * framings. Its sprites go through the first-person `NearCameraFade`.
+   */
   onUltimate(pos: Vec3, animal: AnimalId): void {
     _c.set(ANIMALS[animal].accent);
     const hex = _c.getHex();
-    this.flashes.spawn(pos, 1.2, hex, 1.5, 7, 0.45, 0.8, 1, 1.5);
-    this.columns.spawn(pos, _c);
-    this.rings.spawn(pos, hex, 0.8, 9, 0.6, 2.0);
-    this.rings.spawn(pos, 0xfff0d0, 0.4, 3.5, 0.9, 1.4, 0.6);
-    this.impactRings.spawn(pos, 1.0, hex, 1, 6, 0.5, 0.7, 1, 1.5);
-    const n = Math.round(30 * tierProfile().fxScale);
+    this.flashes.spawn(pos, 0.2, hex, 0.7, 2.1, 0.26, 0.32, 1, 1);
+    this.rings.spawn(pos, hex, 0.45, 2.7, 0.42, 1.25, 0.6);
+    const n = Math.round(9 * tierProfile().fxScale);
     for (let i = 0; i < n; i++) {
       const ang = Math.random() * TAU;
-      const sp = 1 + Math.random() * 2.5;
+      const sp = 0.6 + Math.random() * 1.2;
       this.additive.spawn(
-        pos.x + Math.cos(ang) * 0.6, pos.y + 0.3, pos.z + Math.sin(ang) * 0.6,
-        Math.cos(ang) * sp, 3 + Math.random() * 5, Math.sin(ang) * sp,
-        0.6 + Math.random() * 0.4, 0.2, 0.06,
-        Math.min(1, _c.r + 0.3), Math.min(1, _c.g + 0.3), Math.min(1, _c.b + 0.3),
-        0.95, -3, 1.2,
+        pos.x + Math.cos(ang) * 0.5, pos.y + 0.15, pos.z + Math.sin(ang) * 0.5,
+        Math.cos(ang) * sp, 1 + Math.random() * 1.6, Math.sin(ang) * sp,
+        0.3 + Math.random() * 0.25, 0.1, 0.03,
+        Math.min(1, _c.r + 0.2), Math.min(1, _c.g + 0.2), Math.min(1, _c.b + 0.2),
+        0.7, -2, 1.4,
       );
     }
-    this.addShake(0.1);
-    kickFov(4.5);
+    this.addShake(0.025);
+    kickFov(1.2);
   }
 
   /**
@@ -1501,6 +1504,174 @@ export class Effects implements FxSink {
     }
     this.addShake((0.05 + 0.05 * k) * near);
     if (near > 0.05) kickFov((1.2 + 1.4 * k) * near);
+  }
+
+  // ── v1.3 ultimate FX building blocks (WP-T; additive API for src/render/ultFx/*) ──
+
+  /** One additive (glowing) particle: sparks, embers, magic motes. Colour is linear 0..1 RGB. */
+  spark(
+    x: number, y: number, z: number,
+    vx: number, vy: number, vz: number,
+    ttl: number, size0: number, size1: number,
+    r: number, g: number, b: number,
+    alpha = 0.95, gravity = -12, damping = 2,
+  ): void {
+    this.additive.spawn(x, y, z, vx, vy, vz, ttl, size0, size1, r, g, b, alpha, gravity, damping);
+  }
+
+  /** One soft (normal-blended) particle: dust, smoke, feathers, debris clouds. */
+  puff(
+    x: number, y: number, z: number,
+    vx: number, vy: number, vz: number,
+    ttl: number, size0: number, size1: number,
+    r: number, g: number, b: number,
+    alpha = 0.4, gravity = -1, damping = 2,
+  ): void {
+    this.soft.spawn(x, y, z, vx, vy, vz, ttl, size0, size1, r, g, b, alpha, gravity, damping);
+  }
+
+  /** Radial spark burst at `pos` (`count` is scaled by the quality tier). */
+  burst(pos: Vec3, color: number, count: number, speed: number, ttl = 0.5, size = 0.14): void {
+    _c.set(color);
+    const n = Math.max(2, Math.round(count * tierProfile().fxScale));
+    for (let i = 0; i < n; i++) {
+      const ang = Math.random() * TAU;
+      const sp = speed * (0.45 + Math.random() * 0.75);
+      const up = Math.random();
+      this.additive.spawn(
+        pos.x, pos.y + 0.2, pos.z,
+        Math.cos(ang) * sp, sp * (0.15 + up * 0.7), Math.sin(ang) * sp,
+        ttl * (0.7 + Math.random() * 0.6), size, size * 0.3,
+        Math.min(1, _c.r + 0.25), Math.min(1, _c.g + 0.25), Math.min(1, _c.b + 0.25), 0.95, -9, 2,
+      );
+    }
+  }
+
+  /** Soft glow flash sprite at `pos` (world height `y` above it). */
+  flash(pos: Vec3, y: number, color: number, size0: number, size1: number, ttl: number, alpha = 0.8, boost = 1.4): void {
+    this.flashes.spawn(pos, y, color, size0, size1, ttl, alpha, 1, boost);
+  }
+
+  /** Expanding ground shock ring (additive). */
+  shockRing(pos: Vec3, color: number, r0: number, r1: number, ttl: number, boost = 1.3, alpha = 0.85): void {
+    this.rings.spawn(pos, color, r0, r1, ttl, boost, alpha);
+  }
+
+  /** Expanding billboard impact ring. */
+  impactRing(pos: Vec3, y: number, color: number, r0: number, r1: number, ttl: number, alpha = 0.7): void {
+    this.impactRings.spawn(pos, y, color, r0, r1, ttl, alpha, 1, 1.2);
+  }
+
+  /** Ground-crack decal (fades after ~3 s). */
+  crack(x: number, z: number, radius: number): void {
+    this.cracks.spawn(x, 0, z, radius);
+  }
+
+  /** Outward dust ring along the ground. */
+  groundDust(x: number, z: number, radius: number, count = 14): void {
+    this.dustRing(x, z, radius, count);
+  }
+
+  /**
+   * Shadow-step puff (`blink` event): dark violet smoke curls where the fighter
+   * left and a bright flicker where it lands.
+   */
+  onBlink(from: Vec3, to: Vec3, color = 0x8a5cff): void {
+    _c.set(color);
+    const fx = tierProfile().fxScale;
+    const n = Math.max(3, Math.round(8 * fx));
+    for (let k = 0; k < 2; k++) {
+      const p = k === 0 ? from : to;
+      for (let i = 0; i < n; i++) {
+        const ang = Math.random() * TAU;
+        const sp = 0.4 + Math.random() * 1.1;
+        this.soft.spawn(
+          p.x + Math.cos(ang) * 0.3, p.y + 0.3 + Math.random() * 1.0, p.z + Math.sin(ang) * 0.3,
+          Math.cos(ang) * sp, 0.5 + Math.random() * 1.2, Math.sin(ang) * sp,
+          0.6 + Math.random() * 0.4, 0.5, 1.4,
+          0.09 + _c.r * 0.25, 0.06 + _c.g * 0.2, 0.14 + _c.b * 0.3, 0.55, -0.4, 2.2,
+        );
+      }
+    }
+    _v.set(to.x, to.y, to.z);
+    this.flashes.spawn(_v, 1.0, color, 0.5, 2.0, 0.22, 0.75, 1.3, 1.6);
+    this.rings.spawn(_v, color, 0.3, 1.6, 0.3, 1.4, 0.7);
+    for (let i = 0; i < Math.max(2, Math.round(6 * fx)); i++) {
+      const ang = Math.random() * TAU;
+      this.additive.spawn(
+        to.x, to.y + 1.0, to.z,
+        Math.cos(ang) * 2.5, 0.5 + Math.random() * 2.5, Math.sin(ang) * 2.5,
+        0.4, 0.12, 0.03, _c.r, _c.g, _c.b, 0.9, -4, 2.2,
+      );
+    }
+  }
+
+  /**
+   * A thrown boulder landed: ground crack, dust ring, stone chips and a
+   * shockwave sized by `radius` (splash). `nearness` (0..1) scales shake / FOV.
+   */
+  onBoulderImpact(pos: Vec3, radius: number, nearness = 1): void {
+    const fx = tierProfile().fxScale;
+    const near = clamp01(nearness);
+    const r = Math.max(1, radius);
+    _v.set(pos.x, 0, pos.z);
+    this.cracks.spawn(pos.x, 0, pos.z, r * 0.9);
+    this.dustRing(pos.x, pos.z, r, 20);
+    this.rings.spawn(_v, 0xd9c7a0, r * 0.2, r * 1.1, 0.45, 1.2, 0.8);
+    this.impactRings.spawn(_v, 0.4, 0xffe0a8, 0.4, r * 1.3, 0.25, 0.55, 1, 1.1);
+    this.flashes.spawn(_v, 0.6, 0xffb060, 0.8, r * 1.4, 0.16, 0.8, 1, 1.6);
+    const chips = Math.round(16 * fx);
+    for (let i = 0; i < chips; i++) {
+      const ang = Math.random() * TAU;
+      const sp = 2 + Math.random() * 4.5;
+      const g = 0.35 + Math.random() * 0.25;
+      this.soft.spawn(
+        pos.x, 0.25, pos.z,
+        Math.cos(ang) * sp, 3 + Math.random() * 5, Math.sin(ang) * sp,
+        0.8 + Math.random() * 0.4, 0.13, 0.1,
+        g + 0.08, g, g - 0.06, 0.95, -16, 0.4,
+      );
+    }
+    const sparks = Math.round(10 * fx);
+    for (let i = 0; i < sparks; i++) {
+      const ang = Math.random() * TAU;
+      const sp = 3 + Math.random() * 5;
+      this.additive.spawn(
+        pos.x, 0.3, pos.z,
+        Math.cos(ang) * sp, 2 + Math.random() * 4, Math.sin(ang) * sp,
+        0.3 + Math.random() * 0.2, 0.12, 0.03, 1, 0.65, 0.2, 0.95, -18, 2.4,
+      );
+    }
+    this.addShake((0.06 + 0.06 * clamp01(r / 3)) * near);
+    if (near > 0.05) kickFov((1.4 + 1.2 * clamp01(r / 3)) * near);
+  }
+
+  /**
+   * Trail behind a flying boulder: call once per rendered frame with its
+   * position and `dt`; a distance-metered dust plume + the odd hot spark.
+   */
+  boulderTrail(pos: Vec3, vx: number, vy: number, vz: number, dt: number): void {
+    const fx = tierProfile().fxScale;
+    const rate = 46 * fx; // puffs per second
+    let n = rate * dt;
+    n = Math.floor(n) + (Math.random() < n - Math.floor(n) ? 1 : 0);
+    for (let i = 0; i < n; i++) {
+      const j = 0.35;
+      const g = 0.5 + Math.random() * 0.2;
+      this.soft.spawn(
+        pos.x + (Math.random() - 0.5) * j, pos.y + (Math.random() - 0.5) * j, pos.z + (Math.random() - 0.5) * j,
+        -vx * 0.06 + (Math.random() - 0.5) * 0.8, -vy * 0.03 + 0.3 + Math.random() * 0.6, -vz * 0.06 + (Math.random() - 0.5) * 0.8,
+        0.5 + Math.random() * 0.4, 0.28, 0.9,
+        g + 0.1, g + 0.03, g - 0.08, 0.32, -0.5, 2.4,
+      );
+    }
+    if (Math.random() < 14 * fx * dt) {
+      this.additive.spawn(
+        pos.x, pos.y, pos.z,
+        -vx * 0.1 + (Math.random() - 0.5) * 2, -vy * 0.05 + Math.random() * 1.5, -vz * 0.1 + (Math.random() - 0.5) * 2,
+        0.35, 0.1, 0.03, 1, 0.6, 0.18, 0.9, -8, 1.5,
+      );
+    }
   }
 
   // ── FxSink (animal rigs → render/fxBus) ───────────────────────────────────

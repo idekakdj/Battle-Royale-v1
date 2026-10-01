@@ -1,7 +1,8 @@
 /**
  * HIPPO — "The Riverlord" (§8 #4). Huge barrel body and a colossal tusked maw.
  * Head-swing combo with a chomping finisher, River Rush charge special, and
- * the Colossal Chomp ultimate (maw gapes through the windup, slams at 55%).
+ * the Riverlord's Flood ultimate (v1.3: rears up and bellows, slams both
+ * forefeet, heaves a wave forward, then a heavy exhale; see `poseUltimate`).
  *
  * v1.1: shoulder hump + barrel with pink undertones and skin blotches, broad
  * muzzle with nostril bumps, eye turrets and little round ears on top, a pink
@@ -11,7 +12,7 @@
 import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
-import { BaseRig, type Joint, attackCurve, ramp, smooth01, IMPACT } from './Animator';
+import { BaseRig, type Joint, attackCurve, ramp, smooth01, easeInCubic, easeOutCubic, IMPACT } from './Animator';
 import {
   makeMat,
   part,
@@ -39,10 +40,9 @@ export class HippoRig extends BaseRig {
     this.strideRate = 0.26;
     this.stepScale = 1.05;
     this.outlineScale = 1.25;
-    this.slams = [
-      { action: 'special', at: 0.3, radius: 1.9, kind: 'ring', forward: 1.3 },
-      { action: 'ultimate', at: IMPACT, radius: 2.3, kind: 'crack', forward: 1.5 },
-    ];
+    // The ultimate's slam decals / splashes are drawn by src/render/ultFx/hippo.ts (the ultimate's phase clocks
+    // restart per phase, so a per-action `u` slam would fire at the wrong moments).
+    this.slams = [{ action: 'special', at: 0.3, radius: 1.9, kind: 'ring', forward: 1.3 }];
     const p = this.pal;
     const skin = mixColor(p.accent, 0x7d6a78, 0.3);
     const pink = mixColor(p.belly, 0xe7a79c, 0.55);
@@ -182,19 +182,103 @@ export class HippoRig extends BaseRig {
     this.body.py = Math.abs(Math.sin(g)) * 0.05 * k;
   }
 
-  protected poseUltimate(u: number, _state: FighterState): void {
-    // Colossal Chomp: the maw cranks open through the 1 s windup and slams
-    // shut exactly at 55%, whole body pitching into the bite.
-    const open = smooth01(ramp(u, 0, 0.45));
-    const close = ramp(u, 0.48, IMPACT);
-    const after = ramp(u, IMPACT, 0.75);
-    this.jaw.rx = 1.5 * open * (1 - close);
-    this.head.rx = -0.55 * open * (1 - close) + 0.3 * close * (1 - after);
-    this.body.rx = -0.12 * open * (1 - close) + 0.15 * close * (1 - after);
-    this.body.pz = 0.35 * close * (1 - after);
-    this.body.py = -0.1 * close * (1 - after);
-    this.legs[0].rx = -0.3 * open * (1 - close);
-    this.legs[1].rx = -0.3 * open * (1 - close);
+  /**
+   * Riverlord's Flood (v1.3). Driven ONLY by `ultPhase / actionT / actionDur` (the sim restarts the phase clock at
+   * each phase: windup = 0.9 s gape, active = the slam + surge (~0.8 s), recovery = 0.7 s exhale; the Animator
+   * cross-fades 0.1 s at each restart):
+   *  - rear-up      (0-0.4 s)   the forequarters rise on the planted hind legs, forefeet tucked and spread;
+   *  - gape+bellow  (0.2-0.75)  the jaw cranks open (cubic ease-out) while the head tips back and the throat / chest
+   *                             SWELL with a pulsing bellow and a fine roar shudder;
+   *  - coil         (0.68-0.9)  a last lean back and the front legs cocked: anticipation for the slam;
+   *  - slam         (0-0.13 s)  both forefeet hammer down (cubic ease-in), the whole body pitches forward;
+   *  - surge        (0.05-0.8)  the body HEAVES forward along the wave (push then settle), a bouncing roll, the maw
+   *                             still gaping as the flood pours out;
+   *  - exhale       (0.7 s)     deflating heave: the chest swell collapses in decaying breaths, the jaw sags shut,
+   *                             the head droops and the body settles back to its stance.
+   */
+  protected poseUltimate(_u: number, state: FighterState): void {
+    const t = state.actionT;
+    const dur = state.actionDur;
+    const ph = state.ultPhase;
+    if (ph === 'recovery') this.floodExhale(t, dur);
+    else if (ph === 'active') this.floodSurge(t, dur);
+    else this.floodGape(t);
+  }
+
+  private floodGape(t: number): void {
+    const rear = smooth01(ramp(t, 0, 0.42));
+    const gape = easeOutCubic(ramp(t, 0.18, 0.72));
+    const swell = smooth01(ramp(t, 0.3, 0.8));
+    const coil = smooth01(ramp(t, 0.68, 0.9));
+    const pulse = 1 + 0.25 * Math.sin(t * 24);
+    const roar = Math.sin(t * 38) * 0.035 * gape * swell;
+    this.body.rx = -0.55 * rear - 0.2 * coil;
+    this.body.py = 0.24 * rear + 0.04 * coil;
+    this.body.pz = -0.12 * rear - 0.1 * coil;
+    this.body.s = 1 + 0.06 * swell * pulse;
+    this.body.rz = roar * 0.6;
+    this.head.rx = -0.25 * gape;
+    this.head.ry = roar;
+    this.head.s = 1 + 0.12 * swell * pulse;
+    this.jaw.rx = 1.55 * gape;
+    // Hind legs stay planted under the hips as the body pitches back; the forefeet tuck up and spread wide.
+    this.legs[2].rx = 0.55 * rear + 0.2 * coil;
+    this.legs[3].rx = 0.55 * rear + 0.2 * coil;
+    this.legs[0].rx = -1.0 * rear - 0.25 * coil;
+    this.legs[1].rx = -1.0 * rear - 0.25 * coil;
+    this.legs[0].rz = -0.15 * rear;
+    this.legs[1].rz = 0.15 * rear;
+    if (this.tail) this.tail.ry = Math.sin(t * 14) * 0.5 * swell;
+  }
+
+  private floodSurge(t: number, dur: number): void {
+    const slam = easeInCubic(ramp(t, 0, 0.13));
+    const push = easeOutCubic(ramp(t, 0.05, 0.34));
+    const settle = smooth01(ramp(t, Math.max(0.3, dur - 0.24), dur));
+    const gape = 1 - 0.4 * slam - 0.2 * smooth01(ramp(t, 0.3, dur));
+    const heave = Math.sin(t * 15) * (1 - settle);
+    // A = the coil the windup ended in, B = forefeet down and the body driven forward; `settle` blends into the
+    // exhale pose so the next phase starts where this one ends.
+    const brx = -0.75 + 1.05 * slam;
+    const bpy = 0.28 - 0.42 * slam;
+    const bpz = -0.22 + 0.52 * slam + 0.28 * push;
+    this.body.rx = brx * (1 - settle) + 0.25 * settle + heave * 0.03;
+    this.body.py = bpy * (1 - settle) - 0.1 * settle + Math.abs(heave) * 0.04 * slam;
+    this.body.pz = bpz * (1 - settle);
+    this.body.rz = heave * 0.05;
+    this.body.ry = 0;
+    this.body.s = 1 + 0.06 * (1 - slam) * (1 - settle) + 0.03 * (1 - settle) * slam;
+    this.head.rx = (-0.25 + 0.6 * slam) * (1 - settle) + 0.3 * settle + heave * 0.05;
+    this.head.ry = heave * 0.06;
+    this.head.s = 1 + 0.12 * (1 - slam) * (1 - settle);
+    this.jaw.rx = 1.55 * gape * (1 - settle) + 0.6 * settle;
+    this.legs[0].rx = (-1.25 + 1.4 * slam) * (1 - settle) + 0.15 * settle;
+    this.legs[1].rx = (-1.25 + 1.4 * slam) * (1 - settle) + 0.15 * settle;
+    this.legs[0].rz = -0.15 * (1 - slam * 0.4) * (1 - settle);
+    this.legs[1].rz = 0.15 * (1 - slam * 0.4) * (1 - settle);
+    this.legs[2].rx = (0.75 - 1.05 * slam) * (1 - settle) - 0.1 * settle;
+    this.legs[3].rx = (0.75 - 1.05 * slam) * (1 - settle) - 0.1 * settle;
+    if (this.tail) this.tail.ry = Math.sin(t * 16) * 0.4 * (1 - settle);
+  }
+
+  private floodExhale(t: number, dur: number): void {
+    const k = smooth01(ramp(t, 0, Math.max(0.3, dur)));
+    const decay = 1 - k;
+    const breath = Math.sin(t * 9.5) * decay;
+    this.body.rx = 0.25 * decay;
+    this.body.py = -0.1 * decay + breath * 0.02;
+    this.body.pz = 0;
+    this.body.s = 1 + 0.05 * breath;
+    this.body.rz = breath * 0.02;
+    this.head.rx = 0.3 * decay;
+    this.head.py = -0.03 * decay;
+    this.head.s = 1 + 0.04 * Math.max(0, breath);
+    this.jaw.rx = 0.6 * (1 - easeOutCubic(ramp(t, 0, 0.55)));
+    this.legs[0].rx = 0.15 * decay;
+    this.legs[1].rx = 0.15 * decay;
+    this.legs[2].rx = -0.1 * decay;
+    this.legs[3].rx = -0.1 * decay;
+    if (this.tail) this.tail.ry = Math.sin(t * 6) * 0.3 * decay;
   }
 
   protected poseBlock(t: number): void {

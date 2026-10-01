@@ -17,6 +17,34 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.3.0] - 2026-10-01
+
+### Added
+- **First-person mode:** press V in a match to switch to a camera at your fighter's eyes (Settings has a view choice, a field-of-view slider and a crosshair toggle). You see what your animal would see: claws, jaws, beaks, wings and hooves swing into view while your own head and mane are hidden. The view stays level and steady however the body moves, and dying returns you to the normal spectator view.
+- **Ten brand-new ultimates, each unique to its animal** (full multi-stage animations, effects and sounds):
+  - **Lion, Royal Hunt:** lock on, pounce and pin a foe, maul them four times, then roar to mark them for extra damage.
+  - **Panther, Shadow Execution:** melt into shadow and shadow-step around a foe for five slashes, then finish from behind. Extra execute damage under 35% health.
+  - **Crocodile, Death Roll:** a low lunge, then clamp, drag and thrash the victim through three full death rolls before tossing them.
+  - **Python, Coil Snare:** lash a coil tether that yanks the first foe it touches to you, then squeeze them.
+  - **Giraffe, Timber Fall:** a circle tracks your target, then locks. The neck-hammer slam stuns, and anyone who leaves the circle dodges it.
+  - **Eagle, Death From Above:** spiral out of sight while a red circle tracks a foe, then locks. Leave it in time and the stoop misses.
+  - **Gorilla, Boulder Hurl:** rip a slab from the ground and throw it. It arcs through the air and can be dodged.
+  - **Hippo, Riverlord's Flood:** a wave surges down a marked path and leaves a mud pool that slows everyone but the hippo.
+  - **Rhino, Seismic Stampede:** a charge that homes on a locked foe, gores them and carries them on its horn, then crushes them against a wall.
+  - **Mole, Sinkhole Vortex:** a tremor crack races across the ground and collapses into a vortex pit that drags grounded foes in.
+- **Ultimate targeting:** with a full ultimate bar you see its range ring or path, and a gold LOCK bracket on the foe it would hit. Pressing Q with nothing in range now does nothing, shows "NO TARGET IN RANGE" and keeps your charge. It can be switched off in Settings (Ultimate targeting preview).
+- **First-person camera for every ultimate:** the view tilts, kicks and settles with each ultimate's beats, never rolls or spins with the body, and effects around your eyes fade out instead of washing out the screen.
+
+### Changed
+- **Ultimate icons and names:** all ten ultimate icons were redrawn for the new designs, the HUD ability names no longer run into each other, and the character-select screen shows the icons next to each move.
+- **Bots handle the new ultimates:** they only cast when a target is in range, and Fighter, Veteran and Apex bots sidestep the committed circles, paths and landing spots of enemy ultimates.
+- **Knockdown, stagger, flinch and fear animations** now play for every victim, instead of freezing in place.
+- The old shared ultimate flash was toned down to a subtle ring at the caster's feet.
+- Panther's old stealth critical hit is gone, replaced by Shadow Execution.
+
+### Fixed
+- A black ellipse no longer covers the rotating gladiator in the lobby and character-select previews.
+
 ## [1.2.0] - 2026-09-29
 
 ### Added
@@ -89,7 +117,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/idekakdj/Battle-Royale-v1/releases/tag/v1.0.0

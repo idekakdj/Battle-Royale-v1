@@ -7,7 +7,7 @@
 import type { Fighter, Sim } from './Fighter';
 import { MOVE } from '../config/balance';
 import { altitudeOf } from './hitbox';
-import { hitArea } from './abilities2';
+import { hitArea } from './ultimates/common';
 
 /**
  * True while an eagle is flying above its `attackLockHeight`: attack, block,

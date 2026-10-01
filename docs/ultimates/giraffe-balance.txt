@@ -1,0 +1,46 @@
+Giraffe - Timber Fall (was Guillotine Spin)
+Balance rows, N=60 per level, same seeds, seats=shuffle, traps on. Other animals' ultimates were moving in parallel while these were taken: read only the giraffe rows.
+N=60 has roughly +-5 points of win-rate noise per cell; the N=200 block is the better read for the L3/L4 bands.
+
+=== BEFORE (docs/ultimates/refactor-baseline.txt, v1.2 ultimates, pre-phase-2) ===
+=== L1  matches=60 ended=60 timeouts=0 avgTime=44s  bloodlust=  0%  seats=shuffle  traps=on  (10s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+giraffe       2   3%  6.03 |  0.70  0.37    4   1.8    855   0.63    29 |  70%  24%   6%                    |      4
+
+=== L2  matches=60 ended=60 timeouts=0 avgTime=42s  bloodlust=  3%  seats=shuffle  traps=on  (9s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+giraffe       6  10%  5.80 |  0.97  0.88    1   2.6   1062   0.63    27 |  65%  17%  17%                    |      6
+
+=== L3  matches=60 ended=60 timeouts=0 avgTime=87s  bloodlust= 15%  seats=shuffle  traps=on  (14s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+giraffe       6  10%  5.17 |  1.20  0.92    5   3.2   1249   0.98    48 |  69%  18%  13%                    |      2
+
+=== L4  matches=60 ended=60 timeouts=0 avgTime=94s  bloodlust= 17%  seats=shuffle  traps=on  (17s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+giraffe      10  17%  5.52 |  1.27  0.97    7   3.8   1273   0.90    54 |  68%  21%  11%                    |      1
+
+=== AFTER (N=60 LEVELS=1,2,3,4 npm run balance, final numbers) ===
+=== L1  matches=60 ended=60 timeouts=0 avgTime=44s  bloodlust=  0%  seats=shuffle  traps=on  (6s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+giraffe       2   3%  6.08 |  0.70  0.32    4   1.8    844   0.58    29 |  69%  24%   7%                    |      3
+
+=== L2  matches=60 ended=60 timeouts=0 avgTime=41s  bloodlust=  0%  seats=shuffle  traps=on  (5s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+giraffe       4   7%  5.82 |  0.95  0.88    1   2.6   1042   0.93    26 |  68%  17%  15%                    |      5
+
+=== L3  matches=60 ended=60 timeouts=0 avgTime=89s  bloodlust= 15%  seats=shuffle  traps=on  (9s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+giraffe       3   5%  6.32 |  1.02  0.85    2   2.9   1045   0.78    37 |  74%  17%   9%                    |      1
+
+=== L4  matches=60 ended=60 timeouts=0 avgTime=93s  bloodlust= 15%  seats=shuffle  traps=on  (10s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+giraffe      13  22%  5.68 |  1.23  1.07    3   3.2   1182   0.95    50 |  68%  22%  10%                    |      2
+
+=== AFTER, larger sample (N=200 LEVELS=3,4) to average out seat/seed noise ===
+=== L3  matches=200 ended=200 timeouts=0 avgTime=85s  bloodlust= 10%  seats=shuffle  traps=on  (26s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+giraffe      17   9%  6.24 |  1.00  0.79    2   2.8   1020   0.72    37 |  73%  18%   9%                    |      1
+
+=== L4  matches=200 ended=200 timeouts=0 avgTime=93s  bloodlust= 16%  seats=shuffle  traps=on  (32s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+giraffe      26  13%  6.01 |  1.18  1.00    2   3.3   1129   0.74    47 |  70%  21%   9%                    |      2

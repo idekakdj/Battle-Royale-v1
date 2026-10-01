@@ -1,0 +1,39 @@
+rhino ultimate balance (npm run balance, N=60, levels 1-4, seats=shuffle, traps=on). Other agents' animals were changing concurrently: read only the rhino rows.
+
+## BEFORE (v1.2 ultimate Seismic Stampede (3 s steerable run-through, 160 + knockdown), N=60, levels 1-4)
+=== L1  matches=60 ended=60 timeouts=0 avgTime=43s  bloodlust=  0%  seats=shuffle  traps=on  (10s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+rhino         8  13%  4.37 |  0.95  0.78    4   1.5   1072   1.17    35 |  73%  14%  13%                    |     14
+=== L2  matches=60 ended=60 timeouts=0 avgTime=40s  bloodlust=  0%  seats=shuffle  traps=on  (9s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+rhino         8  13%  4.40 |  1.22  1.13    1   2.4   1209   1.28    31 |  74%  11%  15%                    |      3
+=== L3  matches=60 ended=60 timeouts=0 avgTime=91s  bloodlust= 17%  seats=shuffle  traps=on  (13s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+rhino         4   7%  6.27 |  1.10  0.87    3   2.8   1035   0.60    38 |  69%  15%  15%                    |      4
+=== L4  matches=60 ended=60 timeouts=0 avgTime=95s  bloodlust= 15%  seats=shuffle  traps=on  (13s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+rhino         1   2%  6.35 |  1.18  0.93    6   3.0   1133   0.67    45 |  70%  19%  11%                    |      4
+
+## AFTER (v1.3 Seismic Stampede: homing gore 120 + carry, crush +100 / 1.2 s stun, sweeps 60 + knockdown; N=60, levels 1-4)
+=== L1  matches=60 ended=60 timeouts=0 avgTime=44s  bloodlust=  0%  seats=shuffle  traps=on  (10s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+rhino         8  13%  4.65 |  0.97  0.53    7   1.6   1057   1.10    34 |  76%  14%  10%                    |     14
+=== L2  matches=60 ended=60 timeouts=0 avgTime=41s  bloodlust=  0%  seats=shuffle  traps=on  (13s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+rhino         8  13%  4.93 |  1.12  0.93    3   2.1   1137   1.18    29 |  75%  12%  13%                    |      4
+=== L3  matches=60 ended=60 timeouts=0 avgTime=89s  bloodlust= 15%  seats=shuffle  traps=on  (24s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+rhino         5   8%  5.97 |  1.17  0.92    3   3.0   1068   1.02    41 |  72%  16%  12%                    |      3
+=== L4  matches=60 ended=60 timeouts=0 avgTime=93s  bloodlust= 15%  seats=shuffle  traps=on  (26s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+rhino         5   8%  5.58 |  1.23  1.02    4   3.1   1199   0.95    49 |  70%  20%  11%                    |      5
+
+## AFTER, larger sample (N=300, levels 3-4; less noise)
+=== L3  matches=300 ended=300 timeouts=0
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+rhino        23   8%  5.81 |  1.13  0.91    3   3.0   1076   0.79    40 |  71%  16%  13%                    |      5
+=== L4  matches=300 ended=300 timeouts=0
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+rhino        15   5%  6.02 |  1.18  0.96    5   2.9   1136   0.76    46 |  71%  19%  11%                    |      5
+
+Notes: the rhino holds or improves at L4 (2% at N=60 before; 5% at N=300 and 8% at N=60 after) and L3 (7% before; 8% after); the homing lock makes the charge reliable against bots (none of them dodges it: no danger zone is declared) and the carry + crush adds ~100 on a wall-side victim. 0 timeouts, ~1 ult/fighter/match.

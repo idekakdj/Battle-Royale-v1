@@ -13,6 +13,7 @@ import type { Screen } from '../core/ScreenManager';
 import type { AnimalId } from '../core/types';
 import { el, button, clear } from './dom';
 import { animalHeadSvg } from './icons';
+import { abilityGlyphSvg } from './abilityIcons';
 import { PreviewPane } from './PreviewPane';
 import { ANIMALS, ANIMAL_IDS, type AnimalDef, type StatPips } from '../config/animals';
 import { saveAnimal, loadAnimal } from './storage';
@@ -154,15 +155,22 @@ export class CharacterSelect implements Screen {
     const moves = el('div', { class: 'gk-moves' }, [
       this.moveRow('Combo', `${combo} dmg`, `${def.attackRate.toFixed(2)}/s · reach ${def.range} m · ${def.arcDeg}°${finisherNote}`),
       this.moveRow('Block', `${pct(def.blockReduction)} reduction`, `Guard ${def.guardMax}`),
-      this.moveRow(`Special · ${def.special.name}`, def.special.description, `Cooldown ${def.special.cooldown}s`),
-      this.moveRow(`Ultimate · ${def.ultimate.name}`, def.ultimate.description, 'Charge 100'),
+      this.moveRow(`Special · ${def.special.name}`, def.special.description, `Cooldown ${def.special.cooldown}s`, abilityGlyphSvg(def.id, 'special', 'gk-moves__glyph-svg')),
+      this.moveRow(`Ultimate · ${def.ultimate.name}`, def.ultimate.description, 'Charge 100', abilityGlyphSvg(def.id, 'ultimate', 'gk-moves__glyph-svg')),
     ]);
     return moves;
   }
 
-  private moveRow(label: string, primary: string, meta: string): HTMLElement {
+  private moveRow(label: string, primary: string, meta: string, glyphSvg?: string): HTMLElement {
+    const labelEl = el('div', { class: 'gk-moves__label gk-display' });
+    if (glyphSvg !== undefined) {
+      const glyph = el('span', { class: 'gk-moves__glyph' });
+      glyph.innerHTML = glyphSvg;
+      labelEl.append(glyph);
+    }
+    labelEl.append(el('span', { class: 'gk-moves__label-text', text: label }));
     return el('div', { class: 'gk-moves__row' }, [
-      el('div', { class: 'gk-moves__label gk-display', text: label }),
+      labelEl,
       el('div', { class: 'gk-moves__body' }, [
         el('div', { class: 'gk-moves__primary', text: primary }),
         el('div', { class: 'gk-moves__meta', text: meta }),

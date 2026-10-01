@@ -1,6 +1,7 @@
 /**
  * LION — "The King" (§8 #1). Mane silhouette, paw-swipe combo ending in the
- * Maul Bite, Pounce leap special, King's Roar rear-up ultimate.
+ * Maul Bite, Pounce leap special, Royal Hunt ultimate (coil → bounding pounce → pin →
+ * four claw/bite strikes → rearing roar; poses in ultPose/lion.ts).
  *
  * v1.1: solid muscular legs with paws + claws, a full mane of tufts wrapped
  * around the head and neck (plus chest ruff), a real face (amber eyes with
@@ -10,6 +11,7 @@
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, IMPACT } from './Animator';
+import { LC, LION_CH_NAMES, sampleLionUlt } from './ultPose/lion';
 import {
   makeMat,
   mesh,
@@ -35,6 +37,8 @@ export class LionRig extends BaseRig {
   private readonly jaw: Joint;
   private readonly mane: Joint;
   private readonly tail2: Joint;
+  /** Scratch for the Royal Hunt pose channels (no per-frame allocation). */
+  private readonly ultV = new Float64Array(LION_CH_NAMES.length);
 
   constructor() {
     super(ANIMALS.lion);
@@ -228,20 +232,39 @@ export class LionRig extends BaseRig {
     if (this.tail) this.tail.rx = -0.8 * air;
   }
 
-  protected poseUltimate(u: number, _state: FighterState): void {
-    // King's Roar: rear up, mane flared, jaw wide, trembling with the roar.
-    const k = smooth01(ramp(u, 0.04, 0.28)) * (1 - smooth01(ramp(u, 0.78, 1)));
-    this.body.rx = -0.85 * k;
-    this.body.py = 0.14 * k;
-    this.legs[0].rx = -1.35 * k;
-    this.legs[1].rx = -1.15 * k;
-    this.legs[2].rx = 0.55 * k;
-    this.legs[3].rx = 0.55 * k;
-    this.neck.rx = -0.2 * k;
-    this.head.rx = -0.45 * k;
-    this.jaw.rx = k * (0.85 + 0.08 * Math.sin(this.timePhase * 34));
-    this.mane.s = 1 + 0.3 * k;
-    if (this.tail) this.tail.rx = -0.5 * k;
+  /**
+   * Royal Hunt: a keyframed, cubic-eased timeline driven only by `actionT` + `ultPhase`/`ultStage`
+   * (see ultPose/lion.ts): coil → pounce → pin → 4 strikes → roar → settle (or a whiff skid).
+   */
+  protected poseUltimate(_u: number, state: FighterState): void {
+    const v = this.ultV;
+    sampleLionUlt(state.actionT, state.ultPhase, state.ultStage, v);
+    this.body.py = v[LC.bodyPy];
+    this.body.pz = v[LC.bodyPz];
+    this.body.rx = v[LC.bodyRx];
+    this.body.ry = v[LC.bodyRy];
+    this.body.rz = v[LC.bodyRz];
+    this.legs[0].rx = v[LC.l0Rx];
+    this.legs[0].rz = v[LC.l0Rz];
+    this.legs[1].rx = v[LC.l1Rx];
+    this.legs[1].rz = v[LC.l1Rz];
+    this.legs[2].rx = v[LC.l2Rx];
+    this.legs[2].rz = v[LC.l2Rz];
+    this.legs[3].rx = v[LC.l3Rx];
+    this.legs[3].rz = v[LC.l3Rz];
+    this.neck.rx = v[LC.neckRx];
+    this.neck.ry = v[LC.neckRy];
+    this.head.rx = v[LC.headRx];
+    this.head.ry = v[LC.headRy];
+    this.head.rz = v[LC.headRz];
+    this.jaw.rx = v[LC.jawRx];
+    this.mane.s = v[LC.maneS];
+    if (this.tail) {
+      this.tail.rx = v[LC.tailRx];
+      this.tail.ry = v[LC.tailRy];
+    }
+    this.tail2.rx = v[LC.tail2Rx];
+    this.tail2.ry = v[LC.tail2Ry];
   }
 
   protected poseBlock(t: number): void {

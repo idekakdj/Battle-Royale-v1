@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, ramp, smooth01, IMPACT } from './Animator';
+import { CrocUltPose } from './ultPose/crocodile';
 import {
   makeMat,
   part,
@@ -35,6 +36,9 @@ export class CrocodileRig extends BaseRig {
   private readonly tail1: Joint;
   private readonly tail2: Joint;
   private readonly tail3: Joint;
+  /** Death Roll pose driver (phase/stage-driven, see ultPose/crocodile.ts). */
+  private readonly ultPose = new CrocUltPose();
+  private ultDt = 1 / 60;
 
   constructor() {
     super(ANIMALS.crocodile);
@@ -232,28 +236,24 @@ export class CrocodileRig extends BaseRig {
     this.tailWave(0.4 * surge, 2);
   }
 
-  protected poseUltimate(u: number, _state: FighterState): void {
-    // Death Roll (lunge phase): jaws wide, strike at 55%; the roll itself
-    // plays while the sim holds the croc in `grab` (see poseGrab).
-    const open = ramp(u, 0.05, 0.4);
-    const close = ramp(u, 0.45, IMPACT);
-    const s = attackCurve(u);
-    this.jaw.rx = 1.2 * open * (1 - close);
-    this.head.rx = -0.4 * open * (1 - close);
-    this.body.pz = 0.5 * Math.max(0, s);
-    this.body.py = -0.08 * open;
-    this.tailWave(0.35, 2);
+  override update(state: FighterState, dtRender: number): void {
+    this.ultDt = dtRender < 0 ? 0 : dtRender > 0.1 ? 0.1 : dtRender;
+    super.update(state, dtRender);
   }
 
-  protected override poseGrab(_u: number, _state: FighterState): void {
-    // The death roll: continuous spin around the long axis, jaws clamped.
-    const spin = this.timePhase * 9;
-    this.body.rz = spin;
-    this.jaw.rx = 0.12;
-    this.head.rx = 0.1;
-    for (let i = 0; i < 4; i++) this.legs[i].rx = 0.5;
-    this.tail1.ry = Math.sin(spin * 0.5) * 0.3;
-    this.tail2.ry = Math.sin(spin * 0.5 - 1) * 0.4;
+  protected poseUltimate(_u: number, state: FighterState): void {
+    // Death Roll (v1.3): crouch/hiss -> burst lunge -> clamp -> drag -> 3 death-roll revolutions ->
+    // toss -> exhale. All from ultPhase / ultStage / actionT (ultPose/crocodile.ts). The roll is a
+    // rig-local body.rz only; the sim holds the victim at the jaws and the action stays 'ultimate'.
+    this.ultPose.update(state, this.ultDt, {
+      body: this.body,
+      head: this.head,
+      jaw: this.jaw,
+      legs: this.legs,
+      tail1: this.tail1,
+      tail2: this.tail2,
+      tail3: this.tail3,
+    });
   }
 
   protected poseBlock(t: number): void {

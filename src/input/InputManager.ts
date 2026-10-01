@@ -5,7 +5,8 @@
  *  - Request pointer lock when the canvas is clicked; track lock state.
  *  - Track the §4 control mapping (WASD, Shift, Space, Q, Esc, LMB, RMB) plus
  *    the v1.1 lock-on keys (E / middle mouse toggle, Tab cycle — edges read via
- *    consumeLockToggle / consumeLockCycle; Tab's browser default is prevented).
+ *    consumeLockToggle / consumeLockCycle; Tab's browser default is prevented)
+ *    and the v1.3 view toggle (V → consumeViewToggle: first/third person).
  *  - Produce a camera-relative {@link FighterIntent} for a given camera yaw:
  *    WASD is rotated into world space; `aimYaw` is the camera yaw; attack /
  *    special / ultimate are EDGE-triggered and consumed once per sim tick;
@@ -69,6 +70,7 @@ export class InputManager {
   private pauseEdge = false; // Esc
   private lockToggleEdge = false; // E / MMB (WP-M lock-on)
   private lockCycleEdge = false; // Tab (WP-M next target)
+  private viewToggleEdge = false; // V (v1.3 WP-Q: first / third person)
 
   // Accumulated pointer movement while locked; consumed by the camera rig.
   private mouseDX = 0;
@@ -227,6 +229,13 @@ export class InputManager {
     return p;
   }
 
+  /** Consume the view-toggle edge (V, v1.3 first/third person); true once per press. */
+  consumeViewToggle(): boolean {
+    const p = this.viewToggleEdge;
+    this.viewToggleEdge = false;
+    return p;
+  }
+
   // ── Internal handlers (arrow fns so `this` binds and they detach cleanly) ─────
 
   private readonly onCanvasClick = (): void => {
@@ -267,6 +276,9 @@ export class InputManager {
         break;
       case 'KeyE':
         if (!e.repeat) this.lockToggleEdge = true;
+        break;
+      case 'KeyV':
+        if (!e.repeat) this.viewToggleEdge = true;
         break;
       case 'Tab':
         // Never let Tab move browser focus out of the game while playing.
@@ -356,6 +368,7 @@ export class InputManager {
     this.mouseRight = false;
     this.attackEdge = this.specialEdge = this.ultimateEdge = false;
     this.lockToggleEdge = this.lockCycleEdge = false;
+    this.viewToggleEdge = false;
     this.mouseDX = 0;
     this.mouseDY = 0;
   }

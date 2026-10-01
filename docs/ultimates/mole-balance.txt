@@ -1,0 +1,41 @@
+mole ultimate balance (npm run balance, seats=shuffle, traps=on). Other agents' animals were changing concurrently: read only the mole rows.
+
+## BEFORE (v1.2 ultimate, N=60, levels 1-4)
+=== L1  matches=60 ended=60 timeouts=0 avgTime=44s  bloodlust=  0%  seats=shuffle  traps=on  (14s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+mole          1   2%  7.50 |  0.92  0.38    7   1.6    894   0.35    26 |  80%  18%   2%                    |      9
+=== L2  matches=60 ended=60 timeouts=0 avgTime=42s  bloodlust=  3%  seats=shuffle  traps=on  (10s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+mole          1   2%  6.15 |  1.17  0.98    3   2.2   1070   0.68    26 |  74%  10%  16%                    |      4
+=== L3  matches=60 ended=60 timeouts=0 avgTime=87s  bloodlust= 15%  seats=shuffle  traps=on  (17s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+mole          8  13%  5.08 |  1.47  1.25    4   3.8   1244   1.28    49 |  71%  19%  10%                    |      0
+=== L4  matches=60 ended=60 timeouts=0 avgTime=94s  bloodlust= 17%  seats=shuffle  traps=on  (24s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+mole         11  18%  5.37 |  1.35  1.08    7   3.9   1306   1.17    51 |  72%  22%   6%                    |      3
+
+## AFTER (v1.3 ultimate, N=60, levels 1-4)
+=== L1  matches=60 ended=60 timeouts=0 avgTime=43s  bloodlust=  0%  seats=shuffle  traps=on  (9s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+mole          7  12%  6.80 |  0.90  0.33    7   1.6    916   0.58    27 |  77%  17%   5%                    |      9
+=== L2  matches=60 ended=60 timeouts=0 avgTime=43s  bloodlust=  0%  seats=shuffle  traps=on  (10s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+mole          2   3%  6.53 |  1.08  0.80    4   1.8    890   0.48    24 |  77%  10%  13%                    |      4
+=== L3  matches=60 ended=60 timeouts=0 avgTime=86s  bloodlust= 15%  seats=shuffle  traps=on  (17s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+mole          6  10%  5.40 |  1.28  0.97    4   3.4   1198   0.97    44 |  68%  19%  13%                    |      1
+=== L4  matches=60 ended=60 timeouts=0 avgTime=91s  bloodlust= 13%  seats=shuffle  traps=on  (24s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+mole          7  12%  5.58 |  1.33  1.08    7   3.7   1210   0.90    50 |  72%  22%   6%                    |      3
+
+## AFTER, larger sample (N=120, levels 2-4; less noise)
+=== L2  matches=120 ended=120 timeouts=0 avgTime=41s  bloodlust=  0%  seats=shuffle  traps=on  (17s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+mole          4   3%  6.47 |  1.11  0.83    4   1.8    937   0.56    24 |  78%  10%  12%                    |      3
+=== L3  matches=120 ended=120 timeouts=0 avgTime=87s  bloodlust= 13%  seats=shuffle  traps=on  (29s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+mole         14  12%  5.24 |  1.26  0.97    5   3.5   1219   0.95    46 |  68%  18%  14%                    |      1
+=== L4  matches=120 ended=120 timeouts=0 avgTime=94s  bloodlust= 17%  seats=shuffle  traps=on  (34s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+mole         17  14%  5.63 |  1.38  1.13    7   3.8   1256   0.93    50 |  72%  21%   6%                    |      2
+

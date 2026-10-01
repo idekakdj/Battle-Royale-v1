@@ -13,6 +13,8 @@ import type { Obstacle } from '../config/arena';
 import type { EventBus } from '../core/EventBus';
 import type { Rng } from '../core/math';
 import { MOVE } from '../config/balance';
+import type { ProjectileSystem } from './projectiles';
+import type { GroundZoneSystem } from './groundZones'; // v1.3 hippo mud
 
 /** A neutral, do-nothing intent (used before any intent is set). */
 export function neutralIntent(): FighterIntent {
@@ -59,6 +61,10 @@ export interface AbilityRuntime {
   didHit: boolean; // grab/dive connected
   targetId: number; // grab target id (-1 none)
   isGrab: boolean; // true for croc/python grab ults (resist interruption)
+  /** v1.3: victim locked at cast by the targeting resolver (-1 = none / not a lock ult). */
+  lockId: number;
+  /** v1.3: 0-based beat index of a multi-stage ultimate (snapshot `ultStage`); see emitUltimateStage. */
+  stage: number;
 }
 
 /**
@@ -74,6 +80,13 @@ export interface Sim {
   readonly rng: Rng;
   time: number;
   bloodlustMult: number;
+  /**
+   * v1.3 projectile system (World owns it). Optional so minimal test Sims need not
+   * provide one; use `spawnProjectile(sim, spec)` which is a no-op (-1) without it.
+   */
+  readonly projectiles?: ProjectileSystem;
+  /** v1.3 hippo mud: persistent ground zones (World owns it; optional for minimal test Sims). */
+  readonly groundZones?: GroundZoneSystem;
   emit(ev: GameEvent): void;
   /** Subtract `amount` hp from target, credit attacker, update stats. */
   dealHp(attacker: Fighter | null, target: Fighter, amount: number): void;
@@ -152,6 +165,19 @@ export class Fighter {
   // Hard-CC timers (seconds remaining).
   staggerTimer = 0;
   knockdownTimer = 0;
+  /**
+   * v1.3 cosmetic clock: seconds elapsed in the current (continuous) knockdown. Only feeds
+   * `state.actionT/actionDur` for the renderer's fall/hold/rise pose (`World.resolveAction`);
+   * no gameplay reads it. Reset every tick the fighter is not knocked down.
+   */
+  knockdownClock = 0;
+  /**
+   * v1.3 cosmetic clock for the timer-driven reaction poses (stagger / hit flinch / feared): which of them
+   * `World.resolveAction` showed last tick (`''` = none) and the seconds it has been shown. Feeds only
+   * `state.actionT/actionDur`; no gameplay reads it.
+   */
+  reactKind: '' | 'stagger' | 'hit' | 'feared' = '';
+  reactClock = 0;
   hitstunTimer = 0;
   fearTimer = 0;
   rootTimer = 0;
@@ -192,9 +218,6 @@ export class Fighter {
 
   // Croc Ambush Lunge follow-up window.
   ambushBonusTimer = 0;
-
-  // Panther Night Prowl: next attack from stealth is a bonus crit.
-  stealthCritPending = false;
 
   // Gorilla Primal Rampage: basic hits knock back this many metres (0 when off).
   rampageKnockback = 0;

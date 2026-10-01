@@ -1,7 +1,9 @@
 /**
  * PANTHER — "The Shadow" (§8 #7). Sleek, low, long-tailed cat with glowing
  * green eyes. Rapid claw combo with a lunge bite, Shadow Dash special, and the
- * Night Prowl stealth slink (transparency applied centrally from the buff).
+ * Shadow Execution ultimate (melt into shadow → 5 distinct slash poses, one per blink →
+ * two-paw execute finisher → stalking recovery; poses in ultPose/panther.ts; the
+ * transparency is the shared stealth buff the sim applies).
  *
  * v1.1: glossy black coat with a violet sheen on the back and faint ghost
  * rosettes, lean muscular legs with paws and claws, a compact cat head with
@@ -12,6 +14,7 @@ import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, ramp, smooth01 } from './Animator';
+import { PC, PANTHER_CH_NAMES, samplePantherUlt } from './ultPose/panther';
 import {
   makeMat,
   mesh,
@@ -36,6 +39,8 @@ export class PantherRig extends BaseRig {
   private readonly neck: Joint;
   private readonly jaw: Joint;
   private readonly tail2: Joint;
+  /** Scratch for the Shadow Execution pose channels (no per-frame allocation). */
+  private readonly ultV = new Float64Array(PANTHER_CH_NAMES.length);
 
   constructor() {
     super(ANIMALS.panther);
@@ -196,22 +201,38 @@ export class PantherRig extends BaseRig {
     this.tail2.rx = -0.4 * k;
   }
 
-  protected poseUltimate(u: number, _state: FighterState): void {
-    // Night Prowl: melt into a low hunting slink (stealth fade is central).
-    const k = smooth01(ramp(u, 0, 0.3));
-    this.body.py = -0.22 * k;
-    this.body.rx = 0.04 * k;
-    const g = this.timePhase * 5;
-    for (let i = 0; i < 4; i++) {
-      this.legs[i].rx = Math.sin(g + (i === 0 || i === 3 ? 0 : Math.PI)) * 0.3 * k;
-    }
-    this.neck.rx = 0.3 * k;
-    this.head.rx = -0.3 * k;
-    this.head.ry = Math.sin(this.timePhase * 1.7) * 0.2 * k;
+  /**
+   * Shadow Execution: a keyframed, cubic-eased timeline driven only by `actionT` + `ultPhase`/`ultStage`
+   * (see ultPose/panther.ts). The body teleports on each `blink`; the pose stays continuous across it.
+   */
+  protected poseUltimate(_u: number, state: FighterState): void {
+    const v = this.ultV;
+    samplePantherUlt(state.actionT, state.ultPhase, state.ultStage, v);
+    this.body.py = v[PC.bodyPy];
+    this.body.pz = v[PC.bodyPz];
+    this.body.rx = v[PC.bodyRx];
+    this.body.ry = v[PC.bodyRy];
+    this.body.rz = v[PC.bodyRz];
+    this.legs[0].rx = v[PC.l0Rx];
+    this.legs[0].rz = v[PC.l0Rz];
+    this.legs[1].rx = v[PC.l1Rx];
+    this.legs[1].rz = v[PC.l1Rz];
+    this.legs[2].rx = v[PC.l2Rx];
+    this.legs[2].rz = v[PC.l2Rz];
+    this.legs[3].rx = v[PC.l3Rx];
+    this.legs[3].rz = v[PC.l3Rz];
+    this.neck.rx = v[PC.neckRx];
+    this.neck.ry = v[PC.neckRy];
+    this.head.rx = v[PC.headRx];
+    this.head.ry = v[PC.headRy];
+    this.head.rz = v[PC.headRz];
+    this.jaw.rx = v[PC.jawRx];
     if (this.tail) {
-      this.tail.rx = 0.4 * k; // tail low
-      this.tail.ry = Math.sin(this.timePhase * 2.3) * 0.2 * k;
+      this.tail.rx = v[PC.tailRx];
+      this.tail.ry = v[PC.tailRy];
     }
+    this.tail2.rx = v[PC.tail2Rx];
+    this.tail2.ry = v[PC.tail2Ry];
   }
 
   protected poseBlock(t: number): void {

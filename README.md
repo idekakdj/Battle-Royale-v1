@@ -7,21 +7,22 @@ Three.js, and the Web Audio API.
 
 ## The Gladiators
 
-| Animal    | Style                                                        |
-| --------- | ------------------------------------------------------------ |
-| Lion      | Balanced brawler — the classic all-rounder                    |
-| Gorilla   | Heavy bruiser with bone-rattling slams                        |
-| Crocodile | Ambusher whose death-roll grab shreds anything it catches     |
-| Hippo     | Deceptively fast tank that charges through the line           |
-| Rhino     | Armored freight train — get out of the charge lane            |
-| Eagle     | Aerial skirmisher; takes to the sky and dives untargetable    |
-| Panther   | Stealth assassin that vanishes and strikes from behind        |
-| Python    | Constrictor whose coil-crush grab drains the life out slowly  |
-| Giraffe   | Long-reach kickboxer controlling space from above             |
-| Mole      | Tunnels underground, untargetable, and erupts beneath you     |
+| Animal    | Style                                                        | Ultimate (Q)                                                                                                     |
+| --------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| Lion      | Balanced brawler, the classic all-rounder                    | **Royal Hunt**: lock on, pounce and pin, four guard-piercing mauls, then a roar that marks the victim            |
+| Gorilla   | Heavy bruiser with bone-rattling slams                       | **Boulder Hurl**: rip up a slab and throw it in a dodgeable arc for a heavy hit and splash                       |
+| Crocodile | Ambusher whose death-roll grab shreds anything it catches    | **Death Roll**: lunge, clamp the locked foe and spin it through a three-revolution roll                          |
+| Hippo     | Deceptively fast tank that charges through the line          | **Riverlord's Flood**: a wave surges down a marked line, then leaves slowing mud                                 |
+| Rhino     | Armored freight train, get out of the charge lane            | **Seismic Stampede**: a homing charge that gores, carries and crushes its target against a wall                  |
+| Eagle     | Aerial skirmisher; takes to the sky and dives untargetable   | **Death From Above**: climb out of sight, track and commit on a locked foe, then stoop onto the marked circle    |
+| Panther   | Stealth assassin that vanishes and strikes from behind       | **Shadow Execution**: melt into shadow, five shadow-step strikes, then an executing finisher from behind        |
+| Python    | Constrictor whose coil-crush grab drains the life out slowly | **Coil Snare**: a tether yanks the locked foe in for a binding squeeze and a crush                               |
+| Giraffe   | Long-reach kickboxer controlling space from above            | **Timber Fall**: a tracking circle commits under the foe, then the neck comes down like a felled tree            |
+| Mole      | Tunnels underground, untargetable, and erupts beneath you    | **Sinkhole Vortex**: tunnel to a pit that drags fighters to the centre, grinds them, then collapses and roots   |
 
 Every fighter has a 3-hit combo, a special (Shift), a block/guard system, and
-an ultimate (Q) that charges from dealing and taking damage. Pickups (heal /
+an ultimate (Q) that charges from dealing and taking damage (lock-on ultimates
+need a foe in range and spend nothing otherwise). Pickups (heal /
 speed / rage) spawn on pads; crates break for cover chaos; a bloodlust
 multiplier ramps damage as the match drags on so nobody can hide forever.
 

@@ -46,6 +46,17 @@ export type TargetPolicy =
 export type TrapAwareness = 'ignore' | 'soft' | 'route' | 'exploit';
 
 /**
+ * v1.3 enemy-ultimate danger-zone dodging (src/ai/dangerZones.ts; only ultimates whose
+ * spec sets `targeting.dodge` create zones):
+ *  - `never`    Cub: never dodges.
+ *  - `lazy`     Fighter: leaves a zone only after seeing it for one more reaction time
+ *               and only when an exit is under 2 m away.
+ *  - `reliable` Veteran: leaves any zone it stands in as soon as it perceives it.
+ *  - `strict`   Apex: as `reliable`, and never walks into an active zone.
+ */
+export type UltDodge = 'never' | 'lazy' | 'reliable' | 'strict';
+
+/**
  * v1.2 eagle soar use:
  *  - `none`       no deliberate soar (the hit-and-run hop still glides).
  *  - `defensive`  Veteran/Apex: soars over incoming telegraphs and when hurt,
@@ -135,6 +146,8 @@ export interface BotProfile {
   // v1.2.
   /** How the bot handles arena traps. */
   trapAwareness: TrapAwareness;
+  /** v1.3: how the bot dodges enemy-ultimate danger zones. */
+  ultDodge: UltDodge;
   /** Eagle only: deliberate soar use. */
   soarUse: SoarUse;
 }
@@ -180,6 +193,7 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     targetScanRangeM: 0,
     strafeSkill: 0.0,
     trapAwareness: 'ignore',
+    ultDodge: 'never',
     soarUse: 'none',
   },
   2: {
@@ -216,6 +230,7 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     targetScanRangeM: 0,
     strafeSkill: 0.3,
     trapAwareness: 'soft',
+    ultDodge: 'lazy',
     soarUse: 'none',
   },
   3: {
@@ -252,6 +267,7 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     targetScanRangeM: 14,
     strafeSkill: 0.7,
     trapAwareness: 'route',
+    ultDodge: 'reliable',
     soarUse: 'defensive',
   },
   4: {
@@ -288,6 +304,7 @@ export const BOT_PROFILES: Record<Difficulty, BotProfile> = {
     targetScanRangeM: 14,
     strafeSkill: 1.0,
     trapAwareness: 'exploit',
+    ultDodge: 'strict',
     soarUse: 'defensive',
   },
 };

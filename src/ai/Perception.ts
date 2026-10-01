@@ -19,6 +19,7 @@
 import type { AnimalId, FighterAction, FighterState, GameEvent, WorldSnapshot } from '../core/types';
 import { PILLARS } from '../config/arena';
 import { groundY } from './Steering';
+import { DangerZones } from './dangerZones';
 
 /** Flattened pillar circles for the LOS test (radius² precomputed). */
 const LOS_PILLARS: readonly { x: number; z: number; rSq: number }[] = PILLARS.map((p) => ({
@@ -106,6 +107,14 @@ export class Perception {
   /** Events whose reaction delay elapsed this tick (reset every update). */
   readonly ready: GameEvent[] = [];
 
+  /**
+   * v1.3 danger zones built from released `ultimateTarget`/`ultimateStage`/`telegraph` events of OTHER
+   * fighters whose ultimate spec opts in (`targeting.dodge`); empty for today's ultimates.
+   */
+  readonly zones = new DangerZones();
+
+  private readonly animalOf = (id: number): AnimalId | undefined => this.enemies[id]?.animal;
+
   private queue: QueuedEvent[] = [];
   private qHead = 0;
 
@@ -169,6 +178,10 @@ export class Perception {
         });
       }
     }
+
+    // v1.3 danger zones (reaction-delayed events only).
+    this.zones.prune(now);
+    for (let i = 0; i < this.ready.length; i++) this.zones.ingest(this.ready[i], now, this.reactionS, this.selfId, this.animalOf);
 
     // Reveal stealthed attackers via released hit/blocked events.
     for (let i = 0; i < this.ready.length; i++) {

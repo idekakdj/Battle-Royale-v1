@@ -2605,3 +2605,296 @@
   color: #d5dce4;
   filter: drop-shadow(0 0 3px rgba(200, 210, 230, 0.55));
 }
+
+/* ── v1.3 WP-T: ultimate targeting preview (HUD side) ─────────────────────── */
+
+/* Ult bar full but nothing valid to hit: dim red ring + "NO TARGET" in place of "Q READY". */
+.gk-hud__ult-notarget {
+  position: absolute;
+  bottom: 0.95rem;
+  z-index: 2;
+  font-size: 0.5rem;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  color: #e0857b;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+}
+
+.gk-hud__ability--ult.is-ready.is-notarget {
+  animation: none;
+  border-color: #8a3a34;
+  box-shadow: 0 0 10px rgba(176, 69, 61, 0.35);
+}
+
+.gk-hud__ability--ult.is-ready.is-notarget .gk-hud__ult-notarget {
+  opacity: 1;
+}
+
+.gk-hud__ability--ult.is-ready.is-notarget .gk-hud__ult-ready {
+  opacity: 0;
+  animation: none;
+}
+
+.gk-hud__ability--ult.is-ready.is-notarget .gk-hud__ability-glyph {
+  opacity: 0.6;
+  color: #c8867d;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+}
+
+/* Q pressed with no target: the icon shakes (individual `translate` composes with the pulse animation). */
+.gk-hud__ability--ult.is-shaking {
+  animation-name: gk-ult-shake;
+  animation-duration: 0.42s;
+  animation-timing-function: ease-out;
+  animation-iteration-count: 1;
+}
+
+@keyframes gk-ult-shake {
+  0%, 100% { translate: 0 0; }
+  15% { translate: -6px 0; }
+  30% { translate: 6px 0; }
+  45% { translate: -4px 0; }
+  60% { translate: 4px 0; }
+  80% { translate: -2px 0; }
+}
+
+/* "NO TARGET IN RANGE" flash (centre-lower). */
+.gk-hud__ult-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 27%;
+  padding: 0.4rem 1.2rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+  color: #ffb3a8;
+  background: rgba(30, 10, 8, 0.72);
+  border: 1px solid rgba(224, 96, 80, 0.55);
+  box-shadow: 0 0 18px rgba(224, 96, 80, 0.3);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  pointer-events: none;
+}
+
+.gk-hud__ult-hint.is-active {
+  animation: gk-ult-hint 1.3s ease-out forwards;
+}
+
+@keyframes gk-ult-hint {
+  0% { opacity: 0; transform: translate(-50%, 10px) scale(0.9); }
+  12% { opacity: 1; transform: translate(-50%, 0) scale(1.04); }
+  22% { transform: translate(-50%, 0) scale(1); }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -6px) scale(1); }
+}
+
+.gk-hud.is-spectating .gk-hud__ult-hint,
+.gk-hud.is-spectating .gk-hud__lock-tag {
+  display: none;
+}
+
+/* Gold "LOCK" tag pinned (JS: transform) over the would-be ultimate target. */
+.gk-hud__lock-tag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  color: #ffd76a;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform;
+  transition: opacity 0.12s ease;
+}
+
+.gk-hud__lock-tag.is-on {
+  opacity: 1;
+}
+
+.gk-hud__lock-label {
+  padding: 0.12rem 0.55rem 0.1rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.22em;
+  border: 1px solid rgba(255, 215, 106, 0.85);
+  border-radius: 3px;
+  background: rgba(24, 17, 6, 0.7);
+  text-shadow: 0 0 8px rgba(255, 200, 80, 0.8), 0 1px 2px #000;
+  box-shadow: 0 0 12px rgba(255, 200, 80, 0.35);
+  animation: gk-lock-pulse 1.1s ease-in-out infinite;
+}
+
+.gk-hud__lock-caret {
+  width: 0.8rem;
+  height: 0.5rem;
+  filter: drop-shadow(0 0 4px rgba(255, 200, 80, 0.8));
+}
+
+@keyframes gk-lock-pulse {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 1; }
+}
+
+/* ── v1.3 WP-Q: first-person crosshair dot ─────────────────────────────────── */
+.gk-crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: rgba(255, 244, 214, 0.92);
+  box-shadow: 0 0 0 1px rgba(20, 12, 4, 0.75), 0 0 6px rgba(255, 210, 120, 0.5);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+}
+
+.gk-crosshair.is-on {
+  opacity: 1;
+}
+
+.gk-hud.is-spectating .gk-crosshair {
+  opacity: 0;
+}
+
+/* ══ v1.3 WP-3a: ability glyphs in the move list + a compact layout that fits the longer ultimate copy ══ */
+
+/* HUD ultimate ring: lift the glyph clear of the "Q READY" caption (the redrawn glyphs reach the bottom of their box). */
+.gk-hud__ability--ult .gk-hud__ability-glyph {
+  padding-bottom: 1.05rem;
+}
+
+.gk-hud__ult-ready {
+  bottom: 0.72rem;
+}
+
+/* Character select: glyph beside the Special / Ultimate label. */
+.gk-moves__label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gk-moves__glyph {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 1.7rem;
+  height: 1.7rem;
+  color: var(--gk-gold-bright);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
+}
+
+.gk-moves__glyph-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* Combo + Block share a line; pips run two per row — frees ~110 px so the Ultimate row is visible without scrolling. */
+.gk-moves {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.5rem 1.2rem;
+}
+
+.gk-moves__row:nth-child(n + 3) {
+  grid-column: 1 / -1;
+}
+
+.gk-moves__primary {
+  font-size: 0.82rem;
+  line-height: 1.32;
+}
+
+.gk-pips {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(12.5rem, 45%), 1fr));
+  column-gap: 1.4rem;
+  row-gap: 0.28rem;
+  margin: 0.4rem 0 0.65rem;
+}
+
+.gk-pip {
+  width: clamp(18px, 1.9vw, 28px);
+}
+
+/* 720p floor: a touch tighter so the whole Ultimate row (the longest copy) stays in view. */
+@media (max-height: 760px) {
+  .gk-cs__preview {
+    flex-basis: 112px;
+  }
+
+  .gk-cs__panel {
+    padding: 0.8rem 1.1rem;
+  }
+
+  .gk-cs__info-head {
+    margin-bottom: 0.3rem;
+  }
+
+  .gk-moves {
+    padding-top: 0.5rem;
+    gap: 0.4rem 1.2rem;
+  }
+
+  .gk-cs__lore {
+    margin-top: 0.55rem;
+    padding: 0.4rem 0.7rem;
+    font-size: 0.8rem;
+  }
+
+  .gk-cs__actions {
+    padding-top: 0.6rem;
+  }
+
+  .gk-cs__confirm,
+  .gk-cs__back {
+    padding-top: 0.65rem;
+    padding-bottom: 0.65rem;
+  }
+}
+
+/* HUD ability names: the new ultimate names are long ("Seismic Stampede", "Shadow Execution") and ran into the
+   Special's name under the neighbouring circle. Cap the width so long names wrap onto two centred lines. */
+.gk-hud__abilities {
+  padding-bottom: 1.9rem;
+}
+
+.gk-hud__ability-name {
+  width: max-content;
+  max-width: 5.6rem;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+.gk-hud__ult-notarget {
+  bottom: 0.8rem;
+}
+
+/* ══ v1.3 Phase-3c: first-person ultimate camera overlays (edge-darkening vignette + short flash pulse) ══ */
+.gk-fp-ultvig,
+.gk-fp-ultflash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.gk-fp-ultvig {
+  background: radial-gradient(ellipse at 50% 50%, rgba(8, 4, 16, 0) 42%, rgba(8, 4, 16, 0.55) 78%, rgba(4, 2, 10, 0.92) 100%);
+}
+
+.gk-fp-ultflash {
+  background: radial-gradient(ellipse at 50% 50%, rgba(238, 230, 255, 0.55) 0%, rgba(168, 128, 255, 0.5) 55%, rgba(110, 70, 220, 0.4) 100%);
+  mix-blend-mode: screen;
+}

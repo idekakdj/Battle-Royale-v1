@@ -93,6 +93,9 @@ export class HUD {
   private ultGlyph!: HTMLElement;
   private ultPct!: HTMLElement;
   private ultName!: HTMLElement;
+  private ultNoTarget!: HTMLElement;
+  private ultHintEl!: HTMLElement;
+  private lockTagEl!: HTMLElement;
   private aliveText!: HTMLElement;
   private killFeedEl!: HTMLElement;
   private bloodlustEl!: HTMLElement;
@@ -106,6 +109,10 @@ export class HUD {
   private buffTimeEls: HTMLElement[] = [];
   private buffSecs: number[] = [];
   private toastTimer: number | null = null;
+  private ultHintTimer: number | null = null;
+  private ultShakeTimer: number | null = null;
+  private lockTagOn = false;
+  private ultPreviewState: 'off' | 'ok' | 'none' = 'off';
 
   // Update-diffing state.
   private lastHp = -1;
@@ -152,10 +159,13 @@ export class HUD {
     this.ultPct = el('span', { class: 'gk-hud__ult-pct' });
     this.ultReady = el('span', { class: 'gk-hud__ult-ready gk-display', text: 'Q READY' });
     this.ultName = el('span', { class: 'gk-hud__ability-name' });
+    // v1.3: READY but nothing valid to hit (ult preview) — replaces "Q READY" on the icon.
+    this.ultNoTarget = el('span', { class: 'gk-hud__ult-notarget gk-display', text: 'NO TARGET' });
     this.ultCell = el('div', { class: 'gk-hud__ability gk-hud__ability--ult' }, [
       this.ultGlyph,
       this.ultPct,
       this.ultReady,
+      this.ultNoTarget,
       el('span', { class: 'gk-hud__keycap gk-display', text: 'Q' }),
       this.ultName,
     ]);
@@ -177,9 +187,14 @@ export class HUD {
       hintKey('SPACE', 'Jump'),
       hintKey('E / MMB', 'Lock-on'),
       hintKey('TAB', 'Next target'),
+      hintKey('V', 'View'), // v1.3 WP-Q: first / third person
     ]);
     this.spectateEl = el('div', { class: 'gk-hud__spectate gk-display' });
     this.toastEl = el('div', { class: 'gk-hud__toast' });
+    // v1.3: 'NO TARGET IN RANGE' flash (ult pressed with no valid target) and the LOCK tag
+    // the ready-state preview pins over the would-be target.
+    this.ultHintEl = el('div', { class: 'gk-hud__ult-hint gk-display', text: 'NO TARGET IN RANGE' });
+    this.lockTagEl = el('div', { class: 'gk-hud__lock-tag gk-display', html: lockTagHtml() });
 
     this.root = el('div', { class: 'gk-hud' }, [
       this.vignetteEl,
@@ -194,6 +209,8 @@ export class HUD {
       this.controlsHint,
       this.spectateEl,
       this.toastEl,
+      this.ultHintEl,
+      this.lockTagEl,
     ]);
     root.appendChild(this.root);
     // QA handle (e.g. `__gkHud.pickupToast('speed')` from the console).
@@ -205,6 +222,8 @@ export class HUD {
     this.hintHidden = false;
     this.lastCdText = '';
     this.lastUltPct = -1;
+    this.lockTagOn = false;
+    this.ultPreviewState = 'off';
   }
 
   /**
@@ -221,7 +240,10 @@ export class HUD {
     if (this.bloodlustTimer !== null) window.clearTimeout(this.bloodlustTimer);
     if (this.countdownTimer !== null) window.clearTimeout(this.countdownTimer);
     if (this.toastTimer !== null) window.clearTimeout(this.toastTimer);
+    if (this.ultHintTimer !== null) window.clearTimeout(this.ultHintTimer);
+    if (this.ultShakeTimer !== null) window.clearTimeout(this.ultShakeTimer);
     this.hitmarkerTimer = this.bloodlustTimer = this.countdownTimer = this.toastTimer = null;
+    this.ultHintTimer = this.ultShakeTimer = null;
     this.root?.remove();
     this.root = null;
     const w = window as unknown as { __gkHud?: HUD };
@@ -367,6 +389,56 @@ export class HUD {
     this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('is-active'), TOAST_MS);
   }
 
+  /**
+   * v1.3 ready-state preview result for the ultimate icon: 'none' (bar full but
+   * nothing valid to hit) swaps "Q READY" for a dim red "NO TARGET"; 'ok' / 'off'
+   * restore it. Diffed, so it is safe to call every frame.
+   */
+  setUltPreview(state: 'off' | 'ok' | 'none'): void {
+    if (this.root === null || state === this.ultPreviewState) return;
+    this.ultPreviewState = state;
+    this.ultCell.classList.toggle('is-notarget', state === 'none');
+  }
+
+  /**
+   * v1.3: Q pressed with a full bar but no valid target (`ultimateFizzle`) — a
+   * brief "NO TARGET IN RANGE" hint and a shake on the ultimate icon.
+   */
+  ultFizzle(): void {
+    if (this.root === null) return;
+    this.ultHintEl.classList.remove('is-active');
+    void this.ultHintEl.offsetWidth; // restart the animation
+    this.ultHintEl.classList.add('is-active');
+    if (this.ultHintTimer !== null) window.clearTimeout(this.ultHintTimer);
+    this.ultHintTimer = window.setTimeout(() => this.ultHintEl.classList.remove('is-active'), 1300);
+    this.ultCell.classList.remove('is-shaking');
+    void this.ultCell.offsetWidth;
+    this.ultCell.classList.add('is-shaking');
+    if (this.ultShakeTimer !== null) window.clearTimeout(this.ultShakeTimer);
+    this.ultShakeTimer = window.setTimeout(() => this.ultCell.classList.remove('is-shaking'), 450);
+  }
+
+  /**
+   * v1.3: gold "LOCK" bracket tag over the would-be ultimate target, at screen
+   * position (`x`, `y`) in CSS pixels (its bottom-centre sits on the point).
+   * `visible = false` hides it. Transform-only updates, no layout.
+   */
+  setLockTag(visible: boolean, x = 0, y = 0): void {
+    if (this.root === null) return;
+    if (!visible) {
+      if (this.lockTagOn) {
+        this.lockTagOn = false;
+        this.lockTagEl.classList.remove('is-on');
+      }
+      return;
+    }
+    if (!this.lockTagOn) {
+      this.lockTagOn = true;
+      this.lockTagEl.classList.add('is-on');
+    }
+    this.lockTagEl.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) translate(-50%, -100%)`;
+  }
+
   /** Subtle center hitmarker on a landed hit. */
   hitmarker(): void {
     if (this.root === null) return;
@@ -464,6 +536,12 @@ function hintKey(key: string, action: string): HTMLElement {
     el('kbd', { class: 'gk-hud__hint-key', text: key }),
     el('span', { class: 'gk-hud__hint-action', text: action }),
   ]);
+}
+
+function lockTagHtml(): string {
+  return `<span class="gk-hud__lock-label">LOCK</span><svg class="gk-hud__lock-caret" viewBox="0 0 16 10" aria-hidden="true">
+    <path d="M1 1 L8 9 L15 1 Z" fill="currentColor"/>
+  </svg>`;
 }
 
 function hitmarkerSvg(): string {

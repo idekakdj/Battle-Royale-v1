@@ -1,7 +1,9 @@
 /**
  * GIRAFFE — "The High Tower" (§8 #9). ~4 m tall: long legs, two-segment neck
  * with ossicones and coat patches. Neck-swing combo ending in Skull Hammer,
- * Thunder Kick special, and the double 360° Guillotine Spin ultimate.
+ * Thunder Kick special, and the Timber Fall neck-hammer ultimate (v1.3: whip the
+ * neck back, tremble, then fell it onto the committed circle — keyframed from
+ * `actionT` in ultPose/giraffe.ts; the legs shuffle with the creep).
  *
  * v1.1: reticulated coat (brown polygon patches split by cream lines, baked
  * per facet) over a sloping torso with shoulder hump, knobbly long legs on
@@ -12,7 +14,8 @@
 import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
-import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, easeInOutCubic, IMPACT } from './Animator';
+import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, IMPACT } from './Animator';
+import { GIRAFFE_CH, GIRAFFE_IMPACT_T, TC, sampleGiraffeUlt } from './ultPose/giraffe';
 import {
   makeMat,
   mesh,
@@ -34,9 +37,13 @@ import {
   mixColor,
 } from './parts';
 
+/** Diagonal quadruped gait offsets (FL, FR, BL, BR), as the shared gait. */
+const GAIT_OFF = [0, Math.PI, Math.PI, 0];
+
 export class GiraffeRig extends BaseRig {
   private readonly neck1: Joint;
   private readonly neck2: Joint;
+  private readonly ultV = new Float64Array(GIRAFFE_CH.length);
 
   constructor() {
     super(ANIMALS.giraffe);
@@ -218,23 +225,42 @@ export class GiraffeRig extends BaseRig {
     this.head.rx = 0.2 * rear;
   }
 
-  protected poseUltimate(u: number, _state: FighterState): void {
-    // Guillotine Spin: neck lowered to a scythe, two full 360° body turns —
-    // each sweep crosses the front at an even cadence; the second dips lower.
-    const k = smooth01(ramp(u, 0, 0.15)) * (1 - smooth01(ramp(u, 0.9, 1)));
-    const spin = easeInOutCubic(ramp(u, 0.08, 0.95)) * Math.PI * 4;
-    const second = ramp(u, 0.5, 0.6);
-    this.body.ry = spin;
-    this.neck1.rx = (0.85 + 0.2 * second) * k;
-    this.neck2.rx = 0.25 * k;
-    this.head.rx = -1.0 * k;
-    this.body.py = -0.12 * k - 0.08 * second * k;
-    this.body.rx = 0.06 * k;
-    this.legs[0].rx = -0.2 * k;
-    this.legs[1].rx = -0.2 * k;
-    this.legs[2].rx = 0.25 * k;
-    this.legs[3].rx = 0.25 * k;
-    if (this.tail) this.tail.rx = -0.6 * k;
+  /**
+   * Timber Fall (v1.3): keyframed from `state.actionT` / `actionDur` (see ultPose/giraffe.ts) — the neck whipped
+   * back and up, a trembling tension hold, the overhead slam with the forelegs buckling, a head bounce and the
+   * rise (a whiff searches side to side). While the giraffe creeps in (`state.vel`) the legs shuffle in the
+   * shared diagonal gait until the slam.
+   */
+  protected poseUltimate(_u: number, state: FighterState): void {
+    const v = this.ultV;
+    sampleGiraffeUlt(state.actionT, state.actionDur, v);
+    this.body.py = v[TC.bodyPy];
+    this.body.pz = v[TC.bodyPz];
+    this.body.rx = v[TC.bodyRx];
+    this.body.ry = v[TC.bodyRy];
+    this.body.rz = v[TC.bodyRz];
+    this.neck1.rx = v[TC.n1Rx];
+    this.neck1.rz = v[TC.n1Rz];
+    this.neck2.rx = v[TC.n2Rx];
+    this.neck2.rz = v[TC.n2Rz];
+    this.head.rx = v[TC.headRx];
+    this.head.rz = v[TC.headRz];
+    this.legs[0].rx = v[TC.lFRx];
+    this.legs[1].rx = v[TC.lFRx];
+    this.legs[2].rx = v[TC.lBRx];
+    this.legs[3].rx = v[TC.lBRx];
+    this.legs[0].rz = -v[TC.legRz];
+    this.legs[1].rz = v[TC.legRz];
+    this.legs[2].rz = v[TC.legRz] * 0.5;
+    this.legs[3].rz = -v[TC.legRz] * 0.5;
+    if (this.tail) this.tail.rx = v[TC.tailRx];
+    // Creeping in: shuffle the legs with the stride until the slam lands (weight fades out into the slam).
+    const speed = Math.hypot(state.vel.x, state.vel.z);
+    if (speed > 0.15 && state.actionT < GIRAFFE_IMPACT_T) {
+      const k = Math.min(1, speed / this.def.speed) * (1 - smooth01(ramp(state.actionT, GIRAFFE_IMPACT_T - 0.2, GIRAFFE_IMPACT_T)));
+      for (let i = 0; i < 4; i++) this.legs[i].rx += Math.sin(this.gaitPhase + GAIT_OFF[i]) * 0.5 * k;
+      this.body.py += Math.sin(this.gaitPhase * 2) * 0.03 * k;
+    }
   }
 
   protected poseBlock(t: number): void {

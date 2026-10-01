@@ -13,9 +13,10 @@ import { chargeStep, clampToWall, groundHeightAt } from './MovementSystem';
 import { lerp } from '../core/math';
 import { MOVE } from '../config/balance';
 import { DASH_SPEED, LEAP_DURATION, LEAP_PEAK, LAND_RECOVER, CONTACT_PAD } from './simTuning';
-import { beginAbility, emitCastEvents, endAbility, hitArea, aimX, aimZ, aimPointDist, updateUlt } from './abilities2';
+import { beginAbility, emitCastEvents, endAbility, hitArea, aimX, aimZ, aimPointDist } from './ultimates/common';
+import { updateUlt } from './ultimates';
 
-export { startUlt } from './abilities2';
+export { startUlt } from './ultimates';
 
 /** Begin a special (cooldown already validated by World). */
 export function startSpecial(sim: Sim, f: Fighter): void {

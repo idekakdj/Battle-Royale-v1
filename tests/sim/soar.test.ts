@@ -129,26 +129,28 @@ describe('eagle soar — flight (§3.1)', () => {
 });
 
 describe('eagle soar — dodging by altitude (§3.1)', () => {
-  it("ground AoEs ignore a fighter above the ground-reach altitude (King's Roar at 2.8 m)", () => {
-    const { world, events } = eagleWorld(['lion', 'gorilla']);
-    place(world, 1, 0, -14); // lion
-    place(world, 2, 3, -14); // gorilla, grounded, inside the roar
+  it("ground AoEs ignore a fighter above the ground-reach altitude (Coil Sweep at 2.8 m)", () => {
+    // (Was King's Roar until v1.3 replaced the lion ultimate; the python's 3 m Coil Sweep special is the same ground circle.)
+    const { world, events } = eagleWorld(['python', 'gorilla']);
+    place(world, 1, 0, -14); // python
+    place(world, 2, 2, -14); // gorilla, grounded, inside the 3 m sweep
     const eagle = world.fighters[0];
     eagle.state.pos.y = 2.8; // above 2.5 m reach, inside the old 3 m AoE tolerance
     eagle.state.airborne = true;
-    world.fighters[1].state.ultCharge = 100;
+    world.fighters[1].state.specialCd = 0;
     const hp0 = eagle.state.hp;
-    world.setIntent(1, { ...neutral(), ultimate: true, aimYaw: Math.PI });
-    for (let i = 0; i < 3; i++) {
+    world.setIntent(1, { ...neutral(), special: true, aimYaw: Math.PI });
+    world.step(DT);
+    world.setIntent(1, { ...neutral(), aimYaw: Math.PI });
+    for (let i = 0; i < 30; i++) {
       eagle.state.pos.y = 2.8;
       eagle.state.vel.y = 0;
       world.step(DT);
     }
-    const roarHits = ofType(events, 'hit').filter((e) => e.attackerId === 1);
-    expect(roarHits.some((e) => e.targetId === 2)).toBe(true); // sanity: roar fired
-    expect(roarHits.some((e) => e.targetId === 0)).toBe(false);
+    const sweepHits = ofType(events, 'hit').filter((e) => e.attackerId === 1);
+    expect(sweepHits.some((e) => e.targetId === 2)).toBe(true); // sanity: the sweep fired
+    expect(sweepHits.some((e) => e.targetId === 0)).toBe(false);
     expect(eagle.state.hp).toBe(hp0);
-    expect(eagle.fearTimer).toBe(0);
   });
 
   it('a charge (Seismic Stampede) runs under a soaring eagle; melee swings miss it', () => {
@@ -162,7 +164,8 @@ describe('eagle soar — dodging by altitude (§3.1)', () => {
     // Gorilla swings from right underneath.
     place(world, 2, 0.5, -18.5, 0);
     const hp0 = eagle.state.hp;
-    for (let i = 0; i < Math.round(1.2 / DT); i++) {
+    // v1.3 Seismic Stampede: 0.8 s paw windup + a 0.5 s gallop ramp before it reaches the gorilla 6.5 m away.
+    for (let i = 0; i < Math.round(2.0 / DT); i++) {
       holdOver(world, 0, -18);
       world.setIntent(0, { ...neutral(), jump: true });
       world.setIntent(1, { ...neutral(), ultimate: i === 0, aimYaw: Math.PI / 2 });

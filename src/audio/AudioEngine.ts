@@ -25,6 +25,7 @@ import { TrapSfx } from './trapSfx';
 import { Roars } from './roars';
 import { Crowd } from './crowd';
 import { Music } from './music';
+import { UltAudioRegistry, playDryClick, synth as ultSynth, type UltAudioApi } from './ults';
 
 /** Shape of the persisted `gk-settings` localStorage value (UI owns writes). */
 export interface AudioSettings {
@@ -96,6 +97,10 @@ export class AudioEngine {
   private lastTrapTick = -1;
   private lastListenerTrapTick = -1;
 
+  // v1.3 per-animal ultimate audio modules (src/audio/ults/<animal>.ts).
+  private readonly ultAudio = new UltAudioRegistry();
+  private ultApiCache: UltAudioApi | null = null;
+
   private busUnsubs: Array<() => void> = [];
   private readonly gestureHandler: () => void;
   private disposed = false;
@@ -145,6 +150,8 @@ export class AudioEngine {
     this.crowdMod = null;
     this.musicMod = null;
     this.trapMod = null;
+    this.ultApiCache = null;
+    this.ultAudio.dispose();
   }
 
   // ── settings (UI calls these; UI persists `gk-settings`) ─────────────────
@@ -196,6 +203,27 @@ export class AudioEngine {
       bus.on('trapDamage', (ev) => this.trapDamageTick(ev.kind, ev.targetId, ev.pos)),
       bus.on('trapExpired', (ev) => this.trapExpire(ev.kind, this.distanceGain(ev.pos))),
       bus.on('landingImpact', (ev) => this.landingImpact(this.distanceGain(ev.pos), ev.damage)),
+      // v1.3 ultimates: per-animal modules add to (never replace) the sounds above.
+      bus.on('ultimate', (ev) => this.ultAudio.noteCaster(ev.fighterId, ev.animal)),
+      bus.on('ultimateTarget', (ev) => {
+        this.ultAudio.noteCaster(ev.fighterId, ev.animal);
+        const a = this.ultApi();
+        if (a !== null) this.ultAudio.target(a, ev);
+      }),
+      bus.on('ultimateStage', (ev) => {
+        this.ultAudio.noteCaster(ev.fighterId, ev.animal);
+        const a = this.ultApi();
+        if (a !== null) this.ultAudio.stage(a, ev);
+      }),
+      bus.on('blink', (ev) => {
+        const a = this.ultApi();
+        if (a !== null) this.ultAudio.blink(a, ev);
+      }),
+      bus.on('projectileImpact', (ev) => {
+        const a = this.ultApi();
+        if (a !== null) this.ultAudio.impact(a, ev);
+      }),
+      bus.on('ultimateFizzle', (ev) => this.ultFizzle(ev.fighterId)),
     ];
   }
 
@@ -234,6 +262,39 @@ export class AudioEngine {
     }
     this.lastTrapTick = now;
     this.trapTick(kind, mine ? 1 : this.distanceGain(pos) * 0.6);
+  }
+
+  /** API handed to per-animal ultimate audio modules (null while the context is not running). */
+  private ultApi(): UltAudioApi | null {
+    const sc = this.ready();
+    if (sc === null) return null;
+    if (this.ultApiCache === null || this.ultApiCache.sc !== sc) {
+      const engine = this;
+      this.ultApiCache = {
+        sc,
+        get now(): number {
+          return sc.ctx.currentTime;
+        },
+        gainAt: (pos: Vec3) => engine.distanceGain(pos),
+        isListener: (id: number) => (engine.hasListener ? id === engine.listenerId : id === 0),
+        synth: ultSynth,
+      };
+    }
+    return this.ultApiCache;
+  }
+
+  /** A fighter's ultimate ended (or it died) — forwarded to that animal's audio module. */
+  ultEnd(fighterId: number): void {
+    const a = this.ultApi();
+    if (a !== null) this.ultAudio.end(a, fighterId);
+  }
+
+  /** Ultimate pressed with a full bar but no valid target: a short dry click (listener's own only). */
+  ultFizzle(fighterId = 0): void {
+    const mine = this.hasListener ? fighterId === this.listenerId : fighterId === 0;
+    if (!mine) return;
+    const sc = this.ready();
+    if (sc !== null) playDryClick(sc);
   }
 
   /** Remove all EventBus subscriptions installed by {@link attachBus}. */

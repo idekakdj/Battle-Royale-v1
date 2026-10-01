@@ -13,6 +13,8 @@ import { mulberry32, dirToYaw, angleDelta, DEG2RAD, type Rng } from '../core/mat
 import { Perception, MEMORY_SECONDS, type TrackedEnemy } from './Perception';
 import { BlockControl, sampleAimNoise, timeToImpact } from './CombatMicro';
 import { decideAbilities, type Situation, type AbilityWish } from './scripts';
+import { previewUltTarget } from '../sim/ultimates/targeting';
+import { avoidDangerZones, makeExit, LAZY_MAX_EXIT_M } from './dangerZones';
 import {
   seek,
   flee,
@@ -54,6 +56,9 @@ export class BotBrain {
   private readonly rng: Rng;
   private readonly block = new BlockControl();
   private readonly move: Move2 = { x: 0, z: 0 };
+  private readonly zoneExit = makeExit();
+  /** v1.3: this animal's ultimate declares `targeting.requireTarget` (bots must not cast it into a fizzle). */
+  private readonly ultNeedsTarget: boolean;
   private readonly wish: AbilityWish = { special: false, ult: false, aimYaw: 0 };
   private readonly sit: Situation;
 
@@ -103,6 +108,7 @@ export class BotBrain {
     this.id = id;
     this.def = ANIMALS[animal];
     this.profile = profile;
+    this.ultNeedsTarget = this.def.ultimate.targeting?.requireTarget === true;
     this.rng = mulberry32(seed);
     this.perception = new Perception(id, profile.reactionMs / 1000);
     // Stagger decision ticks across bots (deterministically).
@@ -425,6 +431,9 @@ export class BotBrain {
       sit.wallBehindTarget = false;
     }
 
+    // v1.3: lock ultimates are only cast with a valid target (same selection as the sim).
+    sit.ultTargetValid = sit.ultReady && this.ultNeedsTarget ? this.ultCastValid(self, delayed.fighters, sit.aimYawToTarget) : undefined;
+
     decideAbilities(sit, this.wish);
 
     // v1.2 eagle soar (Veteran/Apex): rise over a long telegraph, out of a
@@ -635,7 +644,7 @@ export class BotBrain {
           this.lastSpecialPress = now;
           this.wish.special = false;
           aimYaw = this.wish.aimYaw;
-        } else if (goal === 'ultimate' && this.wish.ult && self.ultCharge >= 100) {
+        } else if (goal === 'ultimate' && this.wish.ult && self.ultCharge >= 100 && this.ultCastValid(self, current.fighters, this.wish.aimYaw)) {
           intent.ultimate = true;
           this.wish.ult = false;
           aimYaw = this.wish.aimYaw;
@@ -760,6 +769,9 @@ export class BotBrain {
       move.z = 0;
     }
 
+    // v1.3 enemy-ultimate danger zones (grounded only; no-op unless an opted-in ultimate is live).
+    if (soarState === 0 && self.pos.y - groundY(sx, sz) < 1.0) this.dodgeZones(now, self, move);
+
     // v1.2 traps: route around plates / out of hazards (grounded only).
     if (soarState === 0 && self.pos.y - groundY(sx, sz) < 1.0) {
       avoidTraps(move, sx, sz, this.def.radius, this.trapView, p.trapAwareness);
@@ -803,7 +815,8 @@ export class BotBrain {
     const guardOk = p.whiffPunish ? self.guard > self.maxGuard * 0.15 : self.guard > 0;
     if (this.block.active(now) && !isAttackAction(self.action) && guardOk) {
       intent.block = true;
-      intent.aimYaw = this.block.yaw;
+      // v1.3: keep the ultimate's aim when it needs a target (the block yaw could break the lock).
+      if (!(intent.ultimate && this.ultNeedsTarget)) intent.aimYaw = this.block.yaw;
       intent.attack = false;
       return;
     }
@@ -823,6 +836,42 @@ export class BotBrain {
         this.disengageUntil = now + 1.0;
       }
     }
+  }
+
+  // ── v1.3 ultimate targeting / danger zones ──────────────────────────────────
+
+  /**
+   * Would casting the ultimate now along `aimYaw` find a valid target? Always true for ultimates
+   * without `requireTarget` (today's behaviour); otherwise the shared `previewUltTarget` decides
+   * (the same selection the sim runs at cast).
+   */
+  private ultCastValid(self: FighterState, fighters: readonly FighterState[], aimYaw: number): boolean {
+    if (!this.ultNeedsTarget) return true;
+    return previewUltTarget(this.def.ultimate, self, fighters, { aimYaw }).valid;
+  }
+
+  /**
+   * Step out of (and, at Apex, keep out of) enemy-ultimate danger zones. Overrides `move` when
+   * dodging. Policy per `profile.ultDodge`: never / lazy / reliable / strict (see dangerZones.ts).
+   */
+  private dodgeZones(now: number, self: FighterState, move: Move2): void {
+    const mode = this.profile.ultDodge;
+    if (mode === 'never') return;
+    const zones = this.perception.zones;
+    if (zones.count === 0) return;
+    const sx = self.pos.x;
+    const sz = self.pos.z;
+    const pad = this.def.radius;
+    if (zones.insideAny(sx, sz, pad, now)) {
+      if (mode === 'lazy' && now - zones.earliestKnown(sx, sz, pad, now) < this.perception.reactionS) return;
+      const ex = this.zoneExit;
+      if (!zones.nearestExit(sx, sz, pad, now, ex, this.trapView)) return;
+      if (mode === 'lazy' && ex.dist >= LAZY_MAX_EXIT_M) return;
+      move.x = ex.dx;
+      move.z = ex.dz;
+      return;
+    }
+    if (mode === 'strict') avoidDangerZones(move, sx, sz, pad, zones, now);
   }
 
   // ── v1.2 eagle soar ─────────────────────────────────────────────────────────

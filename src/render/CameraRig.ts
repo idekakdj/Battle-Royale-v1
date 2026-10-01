@@ -16,12 +16,36 @@
  *   {@link follow} switches targets with a smooth 0.5 s blend.
  * - FOV kick (render/fxBus) on ultimates / heavy hits, decays in ~0.35 s.
  * - `yaw` is public so camera-relative input can read it.
+ *
+ * v1.3 WP-Q — FIRST-PERSON mode ({@link setFirstPerson}): the camera sits at the
+ * followed rig's eye (a {@link FpEyeSample} supplied by `setFpAnchor`), is
+ * driven ONLY by `yaw` + `fpPitch` (±80°) plus a small decaying hit-kick and a
+ * tiny run roll, and therefore can never inherit body roll / pitch / spin. The
+ * root position is used un-smoothed (no lag); only the eye's offset from it is
+ * smoothed lightly. Mode switches blend the third-person transform into the
+ * first-person one over ~0.4 s (position lerp + quaternion slerp + FOV/near
+ * lerp), so there is no pop. Spectate / death always forces third person.
  */
 
 import * as THREE from 'three';
 import { DEG2RAD, clamp, wrapAngle } from '../core/math';
 import { PILLARS, PILLAR_HEIGHT, WALL_RADIUS } from '../config/arena';
 import { fovKick } from './fxBus';
+import type { FpEyeSample } from './animals/fp/types';
+import { UltCamOut } from './animals/fp/ultCam'; // v1.3 FP ult: ultimate camera director output
+import {
+  FP_FOV_DEFAULT,
+  ViewKick,
+  clampEyeToArena,
+  clampFpFov,
+  clampFpPitch,
+  fpVerticalFov,
+  smoothStep01,
+  stepBlend,
+} from './animals/fp/math';
+
+/** Fills the local player's first-person eye sample each frame. */
+export type FpAnchorFn = (out: FpEyeSample) => void;
 
 /** Writes the current world position of the followed target into `out`. */
 export type TargetPosFn = (out: THREE.Vector3) => void;
@@ -67,11 +91,29 @@ const _dir = new THREE.Vector3();
 const _camPos = new THREE.Vector3();
 const _hit = { hard: 0, soft: 0 };
 
+// First-person scratch.
+const FP_REL_TAU = 0.035; // eye-offset smoothing (s); root position is NOT smoothed
+const FP_TP_NEAR = 0.1; // the third-person near plane (SceneManager's value)
+const ULT_PITCH_MAX = 1.5; // hard pitch limit (~86 degrees) with the ultimate director's offsets applied
+const _tpPos = new THREE.Vector3();
+const _tpQuat = new THREE.Quaternion();
+const _fpPos = new THREE.Vector3();
+const _fpQuat = new THREE.Quaternion();
+const _lookM = new THREE.Matrix4();
+const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
+const _up = new THREE.Vector3(0, 1, 0);
+const _off = { x: 0, z: 0 };
+
 export class CameraRig {
   /** World yaw of the camera orbit (radians). Public for camera-relative input. */
   yaw = 0;
   /** Camera elevation angle (radians), clamped [−30°, +55°]. */
   pitch = 14 * DEG2RAD;
+  /**
+   * First-person look pitch (radians, + = looking UP), clamped ±80°. Separate
+   * from the orbit `pitch` so switching modes never fights the other mapping.
+   */
+  fpPitch = 0;
 
   /**
    * Screenshake hook: the rig applies `min(shakeSource(), 0.15)` metres of
@@ -101,6 +143,31 @@ export class CameraRig {
   private readonly blendFrom = new THREE.Vector3();
   private blendFromHead = 1.6;
 
+  // ── First person (WP-Q) ──
+  private fpWanted = false; // requested mode
+  private fpBlend = 0; // 0 = third person … 1 = first person (linear in time)
+  private fpAnchor: FpAnchorFn | null = null;
+  private fpFovH = FP_FOV_DEFAULT; // horizontal FOV setting (deg)
+  private fpNear = 0.08; // near plane from the active profile
+  private fpRelInit = false;
+  private tpPitchSaved = 14 * DEG2RAD;
+  private readonly fpSample: FpEyeSample = {
+    rootX: 0, rootY: 0, rootZ: 0, relX: 0, relY: 1.4, relZ: 0, bobY: 0, bobSide: 0, roll: 0, near: 0.08,
+  };
+  private fpRelX = 0;
+  private fpRelY = 1.4;
+  private fpRelZ = 0;
+  /** Hit-kick spring (pitch/roll), applied in first person only. */
+  readonly viewKick = new ViewKick();
+  /**
+   * v1.3 FP ult: the first-person ULTIMATE camera director's output (fp/ultCam.ts), written by the
+   * MatchController each frame. Neutral (all zeros / ones) outside an ultimate; only ever applied to the
+   * first-person transform, as view-only offsets on top of the player's own yaw/pitch.
+   */
+  readonly ult = new UltCamOut();
+  private lastNear = FP_TP_NEAR;
+  private lastFov = 0;
+
   constructor(camera: THREE.PerspectiveCamera, options: CameraRigOptions = {}) {
     this.camera = camera;
     this.baseDistance = options.distance ?? 6.5;
@@ -113,9 +180,67 @@ export class CameraRig {
 
   /** Feed pointer-lock mouse deltas (pixels). The rig never reads the mouse. */
   applyMouseDelta(dx: number, dy: number): void {
-    this.yaw = wrapAngle(this.yaw - dx * this.sensitivity);
-    this.pitch = clamp(this.pitch + dy * this.sensitivity, PITCH_MIN, PITCH_MAX);
+    // v1.3 FP ult: a directive may (briefly) lock the mouse look; 1 = free.
+    const ux = this.fpWanted ? this.ult.mouseYaw : 1;
+    const uy = this.fpWanted ? this.ult.mousePitch : 1;
+    this.yaw = wrapAngle(this.yaw - dx * this.sensitivity * ux);
+    if (this.fpWanted) {
+      // First person: mouse down = look down (same feel as the orbit camera).
+      this.fpPitch = clampFpPitch(this.fpPitch - dy * this.sensitivity * uy);
+    } else {
+      this.pitch = clamp(this.pitch + dy * this.sensitivity, PITCH_MIN, PITCH_MAX);
+    }
     this.idleT = 0;
+  }
+
+  // ── First person (WP-Q) ───────────────────────────────────────────────────
+
+  /** True while first person is the requested mode (spectate/death force it off). */
+  get isFirstPerson(): boolean {
+    return this.fpWanted;
+  }
+
+  /** 0..1 eased mode blend (0 = third person, 1 = first person) — for hiding the own head. */
+  get fpAmount(): number {
+    return smoothStep01(this.fpBlend);
+  }
+
+  /** Supply the callback that samples the local player's eye every frame. */
+  setFpAnchor(fn: FpAnchorFn | null): void {
+    this.fpAnchor = fn;
+  }
+
+  /** Horizontal FOV (degrees) used in first person; clamped to 60–110. */
+  setFpFov(horizontalDeg: number): void {
+    this.fpFovH = clampFpFov(horizontalDeg);
+  }
+
+  /**
+   * Switch mode. Entering first person keeps the current view direction's
+   * yaw and starts from a near-level pitch; leaving restores the previous
+   * orbit pitch. `immediate` skips the ~0.4 s blend (mount / restore).
+   * Spectating never allows first person.
+   */
+  setFirstPerson(on: boolean, immediate = false): void {
+    const want = on && !this.spectateMode;
+    if (want === this.fpWanted) {
+      if (immediate) this.fpBlend = want ? 1 : 0;
+      return;
+    }
+    this.fpWanted = want;
+    if (want) {
+      this.tpPitchSaved = this.pitch;
+      this.fpPitch = clampFpPitch(-this.pitch * 0.25);
+      this.fpRelInit = false;
+    } else {
+      this.pitch = clamp(this.tpPitchSaved, PITCH_MIN, PITCH_MAX);
+    }
+    if (immediate) this.fpBlend = want ? 1 : 0;
+  }
+
+  /** Hit "view kick" (radians): a brief pitch/roll jolt instead of body motion. */
+  addKick(pitch: number, roll: number): void {
+    if (this.fpWanted) this.viewKick.kick(pitch, roll);
   }
 
   /**
@@ -140,6 +265,8 @@ export class CameraRig {
   /** Spectate mode: wider/higher framing; slow orbit after 1.5 s idle. */
   setSpectate(on: boolean): void {
     this.spectateMode = on;
+    // The death cam / spectating is always third person (WP-Q).
+    if (on && this.fpWanted) this.setFirstPerson(false);
   }
 
   get isSpectate(): boolean {
@@ -200,8 +327,10 @@ export class CameraRig {
 
     // Screenshake (≤0.15 m), applied as a positional offset.
     const rawShake = this.shakeSource !== null ? this.shakeSource() : 0;
+    let shakeAmt = 0;
     if (rawShake > 0.0005) {
       const s = rawShake > MAX_SHAKE ? MAX_SHAKE : rawShake;
+      shakeAmt = s;
       this.shakeT += dt;
       const t = this.shakeT;
       _camPos.x += Math.sin(t * 57.3) * s;
@@ -209,8 +338,32 @@ export class CameraRig {
       _camPos.z += Math.sin(t * 63.7 + 4.4) * s;
     }
 
-    this.camera.position.copy(_camPos);
-    this.camera.lookAt(_pivot);
+    // First person (WP-Q): blend the eye camera over the orbit camera.
+    this.fpBlend = stepBlend(this.fpBlend, this.fpWanted && this.fpAnchor !== null, dt);
+    let fovBase = this.baseFov;
+    let nearNow = FP_TP_NEAR;
+    let ultFov = 0;
+    if (this.fpBlend > 0 && this.fpAnchor !== null) {
+      const e = smoothStep01(this.fpBlend);
+      _lookM.lookAt(_camPos, _pivot, _up);
+      _tpQuat.setFromRotationMatrix(_lookM);
+      _tpPos.copy(_camPos);
+      this.evalFirstPerson(dt, shakeAmt);
+      if (e >= 1) {
+        this.camera.position.copy(_fpPos);
+        this.camera.quaternion.copy(_fpQuat);
+      } else {
+        this.camera.position.lerpVectors(_tpPos, _fpPos, e);
+        this.camera.quaternion.slerpQuaternions(_tpQuat, _fpQuat, e);
+      }
+      fovBase = this.baseFov + (fpVerticalFov(this.fpFovH, this.camera.aspect) - this.baseFov) * e;
+      nearNow = FP_TP_NEAR + (this.fpNear - FP_TP_NEAR) * e;
+      ultFov = this.ult.fovPct * e; // v1.3 FP ult
+    } else {
+      this.camera.position.copy(_camPos);
+      this.camera.lookAt(_pivot);
+      this.viewKick.update(dt); // let any residual kick settle
+    }
 
     // FOV kick (ultimates / heavy hits), decaying back to the base FOV.
     if (fovKick.deg > 0.01 || this.appliedKick !== 0) {
@@ -218,9 +371,93 @@ export class CameraRig {
       if (fovKick.deg < 0.01) fovKick.deg = 0;
       this.appliedKick += (fovKick.deg - this.appliedKick) * Math.min(1, dt * 30);
       if (Math.abs(this.appliedKick) < 0.005 && fovKick.deg === 0) this.appliedKick = 0;
-      this.camera.fov = this.baseFov + this.appliedKick;
+    }
+    const fov = fovBase * (1 + ultFov) + this.appliedKick;
+    if (Math.abs(fov - this.lastFov) > 0.002 || Math.abs(nearNow - this.lastNear) > 0.0005) {
+      this.lastFov = fov;
+      this.lastNear = nearNow;
+      this.camera.fov = fov;
+      this.camera.near = nearNow;
       this.camera.updateProjectionMatrix();
     }
+  }
+
+  /**
+   * First-person camera transform → `_fpPos` / `_fpQuat`. Position = the rig's
+   * exact root position + a lightly smoothed eye offset (+ un-smoothed bob and
+   * shake); orientation = yaw / fpPitch / kick / run roll ONLY — the body's
+   * own roll, pitch and spin never reach it.
+   */
+  private evalFirstPerson(dt: number, shakeAmt: number): void {
+    const smp = this.fpSample;
+    (this.fpAnchor as FpAnchorFn)(smp);
+    if (!this.fpRelInit) {
+      this.fpRelX = smp.relX;
+      this.fpRelY = smp.relY;
+      this.fpRelZ = smp.relZ;
+      this.fpRelInit = true;
+    } else {
+      const k = 1 - Math.exp(-dt / FP_REL_TAU);
+      this.fpRelX += (smp.relX - this.fpRelX) * k;
+      this.fpRelY += (smp.relY - this.fpRelY) * k;
+      this.fpRelZ += (smp.relZ - this.fpRelZ) * k;
+    }
+    _off.x = this.fpRelX;
+    _off.z = this.fpRelZ;
+    clampEyeToArena(smp.rootX, smp.rootZ, _off);
+    const sinY = Math.sin(this.yaw);
+    const cosY = Math.cos(this.yaw);
+    let y = smp.rootY + this.fpRelY + smp.bobY;
+    if (y < 0.14) y = 0.14;
+    _fpPos.set(
+      smp.rootX + _off.x - cosY * smp.bobSide,
+      y,
+      smp.rootZ + _off.z + sinY * smp.bobSide,
+    );
+    // v1.3 FP ult: eye drop / surge / blink slide from the ultimate camera director (world-space, view-only).
+    const ul = this.ult;
+    if (ul.active) {
+      _fpPos.x += ul.slideX + sinY * ul.eyeF;
+      _fpPos.y += ul.slideY + ul.eyeY;
+      _fpPos.z += ul.slideZ + cosY * ul.eyeF;
+      if (_fpPos.y < 0.14) _fpPos.y = 0.14;
+      const r = Math.hypot(_fpPos.x, _fpPos.z);
+      const rMax = WALL_RADIUS - 0.22;
+      if (r > rMax) {
+        _fpPos.x *= rMax / r;
+        _fpPos.z *= rMax / r;
+      }
+    }
+    // Shake: positional noise (scaled down — the eye is close to everything)
+    // plus a hair of angular noise.
+    let sp = 0;
+    let sr = 0;
+    if (shakeAmt > 0) {
+      const t = this.shakeT;
+      const s = shakeAmt * 0.6;
+      _fpPos.x += Math.sin(t * 57.3) * s;
+      _fpPos.y += Math.sin(t * 47.1 + 2.1) * s * 0.7;
+      _fpPos.z += Math.sin(t * 63.7 + 4.4) * s;
+      sp = Math.sin(t * 41.9 + 1.3) * shakeAmt * 0.1;
+      sr = Math.sin(t * 52.3 + 3.7) * shakeAmt * 0.12;
+    }
+    this.viewKick.update(dt);
+    // v1.3 FP ult: additive pitch offset, optional blend toward an absolute look-at pitch, then kicks / shake.
+    let pitchF = clampFpPitch(this.fpPitch) + this.viewKick.pitch + sp;
+    let rollF = smp.roll + this.viewKick.roll + sr;
+    let yawF = this.yaw + Math.PI;
+    if (ul.active) {
+      pitchF += ul.pitch;
+      if (ul.lookW > 0) pitchF += (ul.lookPitch - pitchF) * ul.lookW;
+      pitchF += ul.kick;
+      if (pitchF > ULT_PITCH_MAX) pitchF = ULT_PITCH_MAX;
+      else if (pitchF < -ULT_PITCH_MAX) pitchF = -ULT_PITCH_MAX;
+      rollF += ul.roll;
+      yawF += ul.yawOff;
+    }
+    _euler.set(pitchF, yawF, rollF, 'YXZ');
+    _fpQuat.setFromEuler(_euler);
+    this.fpNear = smp.near;
   }
 
   /** Place the camera immediately (no smoothing) — call once after setup. */

@@ -1,0 +1,46 @@
+Gorilla - Boulder Hurl (was Primal Rampage)
+Balance rows, N=60 per level, same seeds, seats=shuffle, traps on. Other animals' ultimates were moving in parallel while these were taken: read only the gorilla rows.
+N=60 has roughly +-5 points of win-rate noise per cell; the N=200 block is the better read for the L3/L4 bands.
+
+=== BEFORE (docs/ultimates/refactor-baseline.txt, v1.2 ultimates, pre-phase-2) ===
+=== L1  matches=60 ended=60 timeouts=0 avgTime=44s  bloodlust=  0%  seats=shuffle  traps=on  (10s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+gorilla       8  13%  4.48 |  1.05  0.88    4   1.9   1062   1.10    34 |  86%  14%   0%                    |     15
+
+=== L2  matches=60 ended=60 timeouts=0 avgTime=42s  bloodlust=  3%  seats=shuffle  traps=on  (9s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+gorilla       2   3%  5.75 |  1.23  1.23    1   2.6   1071   0.82    27 |  87%  13%   0%                    |      3
+
+=== L3  matches=60 ended=60 timeouts=0 avgTime=87s  bloodlust= 15%  seats=shuffle  traps=on  (14s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+gorilla       3   5%  5.70 |  1.10  0.90    8   4.6   1069   0.67    44 |  80%  20%   0%                    |      1
+
+=== L4  matches=60 ended=60 timeouts=0 avgTime=94s  bloodlust= 17%  seats=shuffle  traps=on  (17s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+gorilla       6  10%  5.12 |  1.32  1.10   10   5.7   1245   1.08    57 |  78%  22%   0%                    |      2
+
+=== AFTER (N=60 LEVELS=1,2,3,4 npm run balance, final numbers) ===
+=== L1  matches=60 ended=60 timeouts=0 avgTime=44s  bloodlust=  0%  seats=shuffle  traps=on  (6s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+gorilla       8  13%  4.75 |  1.02  0.53    7   1.9   1063   0.92    34 |  80%  13%   7%                    |     13
+
+=== L2  matches=60 ended=60 timeouts=0 avgTime=41s  bloodlust=  0%  seats=shuffle  traps=on  (5s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+gorilla       4   7%  6.13 |  1.08  0.90    3   2.3   1055   0.73    26 |  78%  10%  12%                    |      2
+
+=== L3  matches=60 ended=60 timeouts=0 avgTime=89s  bloodlust= 15%  seats=shuffle  traps=on  (9s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+gorilla       4   7%  5.68 |  1.12  0.92    4   4.4   1172   0.62    43 |  74%  18%   9%                    |      1
+
+=== L4  matches=60 ended=60 timeouts=0 avgTime=93s  bloodlust= 15%  seats=shuffle  traps=on  (10s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+gorilla       7  12%  5.32 |  1.28  1.05    5   5.1   1238   1.02    54 |  73%  20%   7%                    |      1
+
+=== AFTER, larger sample (N=200 LEVELS=3,4) to average out seat/seed noise ===
+=== L3  matches=200 ended=200 timeouts=0 avgTime=85s  bloodlust= 10%  seats=shuffle  traps=on  (26s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+gorilla      15   8%  5.45 |  1.18  1.04    3   4.6   1242   0.86    45 |  72%  18%  10%                    |      1
+
+=== L4  matches=200 ended=200 timeouts=0 avgTime=93s  bloodlust= 16%  seats=shuffle  traps=on  (32s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+gorilla      19  10%  5.49 |  1.25  1.09    5   5.0   1235   0.84    53 |  73%  19%   8%                    |      2

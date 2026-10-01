@@ -12,6 +12,9 @@ import { el, button } from './dom';
 import { speakerSvg } from './icons';
 import {
   type GkSettings,
+  type ViewMode,
+  FP_FOV_MAX_SETTING,
+  FP_FOV_MIN_SETTING,
   DEFAULT_SENSITIVITY,
   MAX_SENSITIVITY,
   MIN_SENSITIVITY,
@@ -41,6 +44,7 @@ const CONTROLS: readonly (readonly [string, string])[] = [
   ['Space', 'Jump (Eagle: hold to glide)'],
   ['E / MMB', 'Lock-on toggle (camera + aim follow the target)'],
   ['Tab', 'Lock-on: next nearest enemy'],
+  ['V', 'Toggle first / third person view'], // v1.3 WP-Q
   ['Esc', 'Pause'],
 ];
 
@@ -91,7 +95,7 @@ export class SettingsPanel {
       el('div', { class: 'gk-settings__muterow' }, [this.muteBtn]),
     ]);
 
-    const children: HTMLElement[] = [audio, this.graphicsGroup(), this.mouseGroup(), this.combatGroup()];
+    const children: HTMLElement[] = [audio, this.graphicsGroup(), this.mouseGroup(), this.viewGroup(), this.combatGroup()];
     if (this.opts.showControls === true && window.gkDesktop !== undefined) children.push(this.desktopGroup());
     if (this.opts.showControls === true) children.push(this.controlsTable());
 
@@ -204,12 +208,93 @@ export class SettingsPanel {
     ]);
   }
 
+  /**
+   * v1.3 WP-Q: View → Third person / First person (`view`, also toggled with V
+   * in a match), first-person horizontal FOV slider (`fpFov`, 60–110°) and the
+   * crosshair dot toggle (`crosshair`). All applied live by the MatchController.
+   */
+  private viewGroup(): HTMLElement {
+    const modes: readonly (readonly [ViewMode, string])[] = [
+      ['third', 'Third person'],
+      ['first', 'First person'],
+    ];
+    const buttons = modes.map(([mode, label]) =>
+      button(label, 'gk-settings__seg-btn', () => {
+        this.settings = { ...this.settings, view: mode };
+        refresh();
+        this.commit();
+      }, { attrs: { 'data-view': mode, 'aria-pressed': 'false' } }),
+    );
+    const refresh = (): void => {
+      for (const b of buttons) {
+        const on = b.dataset.view === this.settings.view;
+        b.classList.toggle('is-active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+    };
+    refresh();
+
+    const fovValue = el('span', { class: 'gk-settings__value gk-settings__value--wide', text: `${this.settings.fpFov}°` });
+    const fov = el('input', {
+      class: 'gk-settings__slider',
+      attrs: {
+        type: 'range',
+        min: String(FP_FOV_MIN_SETTING),
+        max: String(FP_FOV_MAX_SETTING),
+        step: '1',
+        value: String(this.settings.fpFov),
+        'aria-label': 'First-person field of view',
+      },
+    });
+    fov.addEventListener('input', () => {
+      const v = Number(fov.value);
+      this.settings = { ...this.settings, fpFov: v };
+      fovValue.textContent = `${v}°`;
+      this.commit();
+    });
+
+    const cross = el('input', { class: 'gk-settings__check', attrs: { type: 'checkbox' } });
+    cross.checked = this.settings.crosshair;
+    cross.addEventListener('change', () => {
+      this.settings = { ...this.settings, crosshair: cross.checked };
+      this.commit();
+    });
+
+    return el('div', { class: 'gk-settings__group' }, [
+      el('h3', { class: 'gk-settings__heading gk-display', text: 'View' }),
+      el('div', { class: 'gk-settings__row gk-settings__row--seg' }, [
+        el('span', { class: 'gk-settings__label', text: 'Camera' }),
+        el('div', { class: 'gk-settings__seg', attrs: { role: 'group', 'aria-label': 'Camera view' } }, buttons),
+      ]),
+      el('label', { class: 'gk-settings__row' }, [
+        el('span', { class: 'gk-settings__label', text: 'FP field of view' }),
+        fov,
+        fovValue,
+      ]),
+      el('label', { class: 'gk-settings__toggle' }, [
+        cross,
+        el('span', { class: 'gk-settings__label', text: 'Crosshair dot (first person)' }),
+      ]),
+      el('p', {
+        class: 'gk-settings__hint',
+        text: 'Press V in a match to switch between the third-person orbit camera and the first-person eye camera.',
+      }),
+    ]);
+  }
+
   /** v1.2: attack-range indicator toggle (`rangeIndicator`, default on; applied live). */
   private combatGroup(): HTMLElement {
     const input = el('input', { class: 'gk-settings__check', attrs: { type: 'checkbox' } });
     input.checked = this.settings.rangeIndicator;
     input.addEventListener('change', () => {
       this.settings = { ...this.settings, rangeIndicator: input.checked };
+      this.commit();
+    });
+    // v1.3: ready-state ultimate targeting preview (`ultPreview`, default on; applied live).
+    const ultInput = el('input', { class: 'gk-settings__check', attrs: { type: 'checkbox' } });
+    ultInput.checked = this.settings.ultPreview;
+    ultInput.addEventListener('change', () => {
+      this.settings = { ...this.settings, ultPreview: ultInput.checked };
       this.commit();
     });
     return el('div', { class: 'gk-settings__group' }, [
@@ -221,6 +306,14 @@ export class SettingsPanel {
       el('p', {
         class: 'gk-settings__hint',
         text: 'A faint ground wedge shows your basic-attack reach when a rival is close. Anyone whose body touches it gets hit.',
+      }),
+      el('label', { class: 'gk-settings__toggle' }, [
+        ultInput,
+        el('span', { class: 'gk-settings__label', text: 'Ultimate targeting preview' }),
+      ]),
+      el('p', {
+        class: 'gk-settings__hint',
+        text: 'With a full ultimate bar, shows its range or path on the ground and a LOCK bracket on who it would hit.',
       }),
     ]);
   }

@@ -60,21 +60,33 @@ describe('Veteran ranged ultimates can actually fire (v1.1 fix)', () => {
     expect(ult(situation('mole', 3, { tdist: 6, targetFleeing: true }))).toBe(true);
   });
 
-  it('panther Night Prowl as the approach tool when healthy', () => {
-    expect(ult(situation('panther', 3, { tdist: 9 }))).toBe(true);
-    expect(ult(situation('panther', 3, { tdist: 9, hpFrac: 0.3 }))).toBe(false);
+  it('panther Shadow Execution on a wounded (execute-range) or lonely target at mid range', () => {
+    expect(ult(situation('panther', 3, { tdist: 9, tHpFrac: 0.4 }))).toBe(true);
+    expect(ult(situation('panther', 3, { tdist: 9, targetIsolated: true }))).toBe(true);
+    expect(ult(situation('panther', 3, { tdist: 9, tHpFrac: 1 }))).toBe(false); // healthy and guarded: waits for a window
+    expect(ult(situation('panther', 3, { tdist: 12, tHpFrac: 0.4 }))).toBe(false); // out of the 11 m lock range
+  });
+
+  it('lion Royal Hunt on a soft / lonely target when not crowded; never into a crowd or at a runner', () => {
+    expect(ult(situation('lion', 3, { tdist: 7, targetHelpless: true }))).toBe(true);
+    expect(ult(situation('lion', 3, { tdist: 7, tHpFrac: 0.4 }))).toBe(true);
+    expect(ult(situation('lion', 3, { tdist: 7, tHpFrac: 0.4, enemiesNearSelf8: 3 }))).toBe(false);
+    expect(ult(situation('lion', 3, { tdist: 7, tHpFrac: 0.4, targetFleeing: true }))).toBe(false); // the pounce homes slowly
+    expect(ult(situation('lion', 3, { tdist: 12, targetHelpless: true }))).toBe(false);
   });
 
   it('melee ults still wait for the finisher', () => {
-    expect(ult(situation('gorilla', 3, { tdist: 2 }))).toBe(false);
-    expect(ult(situation('gorilla', 3, { tdist: 2, recentFinisher: true }))).toBe(true);
+    expect(ult(situation('crocodile', 3, { tdist: 2 }))).toBe(false);
+    expect(ult(situation('crocodile', 3, { tdist: 2, recentFinisher: true }))).toBe(true);
   });
 });
 
 describe('ult patience (v1.1 economy)', () => {
   it(`an Apex hippo stops waiting for a perfect window after ${AI_TUNING.ultPatienceS} s`, () => {
-    expect(ult(situation('hippo', 4, { tdist: 3, ultHeldS: 0 }))).toBe(false);
-    expect(ult(situation('hippo', 4, { tdist: 3, ultHeldS: AI_TUNING.ultPatienceS + 0.1 }))).toBe(true);
+    // v1.3 Riverlord's Flood: a lone, free target (nobody near it) is no window; another fighter near the target is.
+    const lone = { enemiesNearTarget8: 0, enemiesNearSelf8: 0 };
+    expect(ult(situation('hippo', 4, { tdist: 3, ultHeldS: 0, ...lone }))).toBe(false);
+    expect(ult(situation('hippo', 4, { tdist: 3, ultHeldS: AI_TUNING.ultPatienceS + 0.1, ...lone }))).toBe(true);
   });
 
   it('…but never into a 3+-enemy bad trade', () => {

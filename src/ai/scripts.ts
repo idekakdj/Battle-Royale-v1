@@ -14,6 +14,7 @@
 import type { AnimalId } from '../core/types';
 import { AI_TUNING, type BotProfile } from '../config/botProfiles';
 import type { Rng } from '../core/math';
+import { ULT_SCRIPTS } from './ultScripts';
 
 export interface Situation {
   animal: AnimalId;
@@ -62,6 +63,12 @@ export interface Situation {
   aimYawAway: number;
   /** Noisy yaw toward the nearest enemy (peel casts). */
   aimYawNearest: number;
+  /**
+   * v1.3: would the ultimate find a valid target if cast now along `aimYawToTarget`?
+   * Only set (by the brain) for ultimates whose spec has `targeting.requireTarget`; undefined
+   * everywhere else, in which case nothing changes. `false` blocks the cast (no Q into a fizzle).
+   */
+  ultTargetValid?: boolean;
 }
 
 export interface AbilityWish {
@@ -106,48 +113,17 @@ function isEscapeSpecial(animal: AnimalId): boolean {
   return animal === 'panther' || animal === 'mole' || animal === 'crocodile' || animal === 'lion';
 }
 
-// ── Ultimate range gates (per-animal effective range) ────────────────────────
+// ── Ultimate range gates / cluster triggers ──────────────────────────────────
+// Per-animal logic lives in ai/ultScripts/<animal>.ts (registry: ULT_SCRIPTS).
 
 function ultGate(s: Situation): boolean {
-  const d = s.tdist;
-  switch (s.animal) {
-    case 'lion':
-      return d <= 7; // 8 m instant AoE roar
-    case 'gorilla':
-      return d <= 4; // self-buff — only worth it in melee
-    case 'crocodile':
-      return d <= 4.9; // 4.5 m grab lunge
-    case 'hippo':
-      return d <= 3.4; // 4 m cone after 1 s windup
-    case 'rhino':
-      return d <= 9; // 3 s steerable stampede
-    case 'eagle':
-      return d >= 3 && d <= 9.5; // DFA dives onto the target ≤ 8 m (splash 3)
-    case 'panther':
-      return d >= 5 && d <= 15; // Night Prowl = stealth approach tool
-    case 'python':
-      return d <= 4.8; // 5 m grab lunge
-    case 'giraffe':
-      return d <= 4; // 4.5 m spin
-    case 'mole':
-      return d >= 2.5 && d <= 12; // Sinkhole centres on the target ≤ 10 m, radius 4
-    default:
-      return false;
-  }
+  return ULT_SCRIPTS[s.animal].gate(s);
 }
 
 /** AoE ults that pay off on clusters (Veteran trigger). */
 function clusterUlt(s: Situation): boolean {
-  switch (s.animal) {
-    case 'lion':
-      return s.enemiesNearSelf8 >= 2;
-    case 'giraffe':
-    case 'rhino':
-    case 'hippo':
-      return s.enemiesNearSelf5 >= 2;
-    default:
-      return false;
-  }
+  const c = ULT_SCRIPTS[s.animal].cluster;
+  return c !== undefined ? c(s) : false;
 }
 
 // ── Public entry ─────────────────────────────────────────────────────────────
@@ -281,6 +257,7 @@ function decideSpecialApex(s: Situation, out: AbilityWish): void {
 
 function decideUltimate(s: Situation, out: AbilityWish): void {
   if (!s.hasTarget) return;
+  if (s.ultTargetValid === false) return; // v1.3: a lock ult with nothing to lock would fizzle
   const p = s.profile;
   out.aimYaw = s.aimYawToTarget;
 
@@ -319,12 +296,13 @@ function decideUltimate(s: Situation, out: AbilityWish): void {
  * practically never cast their ultimates.
  */
 function isRangedUlt(animal: AnimalId): boolean {
-  return animal === 'eagle' || animal === 'mole' || animal === 'panther';
+  return ULT_SCRIPTS[animal].ranged === true;
 }
 
 /** Veteran window for ranged ults: a soft, catchable or escaping target. */
 function rangedUltWindow(s: Situation): boolean {
-  if (s.animal === 'panther') return s.hpFrac > 0.4;
+  const w = ULT_SCRIPTS[s.animal].rangedWindow;
+  if (w !== undefined) return w(s);
   return s.targetHelpless || s.targetRooted || s.targetFleeing || s.targetIsolated || s.tHpFrac <= 0.5;
 }
 
@@ -333,46 +311,5 @@ function decideUltimateApex(s: Situation, out: AbilityWish): void {
   // Bad trade: outnumbered around self — save the charge.
   if (s.enemiesNearSelf8 >= 3) return;
 
-  const helpless = s.targetHelpless || s.targetRooted;
-
-  switch (s.animal) {
-    case 'lion':
-      out.ult = (s.enemiesNearSelf8 >= 2 && s.tdist <= 7) || (helpless && s.tdist <= 7);
-      return;
-    case 'gorilla':
-      // Rampage when the target's guard is nearly cracked (§10: guard <35%).
-      out.ult = s.tdist <= 4 && (s.tGuardFrac < 0.35 || helpless);
-      return;
-    case 'crocodile':
-      // Grabs ignore block — a turtling target is a Death Roll target too.
-      out.ult = ultGate(s) && (helpless || s.tHpFrac <= 0.4 || s.targetBlocking);
-      return;
-    case 'hippo':
-      // Chomp on guard-break (1 s windup fits inside the 1.5 s stagger) — or
-      // straight into a raised guard: its 0.45 × 250 guard drain breaks most.
-      out.ult = ultGate(s) && (helpless || s.targetBlocking);
-      return;
-    case 'rhino':
-      out.ult = (s.enemiesNearSelf8 >= 2 && s.tdist <= 9) || (helpless && s.tdist <= 8);
-      return;
-    case 'eagle':
-      // DFA on isolated or helpless targets near the 8 m dive point.
-      out.ult = ultGate(s) && (helpless || (s.targetIsolated && s.tHpFrac <= 0.55));
-      return;
-    case 'panther':
-      // Night Prowl as the approach tool when healthy; backstab crit follows.
-      out.ult = ultGate(s) && s.hpFrac > 0.4 && !s.targetHelpless;
-      return;
-    case 'python':
-      // Constrict punishes committed specials and helpless targets.
-      out.ult = s.tdist <= 4.8 && (s.targetCommitted || helpless || s.tHpFrac <= 0.35 || s.targetBlocking);
-      return;
-    case 'giraffe':
-      out.ult = s.enemiesNearSelf5 >= 2 || (helpless && s.tdist <= 4);
-      return;
-    case 'mole':
-      // Sinkhole on kiters and rooted/staggered targets near the 10 m point.
-      out.ult = ultGate(s) && (s.targetFleeing || helpless || s.targetBlocking);
-      return;
-  }
+  ULT_SCRIPTS[s.animal].apex(s, out);
 }

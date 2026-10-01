@@ -21,7 +21,8 @@
 import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
-import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, IMPACT } from './Animator';
+import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, easeOutCubic } from './Animator';
+import { EAGLE_DFA } from '../../config/ultimates/eagle';
 import {
   makeMat,
   part,
@@ -124,6 +125,13 @@ export class EagleRig extends BaseRig {
   private sBank = 0;
   private peakY = 0;
   private lastT = 0;
+  // Death From Above: render-side phase weights (low-passed so the discrete sim phases never pop the pose).
+  private uWAsc = 0;
+  private uWHold = 0;
+  private uWDive = 0;
+  private uWRec = 0;
+  private uLastT = -10;
+  private readonly uSet = zeroParams();
 
   constructor() {
     super(ANIMALS.eagle);
@@ -132,7 +140,8 @@ export class EagleRig extends BaseRig {
     this.stepScale = 0.35;
     this.toneBack = 0.16;
     this.toneBelly = 0.18;
-    this.slams = [{ action: 'ultimate', at: IMPACT, radius: 1.6, kind: 'crack', forward: 0 }];
+    // (the ultimate's impact crack / dust is drawn by src/render/ultFx/eagle.ts at the sim's impact event)
+    this.slams = [];
     const p = this.pal;
     const brown = mixColor(p.darker, 0x3b2414, 0.5);
     const mBody = makeMat(brown);
@@ -357,29 +366,167 @@ export class EagleRig extends BaseRig {
     this.legs[1].rx = 0.4 * rear;
   }
 
-  protected poseUltimate(u: number, state: FighterState): void {
-    // Death From Above: powered soar, then fold into the stoop. The sim owns
-    // altitude; the pose reads the phase from u and the fall from vel.y.
-    if (u < IMPACT) {
-      const k = smooth01(ramp(u, 0, 0.2));
-      const ph = this.timePhase * 13;
-      this.wingPose(k, 0.1 + Math.sin(ph) * 0.75 * k, -0.1 * Math.sin(ph) * k, -0.3 * k, Math.sin(ph - 1) * 0.35 * k, 0.6 + 0.4 * Math.cos(ph));
-      this.body.rx = -0.5 * k;
-      this.body.py = -Math.sin(ph) * 0.03 * k;
-      this.head.rx = 0.45 * k + 0.5 * k; // eyes locked below
-      this.legs[0].rx = 0.5 * k;
-      this.legs[1].rx = 0.5 * k;
-      this.tailFan.rx = 0.35 * k;
-      this.tailOpen(k);
-    } else {
-      const dive = state.vel.y < -1 ? 1 : smooth01(ramp(u, IMPACT, 0.62));
-      this.wingPose(0.25 * (1 - dive) + 0.18 * dive, 0.1, 1.1 * dive, 0, 0.25 * dive, 0.05);
-      this.body.rx = 0.9 * dive;
-      this.head.rx = 0.3 * dive - 0.4 * dive;
-      this.legs[0].rx = -1.2 * dive; // talons first
-      this.legs[1].rx = -1.2 * dive;
-      this.tailOpen(0.1);
+  /**
+   * Death From Above (v1.3). Driven ONLY by `ultPhase / ultStage / actionT / actionDur / pos / vel`:
+   *  - windup (0.8 s)            takeoff crouch → powerful flaps, body rocketing head-up, banking into the corkscrew;
+   *  - active, stage 0 / 1       high circling hold: wings wide, slow beats, banked toward the reticle (the centre of
+   *                              the circle is always on the eagle's left), head pitched down at the target; in the
+   *                              commit second the body levels and the wings start to draw in;
+   *  - active, stage 1, falling  the stoop: wings swept back and tucked, body aligned with the dive line (pitch from
+   *                              vel), talons forward along it;
+   *  - recovery (stage 2)        impact flare (wings up and cupped, talons forward) → proud chest-out pose → fold;
+   *                              a whiff (long recovery) adds a frustrated head-shake.
+   * The four phase weights are low-passed on the render side; every sub-pose is a cubic-eased function of time.
+   */
+  protected poseUltimate(_u: number, state: FighterState): void {
+    const t = this.timePhase;
+    let dt = t - this.uLastT;
+    const fresh = dt < 0 || dt > 0.25;
+    this.uLastT = t;
+    if (dt < 0 || dt > 0.1) dt = 0.016;
+
+    const phase = state.ultPhase;
+    const falling = state.vel.y < -5;
+    const tAct = state.actionT;
+    let tgtAsc = 0;
+    let tgtHold = 0;
+    let tgtDive = 0;
+    let tgtRec = 0;
+    if (phase === 'recovery') tgtRec = 1;
+    else if (phase === 'active' && (falling || (state.ultStage === 1 && tAct >= EAGLE_DFA.ascentS + EAGLE_DFA.trackS + EAGLE_DFA.commitS))) tgtDive = 1;
+    else if (phase === 'active') tgtHold = 1;
+    else tgtAsc = 1;
+    if (fresh) {
+      this.uWAsc = tgtAsc;
+      this.uWHold = tgtHold;
+      this.uWDive = tgtDive;
+      this.uWRec = tgtRec;
     }
+    const a = 1 - Math.exp(-dt / 0.07);
+    this.uWAsc += (tgtAsc - this.uWAsc) * a;
+    this.uWHold += (tgtHold - this.uWHold) * a;
+    this.uWDive += (tgtDive - this.uWDive) * Math.min(1, a * 1.6);
+    this.uWRec += (tgtRec - this.uWRec) * Math.min(1, a * 1.8);
+    const sum = this.uWAsc + this.uWHold + this.uWDive + this.uWRec;
+    const inv = sum > 1e-4 ? 1 / sum : 0;
+
+    const out = this.fp;
+    clearParams(out);
+    const m = this.uSet;
+    if (this.uWAsc > 0.002) {
+      this.ultAscentSet(m, tAct);
+      addParams(out, this.uWAsc * inv, m);
+    }
+    if (this.uWHold > 0.002) {
+      this.ultHoldSet(m, tAct - EAGLE_DFA.ascentS, tAct - EAGLE_DFA.ascentS - EAGLE_DFA.trackS);
+      addParams(out, this.uWHold * inv, m);
+    }
+    if (this.uWDive > 0.002) {
+      this.ultStoopSet(m, state);
+      addParams(out, this.uWDive * inv, m);
+    }
+    if (this.uWRec > 0.002) {
+      this.ultRecoverySet(m, tAct, state.actionDur);
+      addParams(out, this.uWRec * inv, m);
+    }
+    this.writeFlight(out);
+
+    // A whiff (long recovery): head flicks side to side, searching the sand.
+    if (this.uWRec > 0.05 && state.actionDur > 0.8) {
+      const k = this.uWRec * smooth01(ramp(tAct, 0.25, 0.45)) * (1 - smooth01(ramp(tAct / state.actionDur, 0.78, 1)));
+      this.head.ry = Math.sin(tAct * 11) * 0.55 * k;
+    }
+  }
+
+  /** Takeoff: crouch + coiled wings, then powerful downstrokes with the body rocketing head-up, banked into the helix. */
+  private ultAscentSet(m: FlightParams, t: number): void {
+    const crouch = 1 - smooth01(ramp(t, 0, 0.13));
+    const k = smooth01(ramp(t, 0.06, 0.34));
+    const ph = t * 23;
+    const sn = Math.sin(ph);
+    const cs = Math.cos(ph);
+    m.spread = 0.7 + 0.3 * smooth01(ramp(t, 0, 0.12));
+    m.flap = -0.95 * crouch + (0.12 + 1.0 * sn) * (1 - crouch);
+    m.sweep = 0.1 - 0.28 * sn * (1 - crouch);
+    m.tip = 0.5 * Math.sin(ph - 1.15) * (1 - crouch);
+    m.fan = 0.75 + 0.25 * cs;
+    m.wingPitch = -0.3 - 0.45 * k - 0.2 * cs * (1 - crouch);
+    m.bodyRx = 0.22 * crouch + (1 - crouch) * (0.1 * (1 - k) - 0.85 * k);
+    m.bodyRz = -0.5 * k + Math.sin(t * 9) * 0.04 * k;
+    m.bodyPy = -0.14 * crouch - 0.05 * sn * (1 - crouch);
+    m.headRx = 0.3 * (1 - k) - 0.15 * k;
+    m.legRx = 0.7 * crouch + 1.25 * (1 - crouch);
+    m.tailRx = 0.15 + 0.45 * k;
+    m.tailFan = 1;
+    m.torsoRx = -0.2 * k;
+  }
+
+  /** High circling hold (tHold since the ascent ended; tCommit < 0 while still tracking, then the commit warning). */
+  private ultHoldSet(m: FlightParams, tHold: number, tCommit: number): void {
+    const ph = tHold * 3.6;
+    const sn = Math.sin(ph);
+    // Commit warning: the body levels out of its bank, the nose dips and the wings start to draw in.
+    const pre = smooth01(ramp(tCommit, 0, EAGLE_DFA.commitS));
+    m.spread = 1 - 0.3 * pre;
+    m.flap = -0.05 + 0.32 * sn * (1 - pre) + 0.55 * pre;
+    m.sweep = -0.04 + 0.45 * pre;
+    m.tip = 0.2 * Math.sin(ph - 0.8) * (1 - pre) + 0.2 * pre;
+    m.fan = 1 - 0.6 * pre;
+    m.wingPitch = -0.35 * (1 - pre);
+    m.bodyRx = GLIDE_BX - 0.45 + 0.55 * pre;
+    m.bodyRz = (-0.52 + 0.06 * Math.sin(tHold * 1.3)) * (1 - pre);
+    m.bodyPy = -0.02 * sn;
+    m.headRx = 0.85 + 0.25 * pre;
+    m.legRx = 0.95 + 0.3 * pre;
+    m.tailRx = 0.3;
+    m.tailFan = 1 - 0.6 * pre;
+    m.torsoRx = -0.15 + 0.4 * pre;
+  }
+
+  /** The stoop: wings swept back and tucked, body on the dive line (pitch from vel), talons forward along it. */
+  private ultStoopSet(m: FlightParams, state: FighterState): void {
+    const hv = Math.hypot(state.vel.x, state.vel.z);
+    const p = Math.max(0.7, Math.min(1.45, Math.atan2(-state.vel.y, Math.max(0.01, hv))));
+    const flutter = Math.sin(this.timePhase * 38);
+    m.spread = 0.16;
+    m.flap = 0.1;
+    m.sweep = 1.1 + flutter * 0.03;
+    m.tip = 0.24;
+    m.fan = 0.05;
+    m.wingPitch = 0;
+    m.bodyRx = p;
+    m.bodyRz = 0;
+    m.bodyPy = 0;
+    m.headRx = p - 0.12;
+    m.legRx = -(Math.PI / 2 - p) - 0.32;
+    m.tailRx = p * 0.6;
+    m.tailFan = 0.1;
+    m.torsoRx = p * 0.85;
+  }
+
+  /** Impact: talon strike + flare, then proud chest-out, then fold (`dur` is the recovery length restarted at the touchdown). */
+  private ultRecoverySet(m: FlightParams, t: number, dur: number): void {
+    const u = dur > 1e-6 ? Math.min(1, t / dur) : 1;
+    const flare = 1 - smooth01(ramp(t, 0.02, 0.3));
+    const fold = smooth01(ramp(u, 0.68, 1));
+    const proud = (1 - flare) * (1 - fold);
+    const rest = 1 - flare - proud;
+    const pf = t * 13;
+    const strike = 1 - easeOutCubic(ramp(t, 0, 0.12)); // talons lash forward at the instant of impact
+    m.spread = flare + proud * 0.62;
+    m.flap = flare * (-0.62 + 0.16 * Math.sin(pf)) + proud * (-0.5 + 0.03 * Math.sin(t * 5));
+    m.sweep = flare * 0.18 + proud * -0.25;
+    m.tip = flare * (-0.2 + 0.12 * Math.sin(pf - 0.8)) + proud * 0.3;
+    m.fan = flare + proud * 0.6;
+    m.wingPitch = flare * -0.95 + proud * -0.15;
+    m.bodyRx = flare * -0.28 + proud * -0.36;
+    m.bodyRz = 0;
+    m.bodyPy = flare * 0.02 + proud * 0.05 - strike * 0.05;
+    m.headRx = flare * 0.25 + proud * -0.32;
+    m.legRx = flare * (-0.95 - 0.4 * strike);
+    m.tailRx = flare * 0.65 + proud * 0.15 + rest * -0.25;
+    m.tailFan = flare + proud * 0.6;
+    m.torsoRx = flare * -0.5 + rest * TORSO_REST;
   }
 
   protected poseBlock(t: number): void {
@@ -536,7 +683,11 @@ export class EagleRig extends BaseRig {
     }
     out.bodyRz += this.sBank * (1 - wDive - flare);
 
-    // Write joints (world-relative angles → joint-local).
+    this.writeFlight(out);
+  }
+
+  /** Write joints from a blended parameter set (world-relative angles → joint-local). */
+  private writeFlight(out: FlightParams): void {
     const bx = out.bodyRx;
     this.body.rx = bx;
     this.body.rz = out.bodyRz;

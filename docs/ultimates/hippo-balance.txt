@@ -1,0 +1,39 @@
+hippo ultimate balance (npm run balance, N=60, levels 1-4, seats=shuffle, traps=on). Other agents' animals were changing concurrently: read only the hippo rows.
+
+## BEFORE (v1.2 ultimate Colossal Chomp, N=60, levels 1-4)
+=== L1  matches=60 ended=60 timeouts=0 avgTime=43s  bloodlust=  0%  seats=shuffle  traps=on  (10s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+hippo        12  20%  3.95 |  1.02  0.83    4   1.8   1115   1.47    36 |  68%  18%  14%                    |     12
+=== L2  matches=60 ended=60 timeouts=0 avgTime=40s  bloodlust=  0%  seats=shuffle  traps=on  (9s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+hippo         9  15%  4.97 |  1.18  1.08    1   2.3   1136   1.08    28 |  70%  14%  16%                    |      1
+=== L3  matches=60 ended=60 timeouts=0 avgTime=91s  bloodlust= 17%  seats=shuffle  traps=on  (13s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+hippo         7  12%  4.60 |  1.32  1.10    5   4.6   1254   0.93    53 |  62%  25%  13%                    |      3
+=== L4  matches=60 ended=60 timeouts=0 avgTime=95s  bloodlust= 15%  seats=shuffle  traps=on  (13s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+hippo         3   5%  5.53 |  1.15  0.98    7   4.7   1129   0.60    52 |  65%  27%   8%                    |      6
+
+## AFTER (v1.3 Riverlord's Flood: 130 line wave + 5.5 s mud pool slowing 40%; N=60, levels 1-4)
+=== L1  matches=60 ended=60 timeouts=0 avgTime=44s  bloodlust=  0%  seats=shuffle  traps=on  (10s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+hippo        13  22%  3.83 |  1.00  0.87    4   1.8   1069   1.40    36 |  71%  19%  10%                    |     11
+=== L2  matches=60 ended=60 timeouts=0 avgTime=41s  bloodlust=  0%  seats=shuffle  traps=on  (13s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+hippo        10  17%  4.50 |  1.27  1.18    1   2.6   1150   1.17    31 |  73%  15%  13%                    |      2
+=== L3  matches=60 ended=60 timeouts=0 avgTime=89s  bloodlust= 15%  seats=shuffle  traps=on  (24s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+hippo         7  12%  4.55 |  1.25  1.08    3   4.8   1190   0.87    53 |  64%  26%  10%                    |      4
+=== L4  matches=60 ended=60 timeouts=0 avgTime=93s  bloodlust= 15%  seats=shuffle  traps=on  (26s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+hippo         1   2%  5.47 |  1.23  1.12    3   4.5   1059   0.63    52 |  70%  27%   3%                    |      6
+
+## AFTER, larger sample (N=300, levels 3-4; less noise; same code, damage 130)
+=== L3  matches=300 ended=300 timeouts=0
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+hippo        31  10%  4.99 |  1.22  1.08    3   4.4   1191   0.86    50 |  65%  26%   9%                    |      4
+=== L4  matches=300 ended=300 timeouts=0
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+hippo        16   5%  5.48 |  1.25  1.13    4   4.7   1045   0.55    54 |  70%  27%   3%                    |      6
+
+Notes: L4 hippo stays at ~5% (v1.2: 5% at N=60) — Apex bots sidestep the telegraphed path (their ult share of hit events falls from 8% to 3%) but the mud and the shove keep the win rate level. A damage of 150 (tried, N=300) moved nothing outside the noise (L3 9%, L4 5%), so the design value 130 stays. 0 timeouts, ~1.1 ult/fighter/match.

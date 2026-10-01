@@ -33,6 +33,10 @@ import { updateGuard, setBlocking, tryStartSwing, updateSwing, grantTakenCharge 
 import { startSpecial, startUlt, updateAbility } from './abilities1';
 import { createPickups, updatePickups } from './PickupSystem';
 import { placeTraps, updateTraps, snapshotTraps, type TrapRuntime } from './TrapSystem';
+import { ProjectileSystem } from './projectiles';
+import { GroundZoneSystem } from './groundZones'; // v1.3 hippo mud
+import { abortUlt } from './ultimates';
+import { fillUltSnapshot } from './ultimates/common';
 
 const STATIC_OBSTACLES: readonly Obstacle[] = [...PILLARS, ...FALLEN_COLUMNS];
 
@@ -59,6 +63,10 @@ export class World implements Sim {
   private pickups: PickupState[];
   /** Arena traps (v1.2); empty when disabled or the difficulty places none. */
   traps: TrapRuntime[];
+  /** v1.3 projectile system (nothing spawns projectiles yet; gorilla Boulder Hurl will). */
+  readonly projectiles = new ProjectileSystem();
+  /** v1.3 hippo mud: persistent ground zones (Riverlord's Flood pools). */
+  readonly groundZones = new GroundZoneSystem();
   private deaths = 0;
   matchOver = false;
   private winnerId = -1;
@@ -135,7 +143,12 @@ export class World implements Sim {
       }
       f.ccImmune = f.ccImmuneChannel || f.rampageTimer > 0;
       if (f.staggerTimer > 0) f.staggerTimer = Math.max(0, f.staggerTimer - dt);
-      if (f.knockdownTimer > 0) f.knockdownTimer = Math.max(0, f.knockdownTimer - dt);
+      if (f.knockdownTimer > 0) {
+        f.knockdownTimer = Math.max(0, f.knockdownTimer - dt);
+        f.knockdownClock += dt; // cosmetic only (see resolveAction)
+      } else {
+        f.knockdownClock = 0;
+      }
       if (f.fearTimer > 0) f.fearTimer = Math.max(0, f.fearTimer - dt);
       updateGuard(f, dt);
     }
@@ -168,8 +181,8 @@ export class World implements Sim {
       }
 
       if (f.edgeUlt && f.state.ultCharge >= ULT.cost) {
-        startUlt(this, f);
-        continue;
+        // v1.3: a fizzled cast (requireTarget, no valid target) spends nothing and falls through.
+        if (startUlt(this, f)) continue;
       }
       if (f.edgeSpecial && f.state.specialCd <= 0) {
         startSpecial(this, f);
@@ -205,6 +218,12 @@ export class World implements Sim {
       }
     }
 
+    // 3a'. Projectiles (after movement so they test this tick's positions).
+    if (this.projectiles.count > 0) this.projectiles.update(this, dt);
+
+    // 3a''. v1.3 hippo mud: persistent ground zones slow the fighters standing in them (buff lingers 0.3 s).
+    if (this.groundZones.count > 0) this.groundZones.update(this, dt);
+
     // 3b. Arena traps (after movement so plates see this tick's positions).
     if (this.traps.length > 0) updateTraps(this, this.traps, dt, this.trapDamageFn);
 
@@ -219,12 +238,16 @@ export class World implements Sim {
     this.checkMatchEnd();
 
     // 6. Resolve visible action for the renderer/AI.
-    for (let i = 0; i < fs.length; i++) this.resolveAction(fs[i]);
+    for (let i = 0; i < fs.length; i++) this.resolveAction(fs[i], dt);
   }
 
   snapshot(): WorldSnapshot {
     const fighters: FighterState[] = new Array(this.fighters.length);
-    for (let i = 0; i < this.fighters.length; i++) fighters[i] = cloneState(this.fighters[i].state);
+    for (let i = 0; i < this.fighters.length; i++) {
+      const st = cloneState(this.fighters[i].state);
+      fillUltSnapshot(st, this.fighters[i]); // v1.3 ultPhase/ultStage/ultTargetId while casting
+      fighters[i] = st;
+    }
     const pickups: PickupState[] = this.pickups.map((p) => ({
       id: p.id,
       kind: p.kind,
@@ -239,6 +262,7 @@ export class World implements Sim {
       pickups,
       crates,
       traps: snapshotTraps(this.traps),
+      projectiles: this.projectiles.snapshot(),
       bloodlustMult: this.bloodlustMult,
       matchOver: this.matchOver,
       winnerId: this.winnerId,
@@ -327,6 +351,7 @@ export class World implements Sim {
       if (grabber !== undefined && grabber.ability !== null) grabber.ability.targetId = -1;
       f.state.grabbedById = -1;
     }
+    abortUlt(this, f); // v1.3: let the ultimate module release anything it holds
     f.ability = null;
 
     const placement = 10 - this.deaths; // 1st death → 10th place (§6)
@@ -356,8 +381,11 @@ export class World implements Sim {
     }
   }
 
-  private resolveAction(f: Fighter): void {
+  private resolveAction(f: Fighter, dt: number): void {
     const s = f.state;
+    // v1.3 reaction-pose clock: continues only while the same reaction stays on screen (see `reactClock`).
+    const shown = f.reactKind;
+    f.reactKind = '';
     if (!s.alive) {
       s.action = 'dead';
       return;
@@ -369,14 +397,23 @@ export class World implements Sim {
     }
     if (f.knockdownTimer > 0) {
       s.action = 'knockdown';
+      // v1.3: a real clock for the fall / hold / rise pose. Purely cosmetic (nothing in the sim reads
+      // actionT/actionDur of a knocked-down fighter): actionT = seconds since the knockdown began,
+      // actionDur = that + the time still to go, so u = actionT/actionDur is 0 at the fall and reaches 1
+      // exactly when the fighter can act again (the rise = the final fraction), even when a longer
+      // knockdown (lion pin, a second sweep) extends the one in progress.
+      s.actionT = f.knockdownClock;
+      s.actionDur = f.knockdownClock + f.knockdownTimer;
       return;
     }
     if (f.staggerTimer > 0) {
       s.action = 'stagger';
+      this.reactClock(f, 'stagger', shown, f.staggerTimer, dt);
       return;
     }
     if (f.fearTimer > 0) {
       s.action = 'feared';
+      this.reactClock(f, 'feared', shown, f.fearTimer, dt);
       return;
     }
     if (f.landRecoverT > 0) {
@@ -386,6 +423,7 @@ export class World implements Sim {
     if (f.swinging) return; // attack1/2/3 already set by updateSwing
     if (f.hitstunTimer > 0) {
       s.action = 'hit';
+      this.reactClock(f, 'hit', shown, f.hitstunTimer, dt);
       return;
     }
     if (f.blocking) {
@@ -398,6 +436,22 @@ export class World implements Sim {
     }
     const speed = Math.sqrt(s.vel.x * s.vel.x + s.vel.z * s.vel.z);
     s.action = speed > 0.3 ? 'run' : 'idle';
+  }
+
+  /**
+   * v1.3: a real clock for the timer-driven reaction poses (stagger / hit flinch / feared), like the knockdown
+   * clock. Purely cosmetic (nothing in the sim reads actionT/actionDur of such a fighter): `actionT` is the
+   * seconds this reaction has been on screen and `actionDur` = that + the timer still to go, so
+   * u = actionT/actionDur runs 0 → 1 and ends exactly when the fighter can act again. A re-application that
+   * extends the timer mid-way just stretches `actionDur` (the clock keeps running, no restart). The clock only
+   * counts while the reaction is the visible action: a stagger that was hidden behind a pin / grab starts its
+   * pose at u = 0 over the time it has left, and a stagger zeroed and re-applied from another action restarts.
+   */
+  private reactClock(f: Fighter, kind: 'stagger' | 'hit' | 'feared', shown: Fighter['reactKind'], remaining: number, dt: number): void {
+    f.reactClock = shown === kind ? f.reactClock + dt : 0;
+    f.reactKind = kind;
+    f.state.actionT = f.reactClock;
+    f.state.actionDur = f.reactClock + remaining;
   }
 }
 

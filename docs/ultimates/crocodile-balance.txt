@@ -1,0 +1,36 @@
+crocodile ultimate balance rows (Death Roll); N=60 LEVELS=1,2,3,4 npm run balance (shuffle seats, traps on). Other animals move concurrently (parallel phase-2 work): judge only this animal.
+
+BEFORE (v1.2 placeholder ultimate: standalone grab lunge; run at the start of phase 2, N=60 LEVELS=1,2,3,4)
+
+=== L1  matches=60 ended=60 timeouts=0
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+crocodile    14  23%  4.38 |  1.02  0.85    4   1.8   1146   1.43    35 | 100%   0%   0%                    |     19
+=== L2  matches=60 ended=60 timeouts=0
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+crocodile     7  12%  4.23 |  1.30  1.28    2   3.6   1230   1.37    33 | 100%   0%   0%                    |      5
+=== L3  matches=60 ended=60 timeouts=0
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+crocodile     7  12%  5.23 |  1.27  1.05    6   4.4   1148   1.05    45 | 100%   0%   0%                    |      3
+=== L4  matches=60 ended=60 timeouts=0
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+crocodile     4   7%  5.25 |  1.38  1.27    2   5.2   1229   0.83    55 | 100%   0%   0%                    |      2
+
+AFTER (v1.3 ultimate as built)
+
+=== L1  matches=60 ended=60 timeouts=0 avgTime=43s  bloodlust=  0%  seats=shuffle  traps=on  (6s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+crocodile    10  17%  4.82 |  1.00  0.83    4   1.9   1079   1.15    33 |  96%   0%   4%                    |     19
+=== L2  matches=60 ended=60 timeouts=0 avgTime=42s  bloodlust=  2%  seats=shuffle  traps=on  (6s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+crocodile    15  25%  4.35 |  1.30  1.23    0   3.2   1250   1.28    29 |  96%   0%   4%                    |      4
+=== L3  matches=60 ended=60 timeouts=0 avgTime=90s  bloodlust= 18%  seats=shuffle  traps=on  (9s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+crocodile     2   3%  5.80 |  1.10  0.95    6   4.5   1083   0.95    44 |  96%   0%   4%                    |      2
+=== L4  matches=60 ended=60 timeouts=0 avgTime=94s  bloodlust= 12%  seats=shuffle  traps=on  (11s wall)
+animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m
+crocodile     3   5%  5.17 |  1.38  1.28    2   4.8   1250   1.03    55 |  95%   0%   5%                    |      2
+
+Extra samples after the final tuning (N=120, LEVELS=3,4): L3 crocodile 6 wins 5% place 5.48; L4 crocodile 7 wins 6% place 4.71.
+Tuning history: commit at 80% of the windup gave no L3 gain and leaves a human 0.11 s of committed line (reverted to 65%); removing the bot dodge opt-in gave L3 7% (N=120) — kept the dodge (smaller zone 1.6 m / 0.4 s) and widened the lunge contact by 0.35 m instead (L3 5%, L4 6%).
+
+Single-target damage on an unblocked/blocking victim: 300 (bite 30 + drain 240 + toss 30).

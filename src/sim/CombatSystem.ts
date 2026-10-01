@@ -13,7 +13,6 @@ import { isBehind, inFrontArc, meleeArcHit, coneHit, circleHit, sectorCircleOver
 import { CRATE_HALF } from '../config/arena';
 import {
   hasBuff,
-  removeBuff,
   addBuff,
   dmgTakenMult,
   atkSpeedMult,
@@ -35,7 +34,7 @@ export interface DamageOpts {
   blockIgnore?: number;
   /** Conditional damage multiplier (ambush 1.6, tension 1.3, rooted 1.25…). */
   dmgMult?: number;
-  /** Flat pre-multiplier bonus (panther stealth crit +200). */
+  /** Flat pre-multiplier bonus (panther Shadow Execution's execute finisher). */
   flatBonus?: number;
   /** Allow panther backstab passive (default true). */
   allowBackstab?: boolean;
@@ -317,7 +316,6 @@ function resolveSwingHit(sim: Sim, f: Fighter): void {
 
   // Conditional damage bonuses consumed by this strike.
   let dmgMult = 1;
-  let flatBonus = 0;
   if (f.def.id === 'crocodile' && f.ambushBonusTimer > 0 && f.def.special.followupBonus !== undefined) {
     dmgMult *= 1 + f.def.special.followupBonus;
     f.ambushBonusTimer = 0;
@@ -325,14 +323,6 @@ function resolveSwingHit(sim: Sim, f: Fighter): void {
   if (f.def.id === 'python' && f.pythonTension && f.def.perks.tensionBonus !== undefined) {
     dmgMult *= 1 + f.def.perks.tensionBonus;
     f.pythonTension = false;
-  }
-  if (f.def.id === 'panther' && f.stealthCritPending) {
-    // v1.1 fix: the crit belongs to the stealth window. It used to stay
-    // pending after Night Prowl expired, so any later swing (even minutes
-    // later) crit for +200. The first swing from stealth still breaks it.
-    if (hasBuff(f, 'stealth')) flatBonus += f.def.ultimate.stealthBonusDamage ?? 0;
-    f.stealthCritPending = false;
-    removeBuff(f, 'stealth');
   }
   const kb = f.rampageKnockback;
   const blockIgnore = isFinisher ? f.def.finisher.blockIgnore : undefined;
@@ -370,7 +360,6 @@ function resolveSwingHit(sim: Sim, f: Fighter): void {
       reaction: isFinisher ? 'stagger' : 'flinch',
       isBasic: true,
       dmgMult,
-      flatBonus,
       blockIgnore,
       knockbackOnHit: kb > 0 ? kb : undefined,
     });
