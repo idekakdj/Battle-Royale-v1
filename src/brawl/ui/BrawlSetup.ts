@@ -4,19 +4,24 @@
  * with layout thumbnails drawn from the real stage geometry, opponents 1–3, bot level 1–4, stocks 1–5, time
  * (none / 3 / 5 / 8 min), START + BACK. Remembers the last choice (`gk-brawl`). Fully keyboard-navigable:
  * ←/→ move inside a group (and select), ↑/↓ move between rows / groups, Enter activates, Esc goes back.
+ *
+ * The detail panel has two tabs (OVERVIEW | MOVES, M switches): MOVES lists the fighter's eight attack inputs
+ * (Light / Heavy x Neutral / Side / Down / Up), the highlighted move's details, the Light string and a few facts, all
+ * generated from the move data by `movesView.ts`. It follows the selected fighter, so arrowing through the grid
+ * keeps showing each fighter's moves. The chosen tab (and highlighted slot) is remembered for the session.
  */
 
 import type { Screen } from '../../core/ScreenManager';
 import type { AnimalId } from '../../core/types';
 import { ANIMALS, ANIMAL_IDS } from '../../config/animals';
 import { BOT_PROFILES } from '../../config/botProfiles';
-import { el, button, clear } from '../../ui/dom';
+import { el, button, clear, append } from '../../ui/dom';
 import { animalHeadSvg } from '../../ui/icons';
 import { PreviewPane } from '../../ui/PreviewPane';
 import { loadBrawlSetup, saveBrawlSetup } from '../../ui/storage';
 import { STAGES, getMoveset } from '../data';
-import { STAGE_IDS } from '../types';
-import type { BrawlDifficulty, StageId } from '../types';
+import { MOVE_IDS, STAGE_IDS } from '../types';
+import type { BrawlDifficulty, MoveId, StageId } from '../types';
 import {
   BRAWL_DIFFICULTY_OPTIONS,
   BRAWL_OPPONENT_OPTIONS,
@@ -30,6 +35,7 @@ import {
 } from './setup';
 import { stageThumbSvg } from './stageThumb';
 import { uiRatings, type UiRatings } from './ratingsUi';
+import { MOVES_LEGEND, buildMovesView, type MoveEntry, type MovesView } from './movesView';
 
 export interface BrawlSetupOptions {
   /** Pre-selected choice (default: the stored `gk-brawl`, with `gk-animal` as the default fighter). */
@@ -56,13 +62,38 @@ const BARS: ReadonlyArray<readonly [keyof UiRatings, string]> = [
   ['power', 'Power'],
 ];
 
+type InfoTab = 'overview' | 'moves';
+
+const TAB_LABEL: Record<InfoTab, string> = { overview: 'Overview', moves: 'Moves' };
+
+/** Remembered for the session (module scope outlives the screen): the chosen detail tab and the highlighted attack slot. */
+const sessionView: { tab: InfoTab; slot: MoveId } = { tab: 'overview', slot: 'lightN' };
+
+/** A row of key caps (down arrow, J ...), styled like the game's key hints. */
+function keycaps(keys: readonly string[], cls: string): HTMLElement {
+  return el(
+    'span',
+    { class: cls },
+    keys.map((k) => el('kbd', { class: 'gk-controls__key gk-bs__key', text: k })),
+  );
+}
+
 export class BrawlSetup implements Screen {
   private readonly opts: BrawlSetupOptions;
   private choice: BrawlSetupChoice;
   private root: HTMLElement | null = null;
   private preview: PreviewPane | null = null;
+  private panelEl: HTMLElement | null = null;
   private infoEl: HTMLElement | null = null;
+  private headEl: HTMLElement | null = null;
+  private tabsEl: HTMLElement | null = null;
+  private bodyEl: HTMLElement | null = null;
   private summaryEl: HTMLElement | null = null;
+  private readonly tabBtns = new Map<InfoTab, HTMLButtonElement>();
+  private readonly viewCache = new Map<AnimalId, MovesView>();
+  private readonly moveCells = new Map<MoveId, HTMLButtonElement>();
+  private moveDetailEl: HTMLElement | null = null;
+  private moveView: MovesView | null = null;
   private readonly fighterBtns = new Map<AnimalId, HTMLButtonElement>();
   private readonly stageBtns = new Map<StageId, HTMLButtonElement>();
   private readonly groups: Group[] = [];
@@ -141,13 +172,17 @@ export class BrawlSetup implements Screen {
 
     // Right panel
     this.preview = new PreviewPane(this.choice.animal, 'gk-preview gk-bs__preview');
-    this.infoEl = el('div', { class: 'gk-bs__info' });
+    this.headEl = el('div', { class: 'gk-bs__info-head' });
+    this.tabsEl = this.buildTabs();
+    this.bodyEl = el('div', { class: 'gk-bs__tabbody', attrs: { role: 'tabpanel' } });
+    this.infoEl = el('div', { class: 'gk-bs__info' }, [this.headEl, this.tabsEl, this.bodyEl]);
     this.summaryEl = el('div', { class: 'gk-bs__summary' });
     const back = button('Back', 'gk-bs__back gk-display', () => this.opts.onBack());
     const start = button('Start', 'gk-bs__start gk-display', () => this.start());
     const actions = el('div', { class: 'gk-bs__actions' }, [back, start]);
     this.groups.push({ root: actions, items: [back, start], cols: 1, selects: false });
     const panel = el('aside', { class: 'gk-bs__panel' }, [this.preview.root, this.infoEl, this.summaryEl, actions]);
+    this.panelEl = panel;
 
     this.root = el('div', { class: 'gk-screen gk-bs' }, [title, el('div', { class: 'gk-bs__body' }, [left, panel])]);
     host.appendChild(this.root);
@@ -165,6 +200,11 @@ export class BrawlSetup implements Screen {
     this.fighterBtns.clear();
     this.stageBtns.clear();
     this.segBtns.clear();
+    this.tabBtns.clear();
+    this.moveCells.clear();
+    this.viewCache.clear();
+    this.panelEl = this.infoEl = this.headEl = this.tabsEl = this.bodyEl = this.moveDetailEl = null;
+    this.moveView = null;
     this.groups.length = 0;
     this.root?.remove();
     this.root = null;
@@ -241,6 +281,7 @@ export class BrawlSetup implements Screen {
     this.syncFighters();
     this.preview?.setAnimal(id);
     this.renderInfo();
+    if (this.bodyEl !== null) this.bodyEl.scrollTop = 0;
     this.syncSummary();
   }
 
@@ -250,14 +291,70 @@ export class BrawlSetup implements Screen {
     this.syncSummary();
   }
 
+  // ── detail panel: OVERVIEW | MOVES ─────────────────────────────────────────
+
+  private buildTabs(): HTMLElement {
+    const bar = el('div', { class: 'gk-bs__tabs', attrs: { role: 'tablist', 'aria-label': 'Fighter details' } });
+    for (const tab of ['overview', 'moves'] as const) {
+      const b = el('button', { class: 'gk-bs__tab gk-display', type: 'button', text: TAB_LABEL[tab], dataset: { tab }, attrs: { role: 'tab', 'aria-selected': 'false', tabindex: '-1' } });
+      b.addEventListener('click', () => this.setTab(tab));
+      this.tabBtns.set(tab, b);
+      bar.appendChild(b);
+    }
+    bar.appendChild(el('span', { class: 'gk-bs__tabs-hint' }, [el('kbd', { class: 'gk-controls__key gk-bs__key', text: 'M' })]));
+    bar.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      e.stopPropagation();
+      const next: InfoTab = e.key === 'ArrowLeft' ? 'overview' : 'moves';
+      this.setTab(next);
+      this.tabBtns.get(next)?.focus({ preventScroll: true });
+    });
+    return bar;
+  }
+
+  /** Switch the detail tab (remembered for the session). Keeps keyboard focus on something that still exists. */
+  private setTab(tab: InfoTab): void {
+    if (this.bodyEl === null) return;
+    const inBody = this.bodyEl.contains(document.activeElement);
+    sessionView.tab = tab;
+    this.renderTabBody();
+    if (inBody) this.fighterBtns.get(this.choice.animal)?.focus({ preventScroll: true });
+  }
+
   private renderInfo(): void {
-    if (this.infoEl === null) return;
-    const animal = this.choice.animal;
-    const def = ANIMALS[animal];
-    const set = getMoveset(animal);
-    const r = uiRatings(set);
-    clear(this.infoEl);
+    if (this.infoEl === null || this.headEl === null) return;
+    const def = ANIMALS[this.choice.animal];
+    clear(this.headEl);
     this.infoEl.style.setProperty('--accent', def.accent);
+    this.headEl.append(
+      el('h2', { class: 'gk-bs__info-name gk-display', text: def.displayName }),
+      el('span', { class: 'gk-bs__info-title', text: def.title }),
+    );
+    this.root?.style.setProperty('--bs-accent', def.accent);
+    this.renderTabBody();
+  }
+
+  private renderTabBody(): void {
+    if (this.bodyEl === null) return;
+    const moves = sessionView.tab === 'moves';
+    this.panelEl?.classList.toggle('is-moves', moves);
+    for (const [tab, b] of this.tabBtns) {
+      const on = tab === sessionView.tab;
+      b.classList.toggle('is-selected', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+      b.tabIndex = on ? 0 : -1;
+    }
+    clear(this.bodyEl);
+    this.moveCells.clear();
+    this.moveDetailEl = null;
+    if (moves) this.renderMoves(this.bodyEl);
+    else this.renderOverview(this.bodyEl);
+  }
+
+  private renderOverview(into: HTMLElement): void {
+    const set = getMoveset(this.choice.animal);
+    const r = uiRatings(set);
     const bars = BARS.map(([key, label]) => {
       const fill = el('span', { class: 'gk-bs__bar-fill' });
       fill.style.width = `${Math.round(r[key] * 100)}%`;
@@ -266,15 +363,155 @@ export class BrawlSetup implements Screen {
         el('span', { class: 'gk-bs__bar-track' }, [fill]),
       ]);
     });
-    this.infoEl.append(
-      el('div', { class: 'gk-bs__info-head' }, [
-        el('h2', { class: 'gk-bs__info-name gk-display', text: def.displayName }),
-        el('span', { class: 'gk-bs__info-title', text: def.title }),
-      ]),
-      el('p', { class: 'gk-bs__tagline', text: set.tagline }),
-      el('div', { class: 'gk-bs__bars' }, bars),
+    into.append(el('p', { class: 'gk-bs__tagline', text: set.tagline }), el('div', { class: 'gk-bs__bars' }, bars));
+  }
+
+  private viewFor(animal: AnimalId): MovesView {
+    let v = this.viewCache.get(animal);
+    if (v === undefined) {
+      v = buildMovesView(animal);
+      this.viewCache.set(animal, v);
+    }
+    return v;
+  }
+
+  /** The MOVES tab: 2 x 4 input grid, details of the highlighted move, the Light string and a few facts. */
+  private renderMoves(into: HTMLElement): void {
+    const view = this.viewFor(this.choice.animal);
+    this.moveView = view;
+    const wrap = el('div', { class: 'gk-bs__moves' });
+
+    const grid = el('div', { class: 'gk-bs__mgrid', attrs: { role: 'radiogroup', 'aria-label': 'Attack inputs' } });
+    for (const row of ['light', 'heavy'] as const) {
+      const first = view.entries.find((e) => e.row === row);
+      grid.appendChild(
+        el('div', { class: 'gk-bs__mcap' }, [
+          el('span', { class: 'gk-bs__mcap-name gk-display', text: row === 'light' ? 'Light' : 'Heavy' }),
+          keycaps([first?.keys[first.keys.length - 1] ?? ''], 'gk-bs__keys'),
+        ]),
+      );
+      for (const e of view.entries.filter((x) => x.row === row)) grid.appendChild(this.moveCell(e));
+    }
+    grid.addEventListener('keydown', (ev) => this.onMoveKey(ev));
+
+    this.moveDetailEl = el('div', { class: 'gk-bs__mdetail', attrs: { 'aria-live': 'polite' } });
+
+    const legend = el('p', { class: 'gk-bs__mlegend' }, [
+      `${MOVES_LEGEND.light} = Light · ${MOVES_LEGEND.heavy} = Heavy · Dodge = ${MOVES_LEGEND.dodge}`,
+      el('br'),
+      MOVES_LEGEND.directions,
+      el('br'),
+      'Under each move: speed · damage per hit.',
+    ]);
+
+    const ls = view.lightString;
+    const string = el('div', { class: 'gk-bs__mstring' }, [
+      el('h3', { class: 'gk-bs__mlabel gk-display', text: ls.hits.length > 1 ? `Light string · ${ls.hits.length} hits` : 'Light attack' }),
+      el(
+        'div',
+        { class: 'gk-bs__mchain' },
+        ls.hits.flatMap((h, i) => [
+          i > 0 ? el('span', { class: 'gk-bs__mchain-arrow', text: '→', attrs: { 'aria-hidden': 'true' } }) : null,
+          el('span', { class: 'gk-bs__mchain-hit' }, [h.name, el('b', { text: ` ${Math.round(h.damage * 10) / 10}` })]),
+        ]),
+      ),
+      ls.note !== '' ? el('p', { class: 'gk-bs__mnote', text: ls.note }) : null,
+    ]);
+
+    const tips = el('div', { class: 'gk-bs__mtipsbox' }, [
+      el('h3', { class: 'gk-bs__mlabel gk-display', text: 'Good to know' }),
+      el('ul', { class: 'gk-bs__mtips' }, view.tips.map((t) => el('li', { text: t }))),
+    ]);
+
+    wrap.append(grid, this.moveDetailEl, string, tips, legend);
+    into.appendChild(wrap);
+    this.selectSlot(sessionView.slot, false);
+  }
+
+  private moveCell(e: MoveEntry): HTMLButtonElement {
+    const b = el('button', {
+      class: 'gk-bs__mcell',
+      type: 'button',
+      dataset: { slot: e.slot },
+      attrs: { role: 'radio', 'aria-checked': 'false', tabindex: '-1', 'aria-label': `${e.inputText}: ${e.name}` },
+    });
+    if (e.tags.some((t) => t.id === 'kill')) b.classList.add('is-kill');
+    if (e.tags.some((t) => t.id === 'recovery')) b.classList.add('is-rec');
+    b.append(
+      keycaps(e.keys, 'gk-bs__keys'),
+      el('span', { class: 'gk-bs__mname', text: e.name }),
+      el('span', { class: 'gk-bs__mmeta', text: `${e.speed} · ${e.damageShort}` }),
     );
-    this.root?.style.setProperty('--bs-accent', def.accent);
+    // hovering or tabbing onto a cell shows its details; a mouse click must not steal the fighter grid's arrow-key focus
+    b.addEventListener('mouseenter', () => this.selectSlot(e.slot, false));
+    b.addEventListener('focus', () => this.selectSlot(e.slot, false));
+    b.addEventListener('mousedown', (ev) => ev.preventDefault());
+    b.addEventListener('click', () => this.selectSlot(e.slot, false));
+    this.moveCells.set(e.slot, b);
+    return b;
+  }
+
+  private onMoveKey(ev: KeyboardEvent): void {
+    const i = MOVE_IDS.indexOf(sessionView.slot);
+    let j = i;
+    switch (ev.key) {
+      case 'ArrowLeft':
+        j = (i + MOVE_IDS.length - 1) % MOVE_IDS.length;
+        break;
+      case 'ArrowRight':
+        j = (i + 1) % MOVE_IDS.length;
+        break;
+      case 'ArrowUp':
+        if (i >= 4) j = i - 4;
+        break;
+      case 'ArrowDown':
+        if (i < 4) j = i + 4;
+        break;
+      default:
+        return;
+    }
+    ev.preventDefault();
+    ev.stopPropagation();
+    this.selectSlot(MOVE_IDS[j], true);
+  }
+
+  private selectSlot(slot: MoveId, focus: boolean): void {
+    sessionView.slot = slot;
+    for (const [id, b] of this.moveCells) {
+      const on = id === slot;
+      b.classList.toggle('is-selected', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+      b.tabIndex = on ? 0 : -1;
+    }
+    if (focus) this.moveCells.get(slot)?.focus({ preventScroll: true });
+    const entry = this.moveView?.entries.find((x) => x.slot === slot);
+    if (entry !== undefined) this.renderMoveDetail(entry);
+  }
+
+  private renderMoveDetail(e: MoveEntry): void {
+    const box = this.moveDetailEl;
+    if (box === null) return;
+    clear(box);
+    box.dataset.slot = e.slot;
+    append(box, [
+      el('div', { class: 'gk-bs__md-head' }, [
+        keycaps(e.keys, 'gk-bs__keys gk-bs__keys--big'),
+        el('h3', { class: 'gk-bs__md-name gk-display', text: e.name }),
+      ]),
+      el('div', { class: 'gk-bs__md-stats' }, [
+        el('span', { class: 'gk-bs__md-speed', dataset: { speed: e.speed.toLowerCase() }, text: `${e.speed} · ${e.startup}f startup` }),
+        el('span', { class: 'gk-bs__md-dmg', text: `Damage ${e.damageLabel}` }),
+      ]),
+      e.look !== '' ? el('p', { class: 'gk-bs__md-look', text: e.look }) : null,
+      e.tags.length > 0
+        ? el(
+            'div',
+            { class: 'gk-bs__pills' },
+            e.tags.map((t) => el('span', { class: 'gk-bs__pill', title: t.detail, dataset: { tag: t.id }, text: t.label })),
+          )
+        : null,
+      e.airNote !== null ? el('p', { class: 'gk-bs__md-air', text: e.airNote }) : null,
+    ]);
   }
 
   private syncSummary(): void {
@@ -321,6 +558,11 @@ export class BrawlSetup implements Screen {
     if (e.key === 'Escape') {
       e.preventDefault();
       this.opts.onBack();
+      return;
+    }
+    if ((e.key === 'm' || e.key === 'M') && !e.repeat) {
+      e.preventDefault();
+      this.setTab(sessionView.tab === 'moves' ? 'overview' : 'moves');
       return;
     }
     const pos = this.locate(e.target);

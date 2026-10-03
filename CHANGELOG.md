@@ -17,6 +17,11 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.4.1] - 2026-10-03
+
+### Added
+- **Moves overview on the Champions League fighter-select screen.** Pick a fighter and switch the right-hand panel to **MOVES** (or press M) to see every button combination and what it does: Light and Heavy with nothing held, Side, Down and Up (for example Down + Light, Up + Heavy). Each move shows its name, a one-line description, how fast it is, how much damage it does and tags such as Kill move, Recovery, Armor, Spike, Multi-hit and Launcher, plus a note when the move behaves differently in the air. Below the grid you get the three-hit light string and a few facts about that fighter (best knockout move, recovery rank, jumps, weight). It updates as you move between fighters.
+
 ## [1.4.0] - 2026-10-03
 
 ### Added
@@ -144,7 +149,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.0...v1.3.1

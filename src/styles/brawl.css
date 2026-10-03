@@ -455,6 +455,363 @@
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5), 0 0 12px rgba(217, 164, 65, 0.2);
 }
 
+/* ── Setup: detail tabs (OVERVIEW | MOVES) ────────────────────────────────── */
+.gk-bs__tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  border-bottom: 1px solid var(--gk-panel-border);
+  flex: 0 0 auto;
+}
+
+.gk-bs__tab {
+  padding: 0.3rem 0.85rem 0.4rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.2em;
+  color: var(--gk-text-dim);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.gk-bs__tab:hover {
+  color: var(--gk-sand);
+}
+
+.gk-bs__tab.is-selected {
+  color: var(--gk-gold-bright);
+  border-bottom-color: var(--gk-gold-bright);
+}
+
+.gk-bs__tabs-hint {
+  margin-left: auto;
+  padding-right: 0.15rem;
+}
+
+.gk-bs .gk-bs__key {
+  display: inline-block;
+  min-width: 1.45rem;
+  padding: 0.08rem 0.38rem;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  text-align: center;
+  letter-spacing: 0.02em;
+  font-weight: 600;
+}
+
+.gk-bs__tabbody {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gk-gold-deep) transparent;
+}
+
+/* MOVES tab: the live preview shrinks so the move list gets the height */
+.gk-bs__panel.is-moves .gk-bs__preview {
+  flex-basis: clamp(76px, 9vh, 200px);
+}
+
+.gk-bs__panel.is-moves .gk-bs__preview .gk-preview__head {
+  width: clamp(48px, 6vh, 90px);
+  height: clamp(48px, 6vh, 90px);
+}
+
+.gk-bs__panel.is-moves .gk-bs__info {
+  padding-top: 0.3rem;
+  gap: 0.35rem;
+}
+
+.gk-bs__panel.is-moves .gk-bs__info-name {
+  font-size: 1.15rem;
+}
+
+.gk-bs__moves {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.1rem 0.25rem 0.2rem 0;
+}
+
+/* the 2 x 4 input grid: a Light caption row, 4 cells, a Heavy caption row, 4 cells */
+.gk-bs__mgrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+.gk-bs__mcap {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.1rem;
+}
+
+.gk-bs__mcap:first-child {
+  margin-top: 0;
+}
+
+.gk-bs__mcap-name {
+  font-size: 0.78rem;
+  letter-spacing: 0.28em;
+  color: var(--gk-gold-deep);
+}
+
+.gk-bs__keys {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0.2rem;
+}
+
+.gk-bs__keys--big .gk-bs__key {
+  font-size: 0.85rem;
+  min-width: 1.7rem;
+  padding: 0.12rem 0.5rem;
+}
+
+.gk-bs__mcell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.35rem 0.3rem 0.3rem;
+  text-align: left;
+  border-radius: 5px;
+  background: linear-gradient(180deg, var(--gk-stone-700), var(--gk-stone-800));
+  border: 1px solid var(--gk-stone-600);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
+}
+
+.gk-bs__mcell:hover {
+  border-color: var(--gk-gold-deep);
+}
+
+.gk-bs__mcell.is-selected {
+  border-color: var(--gk-gold-bright);
+  background: linear-gradient(180deg, var(--gk-stone-600), var(--gk-stone-700));
+  box-shadow: 0 0 0 1px var(--gk-gold), 0 0 12px rgba(217, 164, 65, 0.35);
+}
+
+/* thin coloured edge on the kill move and the recovery */
+.gk-bs__mcell.is-kill::before,
+.gk-bs__mcell.is-rec::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 0;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: var(--gk-gold-bright);
+}
+
+.gk-bs__mcell.is-rec::before {
+  background: var(--gk-block);
+}
+
+.gk-bs__mname {
+  font-size: 0.78rem;
+  line-height: 1.15;
+  font-weight: 600;
+  color: var(--gk-text);
+  overflow-wrap: anywhere;
+}
+
+.gk-bs__mmeta {
+  margin-top: auto;
+  font-size: 0.75rem;
+  color: var(--gk-text-dim);
+  white-space: nowrap;
+}
+
+.gk-bs__mlegend {
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--gk-panel-border);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--gk-text-dim);
+}
+
+/* details of the highlighted move */
+.gk-bs__mdetail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--gk-panel-border);
+  border-left: 3px solid var(--accent, var(--gk-gold));
+}
+
+.gk-bs__md-head {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.gk-bs__md-name {
+  font-size: 1rem;
+  letter-spacing: 0.1em;
+  color: var(--gk-gold-bright);
+}
+
+.gk-bs__md-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.9rem;
+  font-size: 0.78rem;
+  color: var(--gk-sand);
+}
+
+.gk-bs__md-speed[data-speed='fast'] {
+  color: #9ad37a;
+}
+
+.gk-bs__md-speed[data-speed='slow'] {
+  color: #e0a25a;
+}
+
+.gk-bs__md-look {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  font-style: italic;
+  color: var(--gk-text-dim);
+}
+
+.gk-bs__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.gk-bs__pill {
+  padding: 0.08rem 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  color: var(--gk-sand);
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(217, 164, 65, 0.35);
+  border-radius: 999px;
+  cursor: help;
+}
+
+.gk-bs__pill[data-tag='kill'] {
+  color: var(--gk-stone-900);
+  background: linear-gradient(180deg, var(--gk-gold-bright), var(--gk-gold-deep));
+  border-color: var(--gk-gold);
+  font-weight: 700;
+}
+
+.gk-bs__pill[data-tag='recovery'] {
+  color: var(--gk-block);
+  border-color: color-mix(in srgb, var(--gk-block) 60%, transparent);
+}
+
+.gk-bs__pill[data-tag='spike'],
+.gk-bs__pill[data-tag='bury'] {
+  color: #ff9a8a;
+  border-color: color-mix(in srgb, var(--gk-blood-bright) 70%, transparent);
+}
+
+.gk-bs__pill[data-tag='armor'],
+.gk-bs__pill[data-tag='invuln'] {
+  color: var(--gk-stone-200);
+  border-color: var(--gk-stone-300);
+}
+
+.gk-bs__md-air {
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--gk-stone-200);
+  padding-top: 0.3rem;
+  border-top: 1px dashed rgba(217, 164, 65, 0.25);
+}
+
+/* the Light string + the facts */
+.gk-bs__mlabel {
+  font-size: 0.75rem;
+  letter-spacing: 0.24em;
+  color: var(--gk-gold-deep);
+  margin-bottom: 0.2rem;
+}
+
+.gk-bs__mchain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.3rem;
+}
+
+.gk-bs__mchain-hit {
+  padding: 0.1rem 0.45rem;
+  font-size: 0.78rem;
+  color: var(--gk-text);
+  background: var(--gk-stone-700);
+  border: 1px solid var(--gk-stone-500);
+  border-radius: 4px;
+}
+
+.gk-bs__mchain-hit b {
+  color: var(--gk-gold-bright);
+  font-weight: 700;
+}
+
+.gk-bs__mchain-arrow {
+  color: var(--gk-gold-deep);
+  font-size: 0.8rem;
+}
+
+.gk-bs__mnote {
+  margin-top: 0.3rem;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--gk-text-dim);
+}
+
+.gk-bs__mtips {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gk-bs__mtips li {
+  position: relative;
+  padding-left: 0.95rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--gk-sand);
+}
+
+.gk-bs__mtips li::before {
+  content: '\25C6';
+  position: absolute;
+  left: 0;
+  top: 0.05em;
+  font-size: 0.6rem;
+  color: var(--gk-gold-deep);
+}
+
+/* short windows: the setup summary line makes room for the move details */
+@media (max-height: 800px) {
+  .gk-bs__panel.is-moves .gk-bs__summary {
+    display: none;
+  }
+}
+
 /* ── In-match HUD ─────────────────────────────────────────────────────────── */
 #app > .gk-brawl-hud {
   position: absolute;
