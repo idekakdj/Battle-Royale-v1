@@ -32,6 +32,12 @@
       "port": 4173
     },
     {
+      "name": "dev-brawl-arch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5541", "--strictPort"],
+      "port": 5541
+    },
+    {
       "name": "dev-wpp",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "--port", "5431", "--strictPort"],

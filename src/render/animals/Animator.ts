@@ -212,6 +212,39 @@ export class Joint {
       this.node.scale.setScalar(this.snapS + (this.s - this.snapS) * f);
     }
   }
+
+  /**
+   * Champions League (src/brawl/render/pose): {@link apply} with a rotation-rate safety net. The change of the node's
+   * rotation relative to its CURRENT value (= what was applied last frame) is capped at `cap` radians; position and
+   * scale are unaffected. The Battle Royale path never calls this.
+   */
+  applyBrawl(f: number, cap: number): void {
+    _e.set(this.rx, this.ry, this.rz, 'XYZ');
+    _q.setFromEuler(_e);
+    _q2.copy(this.restQuat).multiply(_q);
+    _v.set(this.restPos.x + this.px, this.restPos.y + this.py, this.restPos.z + this.pz);
+    if (f < 1) {
+      _q.slerpQuaternions(this.snapQuat, _q2, f);
+      _q2.copy(_q);
+    }
+    if (cap > 0) {
+      const cur = this.node.quaternion;
+      const d = Math.min(1, Math.abs(cur.x * _q2.x + cur.y * _q2.y + cur.z * _q2.z + cur.w * _q2.w));
+      const ang = 2 * Math.acos(d);
+      if (ang > cap) {
+        _q.slerpQuaternions(cur, _q2, cap / ang);
+        _q2.copy(_q);
+      }
+    }
+    this.node.quaternion.copy(_q2);
+    if (f >= 1) {
+      this.node.position.copy(_v);
+      this.node.scale.setScalar(this.s);
+    } else {
+      this.node.position.lerpVectors(this.snapPos, _v, f);
+      this.node.scale.setScalar(this.snapS + (this.s - this.snapS) * f);
+    }
+  }
 }
 
 // ── BaseRig ──────────────────────────────────────────────────────────────────
@@ -912,6 +945,82 @@ export abstract class BaseRig implements AnimalRig {
       });
     }
     return out;
+  }
+
+  // ── Champions League hook (src/brawl/render/pose) ───────────────────────────
+  // Additive: the Battle Royale path (`update()` and everything above) never touches these. The pose layer drives the
+  // joints itself (named, per-animal limb-role profiles) and uses the Joint snapshot machinery for the cross-fade.
+
+  private brawlKey = '';
+  private brawlT = 0;
+  private brawlLen = 0;
+  private brawlScratch: FighterState | null = null;
+
+  /** Every joint the subclass stored on itself, by property name (`body`, `head`, `jaw`, `legs.0`, …). */
+  brawlJoints(): Map<string, Joint> {
+    if (this.fpxNames === null) this.fpxResolveNames();
+    return this.fpxNames as Map<string, Joint>;
+  }
+
+  /** The Battle Royale top speed (m/s) the rig's gait is normalised to. */
+  brawlSpeedRef(): number {
+    return this.def.speed;
+  }
+
+  /** Advance the ambient clocks (idle breathing, gait phase ∝ ground speed in m/s). */
+  brawlTick(dt: number, groundSpeed: number): void {
+    const d = dt < 0 ? 0 : dt > 0.1 ? 0.1 : dt;
+    this.timePhase += d;
+    this.idlePhase += d * 1.7;
+    this.gaitPhase += d * groundSpeed * this.strideRate * Math.PI * 2;
+  }
+
+  /**
+   * Write the rig's OWN idle / run / jump pose of this animal into the joint targets (call inside the `brawlApply`
+   * driver, which has reset them). `arg` = run speed as a fraction of the top speed (run), vertical speed (jump).
+   */
+  brawlBase(kind: 'idle' | 'run' | 'jump', arg = 0): void {
+    switch (kind) {
+      case 'idle':
+        this.poseIdle(this.idlePhase);
+        break;
+      case 'run':
+        this.poseRun(Math.max(0.01, arg) * this.def.speed);
+        break;
+      case 'jump': {
+        if (this.brawlScratch === null) this.brawlScratch = makeMockState(this.def.id);
+        this.brawlScratch.vel.y = arg;
+        this.brawlScratch.airborne = true;
+        this.poseJump(this.brawlScratch);
+        break;
+      }
+    }
+  }
+
+  /**
+   * Reset every joint target, run `driver` (writes the pose through `brawlJoints()`), then apply with a cross-fade from the
+   * pose that was on screen when `key` changed. `blendSec` is the per-call blend length (a 5-frame move still blends 2–3
+   * frames); `capRad` caps the per-call rotation change of every joint (the smoothness safety net, 0 = off).
+   */
+  brawlApply(driver: (joints: ReadonlyMap<string, Joint>) => void, dt: number, key: string, blendSec: number, capRad: number): void {
+    const list = this.jointList;
+    const d = dt < 0 ? 0 : dt > 0.1 ? 0.1 : dt;
+    if (key !== this.brawlKey) {
+      for (let i = 0; i < list.length; i++) list[i].snapshot();
+      this.brawlKey = key;
+      this.brawlT = d;
+      this.brawlLen = blendSec > 0 ? blendSec : 0;
+    } else this.brawlT += d;
+    this.bodyRoot.visible = true;
+    this.mound.visible = false;
+    for (let i = 0; i < list.length; i++) list[i].reset();
+    driver(this.brawlJoints());
+    let f = 1;
+    if (this.brawlLen > 1e-6 && this.brawlT < this.brawlLen) {
+      const t = this.brawlT / this.brawlLen;
+      f = 0.5 * t + 0.5 * smooth01(t);
+    }
+    for (let i = 0; i < list.length; i++) list[i].applyBrawl(f, capRad);
   }
 
   private applyQuality(): void {

@@ -28,9 +28,14 @@ import {
   setPreviewFactory,
   loadAnimal,
   loadDifficulty,
+  loadBrawlSetup,
 } from './ui';
 import { MatchController } from './match/MatchController';
 import { mountFpsCounter } from './ui/FpsCounter';
+// v1.4 Champions League: the whole mode is loaded lazily (`await import('./brawl')`); only types are imported here.
+import type { BrawlSetupChoice } from './brawl/ui/setup';
+import type { BrawlResultsData } from './brawl/ui/BrawlResults';
+import { parseBrawlParams } from './brawl/ui/urlParams';
 
 /** Create (once) the canvas the renderer will draw into, behind the UI. */
 function ensureCanvas(): HTMLCanvasElement {
@@ -65,7 +70,7 @@ function showDemoFallback(root: HTMLElement, requested: string): void {
 }
 
 /** The full game flow: menus ↔ match ↔ results around one ScreenManager. */
-function runGame(canvas: HTMLCanvasElement, root: HTMLElement): void {
+function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearchParams): void {
   // UI previews render through WP-E's procedural rigs (never a direct import).
   setPreviewFactory(createPreview);
 
@@ -83,6 +88,7 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement): void {
     screens.transition(
       new Lobby({
         onPlay: () => showCharacterSelect(),
+        onChampionsLeague: () => void showBrawlSetup(),
         getSelectedAnimal: () => loadAnimal(),
         onSettingsChange: applySettings,
       }),
@@ -138,6 +144,76 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement): void {
     );
   };
 
+  // ── v1.4 Champions League (platform fighter): setup → match → results, all lazily loaded ────────────────────
+
+  /** Champions League failed to load / start (e.g. no WebGL): log it and fall back to the lobby. */
+  const brawlFailed = (what: string, err: unknown): void => {
+    console.error(`Champions League: ${what} failed`, err);
+    showLobby();
+  };
+
+  const showBrawlSetup = async (initial?: BrawlSetupChoice): Promise<void> => {
+    try {
+      const brawl = await import('./brawl');
+      audio.playLobbyMusic();
+      screens.transition(
+        new brawl.BrawlSetup({
+          initial,
+          onStart: (setup) => void startBrawl(setup),
+          onBack: () => showLobby(),
+        }),
+      );
+    } catch (err) {
+      brawlFailed('setup', err);
+    }
+  };
+
+  const startBrawl = async (setup: BrawlSetupChoice): Promise<void> => {
+    try {
+      const brawl = await import('./brawl');
+      audio.stopMusic();
+      screens.transition(
+        new brawl.BrawlMatchController({
+          canvas,
+          audio,
+          setup,
+          seed: (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0,
+          onMatchEnd: (results) => void showBrawlResults(results),
+          onQuitToLobby: () => showLobby(),
+          // Restart / Rematch: same setup, fresh seed (new random roster of bots).
+          onRestart: () => void startBrawl(setup),
+        }),
+      );
+    } catch (err) {
+      brawlFailed('match', err);
+    }
+  };
+
+  const showBrawlResults = async (results: BrawlResultsData): Promise<void> => {
+    try {
+      const brawl = await import('./brawl');
+      audio.playResultsFanfare(results.playerWon);
+      screens.transition(
+        new brawl.BrawlResults({
+          results,
+          onRematch: () => void startBrawl(results.setup),
+          onChangeSetup: () => void showBrawlSetup(results.setup),
+          onLobby: () => showLobby(),
+        }),
+      );
+    } catch (err) {
+      brawlFailed('results', err);
+    }
+  };
+
+  // QA / power-user shortcut: `?brawl=1&animal=lion&stage=skyAqueduct&bots=3&level=3&stocks=3[&time=5]` boots
+  // straight into a Champions League match. (`&qa=1` also exposes `window.__gkBrawl` in production builds.)
+  const shortcut = parseBrawlParams(params, loadBrawlSetup());
+  if (shortcut !== null) {
+    void startBrawl(shortcut);
+    return;
+  }
+
   showLobby();
 }
 
@@ -164,7 +240,7 @@ async function boot(): Promise<void> {
     return;
   }
 
-  runGame(canvas, root);
+  runGame(canvas, root, params);
 }
 
 void boot();

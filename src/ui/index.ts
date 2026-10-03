@@ -5,6 +5,7 @@
  */
 
 import '../styles/ui.css';
+import '../styles/brawl.css';
 
 export { Lobby, type LobbyOptions } from './Lobby';
 export { CharacterSelect, type CharacterSelectOptions } from './CharacterSelect';
@@ -24,5 +25,8 @@ export {
   SETTINGS_KEY,
   ANIMAL_KEY,
   DIFFICULTY_KEY,
+  BRAWL_KEY,
+  loadBrawlSetup,
+  saveBrawlSetup,
   type GkSettings,
 } from './storage';

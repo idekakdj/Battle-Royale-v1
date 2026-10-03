@@ -17,6 +17,20 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.4.0] - 2026-10-03
+
+### Added
+- **Champions League, a brand-new platform-fighter mode** (Lobby → Champions League). Fight 1–3 rivals in a side-view brawl like Brawlhalla or Smash: every hit raises the victim's damage percent, and the higher it is, the farther the next hit launches them. Get knocked past the edge of the map and you lose a stock; the last fighter standing wins. Pick your gladiator, a map, how many opponents (1–3), bot level (Cub to Apex), stocks (1–5) and a time limit.
+- **All ten animals have a reworked moveset for the mode:** light and heavy attacks in four directions (neutral, side, down, up), aerial versions of every move, a three-hit light string, double jumps (the Eagle flaps three times and can glide), dodges (spot, roll and air), ledge grabs and a recovery move. Each animal plays differently: the Gorilla and Hippo have armoured, slow, huge-knockback heavies; the Eagle is light with the best recovery; the Panther dashes through foes; the Giraffe and Python out-range everyone; the Mole drills and burrows.
+- **Two new maps:** *Broken Colosseum* (a floating slab of colosseum floor with three broken-beam tiers at golden hour) and *Sky Aqueduct* (two floating aqueduct islands over open sky, a drifting platform across the gap and waterfalls spilling into the clouds). Both have a dynamic camera that zooms to keep every fighter in view.
+- **New graphics for the mode:** hit sparks sized by damage, launch trails, KO blasts at the edge of the map, respawn laurel rings, a damage-percent HUD with stock pips, KO banners, a 3-2-1-FIGHT countdown, off-screen arrows, and an F3 hitbox overlay.
+- **Smooth, readable attack animations:** every move has a visible wind-up, a strike that lands exactly when the hitbox becomes active, and a follow-through, built for each animal's body (jaws, claws, horns, tails, wings, necks and coils).
+- **Four bot levels for the new mode**, from button-mashing Cubs who often fall off the edge to Apex fighters that punish mistakes, edge-guard and recover reliably.
+- Controls: A/D move, W/Space jump, S down (fast fall, drop through platforms), J or left click light attack, K or right click heavy attack, L or Shift dodge, Esc pause.
+
+### Changed
+- The Settings controls list now includes the Champions League controls.
+
 ## [1.3.2] - 2026-10-01
 
 ### Fixed
@@ -130,7 +144,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.2.0...v1.3.0

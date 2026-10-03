@@ -10,10 +10,13 @@
 
 import type { AnimalId, Difficulty } from '../core/types';
 import { ANIMAL_IDS } from '../config/animals';
+import { parseBrawlSetup, type BrawlSetupChoice } from '../brawl/ui/setup';
 
 export const SETTINGS_KEY = 'gk-settings';
 export const ANIMAL_KEY = 'gk-animal';
 export const DIFFICULTY_KEY = 'gk-difficulty';
+/** v1.4 Champions League: last setup (fighter, stage, opponents, bot level, stocks, time). */
+export const BRAWL_KEY = 'gk-brawl';
 
 /** Audio settings, all volumes normalized to 0..1 (BLUEPRINT §12/§13). */
 export interface GkSettings {
@@ -156,4 +159,14 @@ export function loadDifficulty(): Difficulty {
 /** Persist the selected difficulty under `gk-difficulty`. */
 export function saveDifficulty(difficulty: Difficulty): void {
   writeRaw(DIFFICULTY_KEY, String(difficulty));
+}
+
+/** v1.4: the last Champions League setup; defensive parsing, `gk-animal` is the default fighter. */
+export function loadBrawlSetup(): BrawlSetupChoice {
+  return parseBrawlSetup(readRaw(BRAWL_KEY), loadAnimal());
+}
+
+/** v1.4: persist the Champions League setup under `gk-brawl`. */
+export function saveBrawlSetup(setup: BrawlSetupChoice): void {
+  writeRaw(BRAWL_KEY, JSON.stringify(setup));
 }

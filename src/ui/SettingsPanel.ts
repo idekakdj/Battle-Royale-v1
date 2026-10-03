@@ -10,6 +10,7 @@
 
 import { el, button } from './dom';
 import { speakerSvg } from './icons';
+import { BRAWL_CONTROLS } from '../brawl/ui/controlsRef';
 import {
   type GkSettings,
   type ViewMode,
@@ -97,7 +98,7 @@ export class SettingsPanel {
 
     const children: HTMLElement[] = [audio, this.graphicsGroup(), this.mouseGroup(), this.viewGroup(), this.combatGroup()];
     if (this.opts.showControls === true && window.gkDesktop !== undefined) children.push(this.desktopGroup());
-    if (this.opts.showControls === true) children.push(this.controlsTable());
+    if (this.opts.showControls === true) children.push(this.controlsTable(), this.brawlControlsTable());
 
     this.root = el('div', { class: 'gk-settings' }, children);
     return this.root;
@@ -346,6 +347,20 @@ export class SettingsPanel {
         el('span', { class: 'gk-settings__label', text: 'Check for updates at launch' }),
       ]),
       el('p', { class: 'gk-settings__hint', text: 'Only notifies you — nothing is downloaded automatically. F11 toggles fullscreen.' }),
+    ]);
+  }
+
+  /** v1.4: the Champions League (platform fighter) controls reference. */
+  private brawlControlsTable(): HTMLElement {
+    const rows = BRAWL_CONTROLS.map(([keys, action]) =>
+      el('div', { class: 'gk-controls__row' }, [
+        el('kbd', { class: 'gk-controls__key', text: keys }),
+        el('span', { class: 'gk-controls__action', text: action }),
+      ]),
+    );
+    return el('div', { class: 'gk-settings__group gk-settings__group--brawl' }, [
+      el('h3', { class: 'gk-settings__heading gk-display', text: 'Champions League' }),
+      el('div', { class: 'gk-controls' }, rows),
     ]);
   }
 

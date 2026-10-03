@@ -531,6 +531,15 @@ export class AudioEngine {
     return sc.ctx.state === 'running' ? sc : null;
   }
 
+  /**
+   * v1.4 (Champions League): the shared synth graph for add-on sound modules (`src/brawl/audio`), or `null`
+   * while the context is not running — same gating as the built-in SFX, so nothing is queued while suspended.
+   * Voices created on it route through the existing sfx / music buses (volume + mute apply automatically).
+   */
+  synthContext(): SynthCtx | null {
+    return this.ready();
+  }
+
   /** Run `fn` against the Sfx module iff the context is running. */
   private withSfx(fn: (s: Sfx) => void): void {
     const sc = this.ready();

@@ -37,6 +37,8 @@ const lobbySession = { whatsNewChecked: false, updateDismissed: false };
 export interface LobbyOptions {
   /** PLAY → character select (BLUEPRINT §3). */
   onPlay: () => void;
+  /** v1.4: CHAMPIONS LEAGUE nav (platform-fighter mode → its setup screen). The entry is hidden when omitted. */
+  onChampionsLeague?: () => void;
   /** GLADIATORS nav; defaults to {@link LobbyOptions.onPlay} if omitted. */
   onGladiators?: () => void;
   /** The lobby default gladiator to preview (from `gk-animal`). */
@@ -45,7 +47,7 @@ export interface LobbyOptions {
   onSettingsChange?: (settings: GkSettings) => void;
 }
 
-type NavId = 'play' | 'gladiators' | 'settings';
+type NavId = 'play' | 'brawl' | 'gladiators' | 'settings';
 
 export class Lobby implements Screen {
   private readonly opts: LobbyOptions;
@@ -78,6 +80,7 @@ export class Lobby implements Screen {
     // ── Left nav ─────────────────────────────────────────────────────────────
     const nav = el('nav', { class: 'gk-lobby__nav' }, [
       this.navButton('play', 'Play'),
+      this.opts.onChampionsLeague !== undefined ? this.navButton('brawl', 'Champions League') : null,
       this.navButton('gladiators', 'Gladiators'),
       this.navButton('settings', 'Settings'),
     ]);
@@ -131,6 +134,10 @@ export class Lobby implements Screen {
   }
 
   private showNav(id: NavId): void {
+    if (id === 'brawl') {
+      this.opts.onChampionsLeague?.();
+      return;
+    }
     if (id === 'gladiators') {
       (this.opts.onGladiators ?? this.opts.onPlay)();
       return;

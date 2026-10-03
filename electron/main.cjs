@@ -467,7 +467,7 @@ function runSmokeTest(win) {
     app.exit(ok ? 0 : 1);
   };
 
-  const hardTimeout = setTimeout(() => finish(false, 'timed out after 45 s waiting for the lobby'), 45000);
+  const hardTimeout = setTimeout(() => finish(false, 'timed out after 55 s (lobby, Battle Royale match or Champions League match)'), 55000);
   win.webContents.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
     if (isMainFrame) finish(false, `did-fail-load ${code} ${description} ${url}`);
   });
@@ -537,10 +537,24 @@ function runSmokeTest(win) {
       const uncaught = consoleErrors.filter((m) => /Uncaught/.test(m) && !/pointer ?lock/i.test(m));
       if (uncaught.length > 0) return finish(false, `uncaught renderer errors: ${uncaught.join(' | ')}`);
 
+      // Champions League (v1.4): its code is a lazily loaded chunk — prove it loads under app://, builds the view and steps the sim.
+      const base = await js(`location.origin + location.pathname`);
+      await win.loadURL(`${base}?brawl=1&qa=1&animal=lion&stage=skyAqueduct&bots=2&level=2`);
+      const cl = await waitFor(
+        js,
+        `(() => { const g = window.__gkBrawl; if (!g || !g.controller) return false; for (let i = 0; i < 200; i++) g.controller.tick(1 / 60); const s = g.world.snapshot(); return s.frame >= 200 && s.fighters.length === 3 ? s.frame + 'f/' + s.fighters.length + 'p' : false; })()`,
+        20000,
+      );
+      if (!cl) return finish(false, 'Champions League match did not start from ?brawl=1 (lazy chunk / view failed to load)');
+      const clHud = await js(`!!document.querySelector('.gk-brawl-hud') || !!document.querySelector('[class*="gk-brawl"]')`);
+      if (!clHud) return finish(false, 'Champions League HUD missing');
+      const clErrors = consoleErrors.filter((m) => /Uncaught|Failed to fetch dynamically|TypeError/i.test(m) && !/pointer ?lock/i.test(m));
+      if (clErrors.length > 0) return finish(false, `Champions League renderer errors: ${clErrors.join(' | ')}`);
+
       clearTimeout(hardTimeout);
       finish(
         true,
-        `version=${version} origin=${probe.origin} desktopBridge=true changelogEntries=${entries} escReachesPage=true matchStarted=true canvas=${canvas} loadMs=${Date.now() - started}`,
+        `version=${version} origin=${probe.origin} desktopBridge=true changelogEntries=${entries} escReachesPage=true matchStarted=true championsLeague=${cl} canvas=${canvas} loadMs=${Date.now() - started}`,
       );
     } catch (err) {
       finish(false, `probe error: ${err && err.message ? err.message : String(err)}`);
