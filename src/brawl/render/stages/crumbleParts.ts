@@ -244,6 +244,51 @@ function haloGeo(def: PlatformDef): PieceGeo {
   return { body: b.build(), glow: g.build() };
 }
 
+/**
+ * v1.7 the golden span: a slender marble walkway that joins the two sun slabs at one height. It abuts both (no raised end rails — the
+ * slabs' own gold end caps become the thresholds). Fighters stand and fight under it (the core sits below), so the deck is thin and all the
+ * heavy decoration — the belly wall with arched openings, rune medallions, gold pendants and a low balustrade — sits in the BACK plane,
+ * behind the bodies. A line of sun-rune inlays and a glowing underline carry the final form's gold.
+ */
+function spanGeo(def: PlatformDef): PieceGeo {
+  const b = new GeoBuilder(mulberry32(131));
+  const g = new GeoBuilder(mulberry32(132));
+  const w = def.x1 - def.x0;
+  const hw = w / 2;
+  // thin deck + gold front lip (same lip as the slabs so the surfaces read as one run)
+  b.box(w, 0.22, 2.2, AC.marble, 0, -0.11, 0, { ao: 0.25, jitter: 0.02 });
+  b.box(w - 0.1, 0.03, 2.1, 0xfff6e2, 0, -0.012, 0, { jitter: 0.02 });
+  b.box(w, 0.16, 0.2, AC.gold, 0, -0.1, 1.05, { jitter: 0 });
+  // belly wall in the back plane with arched openings, rune medallions and short gold-tipped pendants
+  const wallZ = -0.95;
+  b.box(w - 1.0, 0.7, 0.3, AC.marbleShade, 0, -0.57, wallZ, { ao: 0.4, jitter: 0.02 });
+  const arches = 5;
+  const aw = (w - 1.0) / arches;
+  for (let i = 0; i < arches; i++) {
+    const x = -hw + 0.5 + aw * (i + 0.5);
+    arch(b, aw - 0.55, 0.58, 0x2c2530, x, -0.92, wallZ + 0.17);
+    if (i < arches - 1) {
+      const px = x + aw / 2;
+      b.cone(0.22, 0.55, AC.marbleShade, px, -1.2, wallZ, 7, { rx: Math.PI, ao: 0.4, ry: 0.4 });
+      g.cone(0.09, 0.22, AC.goldLight, px, -1.38, wallZ, 5, { rx: Math.PI, jitter: 0 });
+      const disc = new THREE.CircleGeometry(0.17, 16);
+      g.add(disc, AC.goldLight, px, -0.5, wallZ + 0.17, { jitter: 0 });
+      disc.dispose();
+    }
+  }
+  // balustrade along the back edge (behind the fighters) with a gold cap rail
+  const posts = 11;
+  for (let i = 0; i < posts; i++) b.cyl(0.07, 0.09, 0.5, AC.marble, -hw + 0.6 + ((w - 1.2) * i) / (posts - 1), 0.25, wallZ, 6, { jitter: 0.02 });
+  b.box(w - 0.8, 0.1, 0.18, AC.goldDark, 0, 0.52, wallZ, { jitter: 0 });
+  // sun-rune inlays across the deck and a glowing underline on the front lip
+  for (let i = 0; i < 15; i++) g.box(0.06, 0.02, 1.6, AC.goldLight, -hw + 0.8 + ((w - 1.6) * i) / 14, 0.012, 0, { ry: (i % 2 === 0 ? 1 : -1) * 0.12, jitter: 0 });
+  g.box(w - 0.5, 0.05, 0.08, AC.goldLight, 0, -0.02, 1.12, { jitter: 0 });
+  return { body: b.build(), glow: g.build() };
+}
+
+/** Geometry of the final-form SOFT platforms that are not the plain sun slab. */
+const FINAL_SOFT_GEO: Readonly<Record<string, (def: PlatformDef) => PieceGeo>> = { halo: haloGeo, span: spanGeo };
+
 function finalCoreGeo(def: PlatformDef): PieceGeo {
   const rng = mulberry32(99);
   const b = new GeoBuilder(rng);
@@ -272,7 +317,7 @@ function finalCoreGeo(def: PlatformDef): PieceGeo {
 export function buildPiece(def: PlatformDef, stage: number): PieceGeo {
   if (def.finalOnly === true) {
     if (def.kind === 'solid') return finalCoreGeo(def);
-    return def.id === 'halo' ? haloGeo(def) : sunGeo(def);
+    return (FINAL_SOFT_GEO[def.id] ?? sunGeo)(def);
   }
   if (def.breakable === undefined) return floorGeo(def, def.x0 < 0 ? -1 : 1);
   if (def.kind === 'solid') return tileGeo(def, stage);

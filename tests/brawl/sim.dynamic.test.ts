@@ -742,7 +742,7 @@ describe('breakable platforms: breaking', () => {
 });
 
 describe('breakable platforms: the final form', () => {
-  const FINAL_IDS = ['sunL', 'sunR', 'core', 'halo'];
+  const FINAL_IDS = ['sunL', 'sunR', 'core', 'halo', 'span'];
   const BREAKABLE_IDS = ['tileL', 'tileC', 'tileR', 'archL', 'archR', 'crown'];
 
   it('finalOnly platforms are inactive before: no snapshot activity, no collision, no ledge', () => {
@@ -806,8 +806,8 @@ describe('breakable platforms: the final form', () => {
     w.debugPlace(0, 12, 0);
     for (const id of BREAKABLE_IDS) w.debugHitPlatform(id, 0, 99);
     events(w);
-    // lands on the (solid, y 1.4) core
-    w.debugPlace(0, 0, 4, 0, 0);
+    // lands on the (solid, y 1.4) core (dropped from just under the v1.7 span: from above, the soft span at y 3.0 would catch it first)
+    w.debugPlace(0, 0, 2.4, 0, 0);
     let landed = false;
     for (let i = 0; i < 60 && !landed; i++) {
       w.step();
@@ -833,6 +833,23 @@ describe('breakable platforms: the final form', () => {
       onSun = fighter(w, 0).platformId === 'sunL' && fighter(w, 0).grounded;
     }
     expect(onSun).toBe(true);
+    // v1.7: the soft span (y 3.0, x -6..6) hangs over the core and catches a fall from above the middle; it is landable from below-through too
+    w.debugPlace(0, 0, 5, 0, 0);
+    let onSpan = false;
+    for (let i = 0; i < 80 && !onSpan; i++) {
+      w.step();
+      onSpan = fighter(w, 0).platformId === 'span' && fighter(w, 0).grounded;
+    }
+    expect(onSpan).toBe(true);
+    expect(fighter(w, 0).pos.y).toBeCloseTo(3, 9);
+    w.setIntent(0, intent()); // no stick left over from the ledge scenario above
+    w.debugPlace(0, 4.5, 0.5, 0, 17);
+    onSpan = false;
+    for (let i = 0; i < 80 && !onSpan; i++) {
+      w.step();
+      onSpan = fighter(w, 0).platformId === 'span' && fighter(w, 0).grounded;
+    }
+    expect(onSpan).toBe(true);
   });
 
   it('fighters embedded in a newly active solid are pushed out of it (never left inside the core), for every overlap pose', () => {

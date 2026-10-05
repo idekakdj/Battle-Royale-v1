@@ -6,7 +6,8 @@
  *   brokenColosseum        one wide solid stage + three soft tiers
  *   skyAqueduct            two islands + a sinusoidal drifter
  *   clockworkHeights       v1.6: a solid `core` that drifts along a looping `path` + four soft satellites that glide between three layouts
- *   crumblingAmphitheatre  v1.6: six `breakable` pieces; destroying the last one switches the arena to its FINAL form (`finalOnly` platforms)
+ *   crumblingAmphitheatre  v1.6: six `breakable` pieces; destroying the last one switches the arena to its FINAL form (`finalOnly` platforms;
+ *                          v1.7: plus the soft `span` that joins sunL and sunR into one walkable run across the whole arena)
  */
 
 import type { MovingSpec, PathSpec, PlatformDef, StageDef, StageId } from '../types';
@@ -192,6 +193,10 @@ const CRUMBLING_AMPHITHEATRE: StageDef = {
     { id: 'sunR', kind: 'soft', x0: 6, x1: 11, y: 3, thickness: 0.5, finalOnly: true },
     { id: 'core', kind: 'solid', x0: -3, x1: 3, y: 1.4, thickness: 2, ledgeLeft: true, ledgeRight: true, finalOnly: true },
     { id: 'halo', kind: 'soft', x0: -2.5, x1: 2.5, y: 6.4, thickness: 0.5, finalOnly: true },
+    // v1.7: the golden span — a soft walkway in the air between the two sun slabs at the SAME height (3.0), so once every floor piece is gone
+    // a fighter can simply walk across the whole arena from sunL to sunR (abutting both: no gap, no overlap). Soft: fighters pass up through it
+    // from the core below; 2.9 m clear of the halo's underside above.
+    { id: 'span', kind: 'soft', x0: -6, x1: 6, y: 3, thickness: 0.5, finalOnly: true },
   ],
   spawns: [
     { x: -7, y: 0 },

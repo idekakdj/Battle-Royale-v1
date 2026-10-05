@@ -119,6 +119,9 @@ const TORCHES: Torch[] = [
 
 const WALL_Z = -3.5;
 
+/** Seconds after `stageFinal` before a final-form platform starts to rise (the sun slabs and the span rise at once, the core and the halo follow). */
+const RISE_DELAY: Readonly<Record<string, number>> = { core: 0.12, halo: 0.28 };
+
 // ── backdrop geometry ────────────────────────────────────────────────────────
 
 function arch(b: GeoBuilder, w: number, h: number, color: number, x: number, y: number, z: number): void {
@@ -330,7 +333,7 @@ export function buildCrumblingAmphitheatre(def: StageDef, tier: QualityTier = 'h
       stage: 0,
       active: p.finalOnly !== true,
       jolt: 0,
-      delay: fi < 0 ? 0 : p.id === 'core' ? 0.12 : p.id === 'halo' ? 0.28 : 0,
+      delay: fi < 0 ? 0 : (RISE_DELAY[p.id] ?? 0),
       rise: 0,
       phase: rng() * 6.28,
     });
@@ -377,7 +380,14 @@ export function buildCrumblingAmphitheatre(def: StageDef, tier: QualityTier = 'h
   let ghostMat: THREE.LineBasicMaterial | null = null;
   {
     const pts: number[] = [];
-    const seg = (x0: number, y0: number, x1: number, y1: number): void => void pts.push(x0, y0, 0.2, x1, y1, 0.2);
+    // coincident edges (platforms that abut, like the sun slabs and the span) are drawn once, so the additive hint never doubles up
+    const seen = new Set<string>();
+    const seg = (x0: number, y0: number, x1: number, y1: number): void => {
+      const key = x0 <= x1 && (x0 < x1 || y0 <= y1) ? `${x0}|${y0}|${x1}|${y1}` : `${x1}|${y1}|${x0}|${y0}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      pts.push(x0, y0, 0.2, x1, y1, 0.2);
+    };
     for (const p of finals) {
       const th = Math.min(p.thickness, 0.6);
       seg(p.x0, p.y, p.x1, p.y);

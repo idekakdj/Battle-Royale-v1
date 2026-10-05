@@ -28,8 +28,15 @@ attacker) whose hitbox overlaps the platform rect counts as one hit; multi-hit b
 * Breakable (intact layout): `tileL` solid x ∈ [−8.5, −3], `tileC` solid x ∈ [−3, 3], `tileR` solid x ∈ [3, 8.5] (y 0, thickness 3.5, 6 hits each — breaking them opens pits to the bottom blast zone);
   `archL` soft [−10, −5.5] and `archR` soft [5.5, 10] at y 4.4 (4 hits each); `crown` soft [−2.5, 2.5] at y 7.8 (4 hits).
 * Final form (`finalOnly`): `sunL` soft [−11, −6] y 3.0, `sunR` soft [6, 11] y 3.0, `core` solid [−3, 3] y 1.4 thickness 2 with both ledges, `halo` soft [−2.5, 2.5] y 6.4 — plus the two unbreakable outer floors.
-  The final form must be playable on its own (two ledged islands + a ledged centre + three soft platforms). Tuning target: with L3 bots in duels the final form arrives around 60–130 s (not before 30 s, and in most matches before the clock ends);
+  The final form must be playable on its own (two ledged islands + a ledged centre + four soft platforms: `sunL`, `sunR`, `halo` and, since v1.7, the `span` between the sun slabs). Tuning target: with L3 bots in duels the final form arrives around 60–130 s (not before 30 s, and in most matches before the clock ends);
   adjust hit counts if the sweeps say otherwise.
+* **v1.7 final-form span** (`finalOnly`, id `span`): a soft walkway `span` x ∈ [−6, 6], y 3.0, thickness 0.5 that abuts `sunL` (ends −6) and `sunR` (starts 6) at the very same height, so sunL + span + sunR is ONE
+  walkable run from x −11 to 11 in the air: once every breakable is gone a fighter can walk across the whole arena without touching the pedestal (and step off either end onto the floors). It is soft (fighters on the `core`
+  pedestal, top 1.4, jump up through it; Down drops back through onto the core; 2.9 m clear of the halo's underside), has no ledges (ledges sit only on solid platforms) and rises with the sun slabs at `stageFinal`
+  (same rise / glow timing). Drawn in the golden-marble style (thin deck, balustrade, belly arches and gold pendants in the back plane so fighters on the core are not hidden by it); part of the dashed gold ghost hint in
+  the intact arena and in the setup thumbnail (both are generated from the real `StageDef`). No breakable / hit-count change. Near the two joints (±6) a soft drop-through (Down) lands on the neighbouring slab at once
+  (the sim ignores only the platform the fighter stood on); this is the only quirk of abutting soft platforms and is accepted. Tests: `tests/brawl/sim.finalCrossing.test.ts` (every animal crosses floorL → floorR in the real sim,
+  walks sunL → sunR over the span, jumps up through / drops down through it).
 * Blast: left −30, right 30, top 22, bottom −17. Camera half-width 11–19. Spawns x −7, −2.5, 2.5, 7 on the intact tiles. Respawn (0, 12).
 * Look: torch-lit interior of a ruined arena: tiers of seats and arches behind, braziers, a broken colossus; breakables show 3 crack stages from `hp/maxHp`, shed dust on every counted hit, break into falling chunks with a dust burst + shake;
   the FINAL FORM moment is a set piece: rumble, white-gold shockwave, new golden platforms rising with a glow, torches turning blue/white, sky cracking open to a dawn.

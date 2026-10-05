@@ -285,6 +285,40 @@ describe('Crumbling Amphitheatre scene', () => {
     live.dispose();
   });
 
+  it('v1.7 span: ghosted in the intact arena (hint edges drawn once), rises with the sun slabs at the same timing and settles on y 3.0', () => {
+    const spanDef = def.platforms.find((p) => p.id === 'span')!;
+    const sunDef = def.platforms.find((p) => p.id === 'sunL')!;
+    expect(spanDef.finalOnly).toBe(true);
+    const v = buildStageVisual(def, 'high');
+    const w = liveWorld('crumblingAmphitheatre');
+    v.update(w.snapshot().platforms, 1 / 60, 0, cam());
+    expect(vis(v, 'span')).toBe(false);
+    // the dashed-ghost hint: 4 edges per final-form platform, minus the two seams where the span abuts the sun slabs (coincident edges are not doubled)
+    const ghost = v.group.getObjectByName('final-form-ghost') as THREE.LineSegments;
+    expect(ghost.visible).toBe(true);
+    const finals = def.platforms.filter((p) => p.finalOnly === true);
+    expect(ghost.geometry.getAttribute('position').count).toBe((finals.length * 4 - 2) * 2);
+    // body + glow meshes exist and the glow is the gold material that flares on the rise
+    expect(v.group.getObjectByName('body-span')).toBeDefined();
+    expect(v.group.getObjectByName('glow-span')).toBeDefined();
+    // break everything: both slabs and the span start the rise together (same delay) from the same depth, then settle on their heights
+    for (const p of def.platforms) if (p.breakable !== undefined) w.debugHitPlatform(p.id, 0, p.breakable.hits);
+    v.update(w.snapshot().platforms, 1 / 60, 0.1, cam());
+    expect(vis(v, 'span')).toBe(true);
+    const span = v.group.getObjectByName('plat-span')!;
+    const sun = v.group.getObjectByName('plat-sunL')!;
+    expect(span.position.y - spanDef.y).toBeCloseTo(sun.position.y - sunDef.y, 9);
+    expect(span.position.y).toBeLessThan(spanDef.y - 0.5);
+    expect(span.position.x).toBeCloseTo(0, 9);
+    for (let i = 0; i < 300; i++) v.update(w.snapshot().platforms, 1 / 60, 0.1 + i / 60, cam());
+    expect(span.position.y).toBeCloseTo(spanDef.y, 3);
+    expect(span.scale.x).toBeCloseTo(1, 3);
+    expect(ghost.visible).toBe(false);
+    // the span joins the others on dispose: nothing of it is left in the scene
+    v.dispose();
+    expect(v.group.parent).toBeNull();
+  });
+
   it('a rollback that un-breaks the stage reverts the look (derived from the snapshot, not events)', () => {
     const v = buildStageVisual(def, 'high');
     const w = liveWorld('crumblingAmphitheatre');
@@ -456,7 +490,7 @@ describe('stage cards, thumbnails and the online stage picker', () => {
     expect((svg.match(/class="bs-breakable"/g) ?? []).length).toBe(6);
     expect((svg.match(/class="bs-crack"/g) ?? []).length).toBe(6);
     const finals = def.platforms.filter((p) => p.finalOnly === true);
-    expect(finals.length).toBe(4);
+    expect(finals.length).toBe(5); // sunL, sunR, core, halo + the v1.7 span
     expect((svg.match(/stroke-dasharray="0.45 0.35"/g) ?? []).length).toBe(finals.length);
   });
 

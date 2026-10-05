@@ -249,3 +249,25 @@ Targets: arrival >= 60 %, median 60-130 s, not before 25 s: met, except 2 of 1 4
 ### Tests (`tests/brawl/bot.dynamic.test.ts`, 27 tests)
 
 StageInfo sync (inactive final-form platforms, broken pieces, hp, ledge exposure rebuilt per frame, the drifting core: corner, velocity estimate, `rectAt` equals the sim's own position, centre follows); recovery from below the pit edge to an open ledge / existing floor (>= 80 % at L3 and L4); closed ledges are never targets; determinism of the dynamic-stage bots; Clockwork self-destruct share; no stand-still >= 300 frames on all four stages (L3 and L4 seeded matches); a level-3/4 bot never breaks the floor it stands on; it uses downtime to hit pieces (>= 70 % of 20 trials); level 1 never smashes; a standoff over the unreachable crown ends (stalemate dive, then final form, 3 of 4 pairs); the final form arrives in >= 66 % of sampled L3/L4 duels and never before 25 s; legal intents at every level through breaks, the final form and respawns; intent-stream hashes of L1 / L2 on the original stages equal the pre-v1.6 bot.
+
+## 2026-10-05 — v1.7: final-form span (Crumbling Amphitheatre)
+
+Owner: WP-C1. One data change: a soft `finalOnly` platform `span` (x −6 … 6, y 3.0, thickness 0.5) abutting `sunL` / `sunR`, so sunL + span + sunR is one walkable run from x −11 to 11 in the air. No breakable, hit count, bot or sim-rule change. Goldens regenerated for the two Amphitheatre scenarios only (the other five are unchanged).
+
+Sweeps (`STAGE=crumblingAmphitheatre N=20 WORKERS=8`, `SEED=1`, 1 800 games each; the "before" columns are the same harness on a clean checkout of v1.6.0):
+
+| | L4 before | L4 v1.7 | L3 before | L3 v1.7 |
+|---|---|---|---|---|
+| final form arrives | 89.8 % (1 616) | 89.8 % (1 616) | 82.2 % (1 479) | 82.2 % (1 479) |
+| median / min arrival | 84.9 s / 26.0 s | 84.9 s / 26.0 s | 89.2 s / 23.7 s | 89.2 s / 23.7 s |
+| before 25 s | 0 | 0 | 2 | 2 (same two matches as before) |
+| timeouts | 2.7 % | 0.9 % | 1.8 % | 1.6 % |
+| self-destruct (sim def.) | 22.9 % | 15.2 % | 27.5 % | 19.8 % |
+| self-destruct "real" (no hitstun in 7 s) / dives | 14.4 % / 5.9 % | 7.8 % / 5.8 % | 19.0 % / 8.8 % | 12.7 % / 8.8 % |
+| match length / mean KO % | 181 s / 121.9 | 155 s / 131.1 | 164 s / 117.0 | 150 s / 126.4 |
+| ledge grabs per match | 48.1 | 24.7 | 37.0 | 26.1 |
+| longest stand-still | 227 f (0 matches >= 300) | 227 f (0) | 225 f (0) | 225 f (0) |
+
+The arrival numbers are identical by construction (the span exists only after the flip, so the games are the same up to that frame); what changed is the second half: fighters no longer have to cross the pits by hopping the pedestal, the final form is fought along the walkway, the clock runs out less often and there are fewer long falls into the pit. No crash, no NaN, no stall in 7 200 games. Per-animal win rates (N = 20 per pairing, ±2.6 % 1 sigma per animal): L4 now 40.6 - 56.9 % (before: gorilla 39.2, rhino 39.2, crocodile 67.8, python 62.2 out of band); L3 spread is similar to before but different: rhino 67.2 / giraffe 30.6 (before crocodile 66.1 / hippo 35.3 / giraffe 37.8) — worth a look in a later balance pass, not tuned here. The "worst matchup >= 30 %" band fails before and after (hippo vs giraffe 12.5 %).
+
+What the crossing looks like in the REAL sim (`tests/brawl/sim.finalCrossing.test.ts`; every hop is stepped from a saved state with the animal's own jump physics): all ten animals get from floorL to floorR and back in two hops; nine of them hop floorL -> walkway -> floorR (jump up 3 m, walk, step off), hippo needs floorL -> pedestal -> walkway because its ground jump + air jump peak at 3.04 m (a 3.0 m platform is out of its direct reach; from the pedestal the rise is only 1.6 m). Before the span, python and mole needed three hops (floorL -> pedestal -> sunR -> floorR); the other eight could already cross floorL -> pedestal -> floorR (a 5.5 m gap), so the span's main gains are the continuous high lane and the shorter routes for python / mole.

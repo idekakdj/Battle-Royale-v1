@@ -17,6 +17,12 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.7.0] - 2026-10-06
+
+### Changed
+- **Crumbling Amphitheatre final form now has a middle bridge.** Once every breakable piece is destroyed, a new floating golden platform rises in the middle of the arena, joining the two side platforms into one continuous walkway across the map (in the same marble-and-gold style, with the pedestal below it and the halo above). Every animal can cross the arena in the final form, including the Hippo and the other heavy, slow ones. It also appears in the faint ghost preview of the final form and in the map's thumbnail.
+- Online: this changes the map's layout, so everyone in an online room needs to be on version 1.7 (the game will say so if versions don't match).
+
 ## [1.6.0] - 2026-10-05
 
 ### Added
@@ -185,7 +191,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.4.1...v1.5.0

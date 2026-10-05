@@ -20,6 +20,11 @@ import { playScripted } from './netHelpers';
  * unchanged. Two new stages are covered: Clockwork Heights (a moving solid core) and Crumbling Amphitheatre (breakables; the 4-player scenario flips
  * to the final form at frame 5471 and is played on for another 1700 frames).
  * (Regenerate with: print `playScripted(stage, n, seed, frames, checkpoints)` for the entries below.)
+ *
+ * REGENERATED for v1.7 (final-form span platform, intentional data change): the Crumbling Amphitheatre gained the `finalOnly` soft platform `span`
+ * (x -6..6, y 3.0) — the stage's platform list, and with it the saved state, grew by one entry, so BOTH Amphitheatre scenarios changed from frame 180
+ * on; the 4-player one flips to the final form at the same frame (5471) as before and its post-flip 1700 frames now play on the new layout (hits 28 -> 39,
+ * kos 65 -> 55, moveStarts 436 -> 453). The other five scenarios (Broken Colosseum, Sky Aqueduct, Clockwork Heights) are byte-for-byte unchanged.
  */
 const CHECKPOINTS = [180, 600, 1200, 2400, 3600];
 const CHECKPOINTS_LONG = [180, 600, 1200, 2400, 3600, 5400, 7200];
@@ -119,10 +124,10 @@ const GOLDEN: Golden[] = [
     seed: 1,
     frames: 7200,
     checkpoints: CHECKPOINTS_LONG,
-    checksums: { 180: 884462703, 600: 3271633910, 1200: 955680346, 2400: 492250934, 3600: 2052894965, 5400: 2719854150, 7200: 3407493073 },
-    hits: 28,
-    kos: 65,
-    moveStarts: 436,
+    checksums: { 180: 2478484700, 600: 3499052753, 1200: 3581821668, 2400: 3197006905, 3600: 1105596366, 5400: 586225110, 7200: 2784368028 },
+    hits: 39,
+    kos: 55,
+    moveStarts: 453,
     platHits: 30,
     platBreaks: 6,
     finalFrame: 5471,
@@ -134,7 +139,7 @@ const GOLDEN: Golden[] = [
     seed: 20265,
     frames: 3600,
     checkpoints: CHECKPOINTS,
-    checksums: { 180: 3863304079, 600: 259694678, 1200: 2797899383, 2400: 3537726241, 3600: 1132486810 },
+    checksums: { 180: 1461904664, 600: 3440480880, 1200: 2808649852, 2400: 1080358772, 3600: 3812929020 },
     hits: 10,
     kos: 10,
     moveStarts: 136,

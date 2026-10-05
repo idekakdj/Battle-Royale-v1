@@ -34,7 +34,7 @@ describe('stageInfo: dynamic platforms', () => {
   it('knows which platforms exist: final-form platforms are inactive until the final form, broken pieces vanish', () => {
     const w = world('crumblingAmphitheatre', ['lion', 'gorilla'], 3);
     let info = infoOf(w);
-    for (const id of ['sunL', 'sunR', 'core', 'halo']) expect(info.plats[idx(info, id)].active, id).toBe(false);
+    for (const id of ['sunL', 'sunR', 'core', 'halo', 'span']) expect(info.plats[idx(info, id)].active, id).toBe(false);
     for (const id of ['tileL', 'tileC', 'tileR', 'archL', 'archR', 'crown']) expect(info.plats[idx(info, id)].active, id).toBe(true);
     expect(info.plats[idx(info, 'tileC')].hp).toBe(6);
     expect(info.platformBelow(0, 0.1, 1.2, 0.3)).toBe(idx(info, 'tileC'));
@@ -49,8 +49,10 @@ describe('stageInfo: dynamic platforms', () => {
     for (const id of ['tileL', 'tileR', 'archL', 'archR', 'crown']) w.debugHitPlatform(id, 0, 6);
     w.step();
     info = infoOf(w);
-    for (const id of ['sunL', 'sunR', 'core', 'halo']) expect(info.plats[idx(info, id)].active, id).toBe(true);
-    expect(info.platformBelow(0, 3, 1.2, 0.3)).toBe(idx(info, 'core'));
+    for (const id of ['sunL', 'sunR', 'core', 'halo', 'span']) expect(info.plats[idx(info, id)].active, id).toBe(true);
+    // v1.7: the soft span (y 3.0) now hangs over the pedestal: from above it catches first, from underneath (y 2.4) the core is the floor
+    expect(info.platformBelow(0, 3, 1.2, 0.3)).toBe(idx(info, 'span'));
+    expect(info.platformBelow(0, 2.4, 1.2, 0.3)).toBe(idx(info, 'core'));
   });
 
   it('exposes a ledge only while its corner is not covered (the sim rule), and rebuilds it every frame', () => {

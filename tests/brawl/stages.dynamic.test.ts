@@ -389,7 +389,7 @@ describe('Crumbling Amphitheatre: intact and final layouts', () => {
   const intact = AMPH.platforms.filter((p) => !p.finalOnly);
   const last = AMPH.platforms.filter((p) => !p.breakable);
 
-  it('has exactly the plan layout: 2 unbreakable floors, 6 breakables with the plan geometry, 4 final-only platforms', () => {
+  it('has exactly the plan layout: 2 unbreakable floors, 6 breakables with the plan geometry, 5 final-only platforms', () => {
     expect(def(AMPH, 'floorL')).toMatchObject({ kind: 'solid', x0: -13, x1: -8.5, y: 0, thickness: 3.5, ledgeLeft: true, ledgeRight: true });
     expect(def(AMPH, 'floorR')).toMatchObject({ kind: 'solid', x0: 8.5, x1: 13, y: 0, thickness: 3.5, ledgeLeft: true, ledgeRight: true });
     expect(def(AMPH, 'tileL')).toMatchObject({ kind: 'solid', x0: -8.5, x1: -3, y: 0, thickness: 3.5 });
@@ -402,8 +402,10 @@ describe('Crumbling Amphitheatre: intact and final layouts', () => {
     expect(def(AMPH, 'sunR')).toMatchObject({ kind: 'soft', x0: 6, x1: 11, y: 3, finalOnly: true });
     expect(def(AMPH, 'core')).toMatchObject({ kind: 'solid', x0: -3, x1: 3, y: 1.4, thickness: 2, ledgeLeft: true, ledgeRight: true, finalOnly: true });
     expect(def(AMPH, 'halo')).toMatchObject({ kind: 'soft', x0: -2.5, x1: 2.5, y: 6.4, finalOnly: true });
+    // v1.7: the walkway in the air between the two sun slabs (same height, abutting both)
+    expect(def(AMPH, 'span')).toMatchObject({ kind: 'soft', x0: -6, x1: 6, y: 3, thickness: 0.5, finalOnly: true });
     expect(breakables.map((p) => p.id).sort()).toEqual(['archL', 'archR', 'crown', 'tileC', 'tileL', 'tileR']);
-    expect(finals.map((p) => p.id).sort()).toEqual(['core', 'halo', 'sunL', 'sunR']);
+    expect(finals.map((p) => p.id).sort()).toEqual(['core', 'halo', 'span', 'sunL', 'sunR']);
     expect(last.filter((p) => !p.finalOnly).map((p) => p.id).sort()).toEqual(['floorL', 'floorR']);
     // hit counts: tiles take the most, the soft pieces fewer
     for (const t of ['tileL', 'tileC', 'tileR']) expect(def(AMPH, t).breakable!.hits).toBeGreaterThanOrEqual(def(AMPH, 'crown').breakable!.hits);
@@ -424,25 +426,31 @@ describe('Crumbling Amphitheatre: intact and final layouts', () => {
     expect(reachable(intact, 'floorL')).toEqual(intact.map((p) => p.id).sort());
   });
 
-  it('the FINAL form is playable on its own: two ledged islands, a ledged centre and three soft platforms, all reachable', () => {
+  it('the FINAL form is playable on its own: two ledged islands, a ledged centre and four soft platforms, all reachable', () => {
     const fin = AMPH.platforms.filter((p) => p.finalOnly || !p.breakable);
     const solids = fin.filter((p) => p.kind === 'solid');
     const softs = fin.filter((p) => p.kind === 'soft');
     expect(solids.map((p) => p.id).sort()).toEqual(['core', 'floorL', 'floorR']);
     for (const s of solids) expect(s.ledgeLeft && s.ledgeRight, s.id).toBe(true);
-    expect(softs.map((p) => p.id).sort()).toEqual(['halo', 'sunL', 'sunR']);
+    // ledges only ever sit on solid platforms, so the span (soft) has none
+    expect(softs.map((p) => p.id).sort()).toEqual(['halo', 'span', 'sunL', 'sunR']);
+    for (const s of softs) expect(s.ledgeLeft || s.ledgeRight, `${s.id} is soft: no ledges`).toBeFalsy();
     // every final-form platform can be reached on foot / by jumping from each outer floor (directed: up <= 4.6 m, drops are free)
     for (const from of ['floorL', 'floorR']) expect(reachable(fin, from), `from ${from}`).toEqual(fin.map((p) => p.id).sort());
     for (const u of softs) {
       const below = fin.filter((p) => p !== u && p.y < u.y);
       expect(below.some((b) => reach(u, b)), `${u.id} reachable in the final form`).toBe(true);
     }
-    // the final form's platforms do not overlap each other
+    // the final form's platforms do not overlap each other; the only contact allowed is the walkway (see the next test): soft platforms at
+    // the very same height that abut end to end
     for (let i = 0; i < fin.length; i++) {
       for (let j = i + 1; j < fin.length; j++) {
         const a = fin[i];
         const b = fin[j];
-        expect(gap({ x0: a.x0, x1: a.x1, y: a.y, t: a.thickness }, { x0: b.x0, x1: b.x1, y: b.y, t: b.thickness }), `${a.id} vs ${b.id}`).toBeGreaterThan(0);
+        const g = gap({ x0: a.x0, x1: a.x1, y: a.y, t: a.thickness }, { x0: b.x0, x1: b.x1, y: b.y, t: b.thickness });
+        const walkway = a.kind === 'soft' && b.kind === 'soft' && a.y === b.y && (a.x1 === b.x0 || b.x1 === a.x0);
+        if (walkway) expect(g, `${a.id} abuts ${b.id}`).toBe(0);
+        else expect(g, `${a.id} vs ${b.id}`).toBeGreaterThan(0);
       }
     }
     // everything inside the blast zones
@@ -453,6 +461,43 @@ describe('Crumbling Amphitheatre: intact and final layouts', () => {
       expect(p.y).toBeLessThan(top);
       expect(p.y - p.thickness).toBeGreaterThan(bottom);
     }
+  });
+
+  it('v1.7 span: sunL + span + sunR are ONE continuous walkway at y 3.0 (no gap, no overlap, same thickness) across the whole arena', () => {
+    const run = ['sunL', 'span', 'sunR'].map((id) => def(AMPH, id));
+    expect(new Set(run.map((p) => p.y)).size).toBe(1);
+    expect(new Set(run.map((p) => p.thickness)).size).toBe(1);
+    for (let i = 1; i < run.length; i++) expect(run[i].x0, `${run[i].id} starts where ${run[i - 1].id} ends`).toBeCloseTo(run[i - 1].x1, 9);
+    expect(run[0].x0).toBeLessThanOrEqual(-8.5); // starts over the left floor ...
+    expect(run[run.length - 1].x1).toBeGreaterThanOrEqual(8.5); // ... and ends over the right one: a fighter can step off at either end onto solid ground
+    // the walkway is the middle of the arena: symmetric
+    const span = def(AMPH, 'span');
+    expect(span.x0 + span.x1).toBeCloseTo(0, 9);
+  });
+
+  it('v1.7 span clearances: well below the halo, clear above the core pedestal, never inside a solid, jumpable from the pedestal', () => {
+    const span = def(AMPH, 'span');
+    const halo = def(AMPH, 'halo');
+    const core = def(AMPH, 'core');
+    const spanBottom = span.y - span.thickness;
+    // >= 1.2 m of clear air between the span's top and the halo's underside (fighters on the span must be able to jump)
+    expect(halo.y - halo.thickness - span.y).toBeGreaterThanOrEqual(1.2);
+    expect(halo.y - halo.thickness - span.y).toBeCloseTo(2.9, 9);
+    // the soft span hangs above the pedestal: its underside is above the core's top (it never collides with it), a fighter on the core
+    // can jump up through it (rise within the bots' jump reach; the real per-animal check is in sim.finalCrossing.test.ts), and no solid
+    // platform touches the span's rectangle
+    expect(spanBottom).toBeGreaterThan(core.y);
+    expect(span.y - core.y).toBeGreaterThan(0);
+    expect(span.y - core.y).toBeLessThanOrEqual(PHYS.dynReachUp);
+    for (const p of AMPH.platforms.filter((q) => q.kind === 'solid')) {
+      expect(gap({ x0: span.x0, x1: span.x1, y: span.y, t: span.thickness }, { x0: p.x0, x1: p.x1, y: p.y, t: p.thickness }), `span vs ${p.id}`).toBeGreaterThan(0);
+    }
+    // the span does not cover a ledge corner of the core / floors (the cover rule is |dy| <= PHYS.ledgeCoverDy)
+    for (const p of AMPH.platforms.filter((q) => q.kind === 'solid')) {
+      expect(Math.abs(p.y - span.y), `${p.id} ledge cover`).toBeGreaterThan(PHYS.ledgeCoverDy);
+    }
+    // the span stays inside the camera framing and blast zones with the same margins as the other final-form pieces
+    expect(Math.max(Math.abs(span.x0), Math.abs(span.x1))).toBeLessThanOrEqual(AMPH.camera.maxHalfW);
   });
 });
 
@@ -482,5 +527,8 @@ describe('online data fingerprint covers the stage data', () => {
     expect(mutate((s) => (s.clockworkHeights.platforms[0].path!.periodS += 1))).not.toBe(base);
     expect(mutate((s) => delete s.crumblingAmphitheatre.platforms.find((p) => p.id === 'sunL')!.finalOnly)).not.toBe(base);
     expect(mutate((s) => (s.crumblingAmphitheatre.platforms[0].x1 += 0.5))).not.toBe(base);
+    // v1.7: the final-form span is part of the data a mismatched client would disagree on
+    expect(mutate((s) => (s.crumblingAmphitheatre.platforms.find((p) => p.id === 'span')!.x1 += 0.5))).not.toBe(base);
+    expect(mutate((s) => (s.crumblingAmphitheatre.platforms = s.crumblingAmphitheatre.platforms.filter((p) => p.id !== 'span')))).not.toBe(base);
   });
 });
