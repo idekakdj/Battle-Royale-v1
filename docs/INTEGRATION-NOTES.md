@@ -25,7 +25,7 @@ Maintained by the architect as work packages complete. WP-I must read this file.
 - Import everything from the barrel `src/ui/index.ts` (it also imports ui.css; index.html/main.ts untouched).
 - Boot wiring: call `setPreviewFactory(createPreview)` once (from `src/render/preview.ts`) — UI never imports render/ itself; without it a styled SVG fallback shows.
 - Screen constructors (all take callback options, all implement core `Screen`):
-  - `new Lobby({ onPlay, onGladiators?, getSelectedAnimal, onSettingsChange? })`
+  - `new Lobby({ onPlay, onOnline?, getSelectedAnimal, onSettingsChange? })` (v1.5.1: nav is PLAY / ONLINE / SETTINGS only; `onPlay` -> `new ModeSelect({ initialMode?, onSelect(mode), onBack })` -> Battle Royale = CharacterSelect, Champions League = BrawlSetup)
   - `new CharacterSelect({ initialAnimal?, onConfirm(animal), onBack?, onSelectionChange? })`
   - `new DifficultySelect({ initialDifficulty?, onStart(difficulty), onBack? })`
   - `new Results({ results: MatchResults, onRematch, onChangeGladiator, onLobby })` where `MatchResults = { victory, placement, animal, kills, damageDealt, damageBlocked, ultsUsed, matchTimeS, difficulty }`

@@ -17,6 +17,12 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.5.1] - 2026-10-04
+
+### Changed
+- **Simpler main menu:** it now has just **Play**, **Online** and **Settings**. The separate "Champions League" and "Gladiators" entries are gone. Press **Play**, choose **Battle Royale** or **Champions League**, and you go straight to that mode's gladiator selection screen. Back steps through the same screens, and the game remembers which mode you chose last.
+- **Online:** players no longer need the exact same patch version to play together. Any 1.5.x versions work with each other; a new feature version (1.6.0) will still need everyone to update.
+
 ## [1.5.0] - 2026-10-04
 
 ### Added
@@ -161,7 +167,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.2...v1.4.0

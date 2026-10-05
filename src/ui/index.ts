@@ -8,6 +8,7 @@ import '../styles/ui.css';
 import '../styles/brawl.css';
 
 export { Lobby, type LobbyOptions } from './Lobby';
+export { ModeSelect, type ModeSelectOptions } from './ModeSelect';
 export { CharacterSelect, type CharacterSelectOptions } from './CharacterSelect';
 export { DifficultySelect, type DifficultySelectOptions } from './DifficultySelect';
 export { HUD, type KillFeedEntry, type CountdownStep, type SpectateTarget } from './HUD';
@@ -26,7 +27,11 @@ export {
   ANIMAL_KEY,
   DIFFICULTY_KEY,
   BRAWL_KEY,
+  MODE_KEY,
+  loadMode,
+  saveMode,
   loadBrawlSetup,
   saveBrawlSetup,
   type GkSettings,
+  type GameMode,
 } from './storage';

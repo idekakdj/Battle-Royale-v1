@@ -6,8 +6,10 @@
  *  2. If `?demo=<name>` is present, load demo-registration modules and run the
  *     matching demo, then stop (BLUEPRINT §14 demo-flag convention).
  *  3. Otherwise run the real game flow:
- *     Lobby → CharacterSelect → DifficultySelect → Match → Results, with
- *     REMATCH (same settings, fresh seed) / CHANGE GLADIATOR / LOBBY loops.
+ *     Lobby → ModeSelect → (Battle Royale) CharacterSelect → DifficultySelect → Match → Results, with
+ *     REMATCH (same settings, fresh seed) / CHANGE GLADIATOR / LOBBY loops; or
+ *     Lobby → ModeSelect → (Champions League) fighter/stage setup → Match → Results (lazily loaded).
+ *     Back chain: DifficultySelect → CharacterSelect / BrawlSetup → ModeSelect → Lobby.
  *
  * Demo convention: any module named `*.demo.ts` that calls `registerDemo(...)`
  * is auto-discovered — packages never edit this file to add a demo.
@@ -20,6 +22,7 @@ import { AudioEngine } from './audio/AudioEngine';
 import { createPreview } from './render/preview';
 import {
   Lobby,
+  ModeSelect,
   CharacterSelect,
   DifficultySelect,
   Results,
@@ -28,6 +31,7 @@ import {
   setPreviewFactory,
   loadAnimal,
   loadDifficulty,
+  loadMode,
   loadBrawlSetup,
 } from './ui';
 import { MatchController } from './match/MatchController';
@@ -89,11 +93,22 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearch
     audio.playLobbyMusic();
     screens.transition(
       new Lobby({
-        onPlay: () => showCharacterSelect(),
-        onChampionsLeague: () => void showBrawlSetup(),
+        onPlay: () => showModeSelect(),
         onOnline: () => void startOnline(),
         getSelectedAnimal: () => loadAnimal(),
         onSettingsChange: applySettings,
+      }),
+    );
+  };
+
+  /** PLAY → choose a game mode; each mode goes straight to its own gladiator-selection screen. */
+  const showModeSelect = (): void => {
+    audio.playLobbyMusic();
+    screens.transition(
+      new ModeSelect({
+        initialMode: loadMode(),
+        onSelect: (mode) => (mode === 'battleRoyale' ? showCharacterSelect() : void showBrawlSetup()),
+        onBack: () => showLobby(),
       }),
     );
   };
@@ -104,7 +119,7 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearch
       new CharacterSelect({
         initialAnimal: loadAnimal(),
         onConfirm: (animal) => showDifficultySelect(animal),
-        onBack: () => showLobby(),
+        onBack: () => showModeSelect(),
       }),
     );
   };
@@ -163,7 +178,7 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearch
         new brawl.BrawlSetup({
           initial,
           onStart: (setup) => void startBrawl(setup),
-          onBack: () => showLobby(),
+          onBack: () => showModeSelect(),
         }),
       );
     } catch (err) {

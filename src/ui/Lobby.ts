@@ -1,11 +1,12 @@
 /**
  * Lobby screen (WP-F, BLUEPRINT §12 — Fortnite-inspired).
  *
- * Full-bleed dark-stone hall: left vertical nav (PLAY / GLADIATORS / SETTINGS),
+ * Full-bleed dark-stone hall: left vertical nav (PLAY / ONLINE / SETTINGS),
  * top-left crossed-swords logo, a center-right 3D preview of the currently
  * selected gladiator on a pedestal, a huge gold PLAY button bottom-right, and a
- * bottom bar with the version and a mute toggle. The SETTINGS nav opens the
- * shared {@link SettingsPanel} (sliders + mute + controls reference).
+ * bottom bar with the version and a mute toggle. PLAY (nav or gold button) opens
+ * the mode-select screen (Battle Royale | Champions League); the SETTINGS nav
+ * opens the shared {@link SettingsPanel} (sliders + mute + controls reference).
  *
  * Navigation is via injected callbacks — the lobby imports no sim/render/audio.
  */
@@ -15,6 +16,7 @@ import type { AnimalId } from '../core/types';
 import { el, button } from './dom';
 import { crossedSwordsSvg, speakerSvg } from './icons';
 import { PreviewPane } from './PreviewPane';
+import { lobbyNavEntries, resolveNavClick, type LobbyView, type NavId } from './lobbyNav';
 import { SettingsPanel } from './SettingsPanel';
 import { ANIMALS } from '../config/animals';
 import {
@@ -35,21 +37,15 @@ const VERSION = APP_VERSION_LABEL;
 const lobbySession = { whatsNewChecked: false, updateDismissed: false };
 
 export interface LobbyOptions {
-  /** PLAY → character select (BLUEPRINT §3). */
+  /** PLAY (gold button and nav) → the game-mode select screen. */
   onPlay: () => void;
-  /** v1.4: CHAMPIONS LEAGUE nav (platform-fighter mode → its setup screen). The entry is hidden when omitted. */
-  onChampionsLeague?: () => void;
   /** v1.5: ONLINE nav (play with friends -> the Online screen). The entry is hidden when omitted. */
   onOnline?: () => void;
-  /** GLADIATORS nav; defaults to {@link LobbyOptions.onPlay} if omitted. */
-  onGladiators?: () => void;
   /** The lobby default gladiator to preview (from `gk-animal`). */
   getSelectedAnimal: () => AnimalId;
   /** Notified when the player changes audio settings. */
   onSettingsChange?: (settings: GkSettings) => void;
 }
-
-type NavId = 'play' | 'brawl' | 'online' | 'gladiators' | 'settings';
 
 export class Lobby implements Screen {
   private readonly opts: LobbyOptions;
@@ -59,7 +55,7 @@ export class Lobby implements Screen {
   private detailEl: HTMLElement | null = null;
   private settingsHost: HTMLElement | null = null;
   private muteBtn: HTMLButtonElement | null = null;
-  private activeNav: NavId = 'play';
+  private activeNav: LobbyView = 'play';
   private versionPanel: VersionPanel | null = null;
 
   constructor(opts: LobbyOptions) {
@@ -80,13 +76,11 @@ export class Lobby implements Screen {
     ]);
 
     // ── Left nav ─────────────────────────────────────────────────────────────
-    const nav = el('nav', { class: 'gk-lobby__nav' }, [
-      this.navButton('play', 'Play'),
-      this.opts.onChampionsLeague !== undefined ? this.navButton('brawl', 'Champions League') : null,
-      this.opts.onOnline !== undefined ? this.navButton('online', 'Online') : null,
-      this.navButton('gladiators', 'Gladiators'),
-      this.navButton('settings', 'Settings'),
-    ]);
+    const nav = el(
+      'nav',
+      { class: 'gk-lobby__nav' },
+      lobbyNavEntries(this.opts.onOnline !== undefined).map((entry) => this.navButton(entry.id, entry.label)),
+    );
 
     // ── Center-right detail area (preview + settings swap in here) ────────────
     this.detailEl = el('div', { class: 'gk-lobby__detail' }, [this.preview.root]);
@@ -132,23 +126,19 @@ export class Lobby implements Screen {
   }
 
   private navButton(id: NavId, label: string): HTMLButtonElement {
-    const b = button(label, 'gk-lobby__navbtn gk-display', () => this.showNav(id), { dataset: { nav: id } });
+    const b = button(label, 'gk-lobby__navbtn gk-display', () => this.onNavClick(id), { dataset: { nav: id } });
     return b;
   }
 
-  private showNav(id: NavId): void {
-    if (id === 'brawl') {
-      this.opts.onChampionsLeague?.();
-      return;
-    }
-    if (id === 'online') {
-      this.opts.onOnline?.();
-      return;
-    }
-    if (id === 'gladiators') {
-      (this.opts.onGladiators ?? this.opts.onPlay)();
-      return;
-    }
+  /** A nav click: PLAY opens the mode select (or returns to the home view from Settings), ONLINE opens Online. */
+  private onNavClick(id: NavId): void {
+    const action = resolveNavClick(id, this.activeNav);
+    if (action.type === 'openModes') this.opts.onPlay();
+    else if (action.type === 'openOnline') this.opts.onOnline?.();
+    else this.showNav(action.view);
+  }
+
+  private showNav(id: LobbyView): void {
     this.activeNav = id;
     if (this.root !== null) {
       for (const b of this.root.querySelectorAll<HTMLElement>('.gk-lobby__navbtn')) {

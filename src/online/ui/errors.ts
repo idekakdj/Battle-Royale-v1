@@ -39,15 +39,19 @@ function versionOf(v: RoomVersions | undefined): string | null {
   return v !== undefined && typeof v.appVersion === 'string' && v.appVersion.length > 0 ? v.appVersion : null;
 }
 
-/** "The host runs v1.4.1, you run v1.4.0." (falls back to protocol / data wording when the app versions are equal). */
+/**
+ * "The host runs v1.4.1, you run v1.4.0." (falls back to protocol / data wording when the app versions are equal, or when only
+ * the patch differs: the room accepts patch differences, so a mismatch then comes from the protocol or the data).
+ */
 export function describeVersionMismatch(details: RoomErrorDetails | undefined, fallback?: string): ErrorText {
   const title = 'Different game versions';
-  const hint = 'Everyone in a room needs the same version of the game. Update the game (or reload the web page) and try again.';
+  const hint = 'Everyone in a room needs the same version of the game (the same x.y release, e.g. 1.5). Update the game (or reload the web page) and try again.';
   const host = details?.host;
   const local = details?.local;
   const hv = versionOf(host);
   const lv = versionOf(local);
-  if (hv !== null && lv !== null && hv !== lv) {
+  const appDiffers = details?.mismatch === undefined || details.mismatch.includes('appVersion');
+  if (hv !== null && lv !== null && hv !== lv && appDiffers) {
     return { title, message: `The host runs v${hv}, you run v${lv}.`, hint };
   }
   if (host !== undefined && local !== undefined && host.protocol !== local.protocol) {
@@ -55,8 +59,8 @@ export function describeVersionMismatch(details: RoomErrorDetails | undefined, f
   }
   const diff = (details?.mismatch ?? []).map(mismatchLabel);
   if (diff.length > 0) {
-    const same = hv !== null ? ` (both v${hv})` : '';
-    return { title, message: `The game data differs${same}: ${[...new Set(diff)].join(', ')}.`, hint };
+    const who = hv === null ? '' : lv === null || lv === hv ? ` (both v${hv})` : ` (host v${hv}, you v${lv})`;
+    return { title, message: `The game data differs${who}: ${[...new Set(diff)].join(', ')}.`, hint };
   }
   return { title, message: fallback !== undefined && fallback.length > 0 ? fallback : 'The host runs a different version of the game.', hint };
 }

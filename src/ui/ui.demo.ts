@@ -1,10 +1,11 @@
 /**
  * `?demo=ui` — cycles every WP-F screen with mock data (BLUEPRINT §14).
  *
- * Keys: `[` previous station · `]` next station. Stations: lobby → character
- * select → difficulty → HUD (fake animated snapshot: countdown, hp drain, ult
+ * Keys: `[` previous station · `]` next station. Stations: lobby → mode select →
+ * character select → difficulty → HUD (fake animated snapshot: countdown, hp drain, ult
  * fill, kill feed, bloodlust, spectate) → pause overlay → results (victory) →
- * results (defeat). Screen buttons also navigate (PLAY → select, etc.).
+ * results (defeat). Screen buttons also navigate (PLAY → mode → select, etc.;
+ * the demo has no Champions League station, so that card also goes to select).
  */
 
 import { registerDemo } from '../core/demos';
@@ -13,6 +14,7 @@ import { ANIMAL_IDS, ANIMALS } from '../config/animals';
 import { el } from './dom';
 import {
   Lobby,
+  ModeSelect,
   CharacterSelect,
   DifficultySelect,
   HUD,
@@ -239,8 +241,19 @@ registerDemo('ui', (root) => {
       name: 'lobby',
       mount(h, nav) {
         const s = new Lobby({
-          onPlay: () => nav('select'),
+          onPlay: () => nav('mode'),
           getSelectedAnimal: () => loadAnimal(),
+        });
+        s.mount(h);
+        return () => s.unmount();
+      },
+    },
+    {
+      name: 'mode',
+      mount(h, nav) {
+        const s = new ModeSelect({
+          onSelect: () => nav('select'),
+          onBack: () => nav('lobby'),
         });
         s.mount(h);
         return () => s.unmount();
@@ -251,7 +264,7 @@ registerDemo('ui', (root) => {
       mount(h, nav) {
         const s = new CharacterSelect({
           onConfirm: () => nav('difficulty'),
-          onBack: () => nav('lobby'),
+          onBack: () => nav('mode'),
         });
         s.mount(h);
         return () => s.unmount();

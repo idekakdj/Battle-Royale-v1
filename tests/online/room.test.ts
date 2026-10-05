@@ -254,6 +254,46 @@ describe('OnlineRoom — handshake validation', () => {
     expect(host.state.slots).toHaveLength(1); // nobody got in
   });
 
+  it('accepts a different PATCH version (same major.minor): 1.5.0 and 1.5.3 play together', async () => {
+    const rig = new Rig();
+    const host = await rig.host('Ann', 'eagle', { versions: { appVersion: '1.5.0' } });
+    const bob = await rig.join(host.state.code, 'Bob', 'lion', { versions: { appVersion: '1.5.3' } });
+    await rig.run(300);
+    expect(host.state.slots).toHaveLength(2);
+    expect(bob.state.slots).toHaveLength(2);
+    // each side keeps showing its own full version
+    expect(host.state.versions.appVersion).toBe('1.5.0');
+    expect(bob.state.versions.appVersion).toBe('1.5.3');
+  });
+
+  it('rejects a different MINOR (or major) version with both full versions in the error', async () => {
+    const rig = new Rig();
+    const host = await rig.host('Ann', 'eagle', { versions: { appVersion: '1.5.2' } });
+    const minor = await rejection(rig.joinRoom(host.state.code, 'Bob', 'lion', { versions: { appVersion: '1.6.0' } }));
+    expect(minor.code).toBe('version-mismatch');
+    expect(minor.details?.mismatch).toEqual(['appVersion']);
+    expect(minor.details?.host?.appVersion).toBe('1.5.2');
+    expect(minor.details?.local?.appVersion).toBe('1.6.0');
+    expect(minor.message).toContain('1.5.2');
+    expect(minor.message).toContain('1.6.0');
+    const major = await rejection(rig.joinRoom(host.state.code, 'Cy', 'lion', { versions: { appVersion: '2.5.2' } }));
+    expect(major.details?.mismatch).toEqual(['appVersion']);
+    await rig.run(500);
+    expect(host.state.slots).toHaveLength(1);
+  });
+
+  it('rejects a different protocol even when the app version is identical, naming both versions', async () => {
+    const rig = new Rig();
+    const host = await rig.host('Ann', 'eagle', { versions: { appVersion: '1.5.0' } });
+    const err = await rejection(rig.joinRoom(host.state.code, 'Bob', 'lion', { versions: { appVersion: '1.5.0', protocol: 2 } }));
+    expect(err.code).toBe('version-mismatch');
+    expect(err.details?.mismatch).toEqual(['protocol']);
+    expect(err.details?.host?.protocol).toBe(host.state.versions.protocol);
+    expect(err.details?.local?.protocol).toBe(2);
+    expect(err.message).toContain('1.5.0');
+    expect(err.message).toContain('protocol 2');
+  });
+
   it('rejects a different protocol or data fingerprint', async () => {
     const rig = new Rig();
     const host = await rig.host('Ann');

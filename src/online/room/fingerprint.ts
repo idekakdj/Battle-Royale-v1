@@ -1,13 +1,19 @@
 /**
  * Data fingerprint (plan §3): both machines must simulate with IDENTICAL tuning data, so the HELLO handshake compares
  * a hash of it. `computeFingerprint(mode)` = 32-bit FNV-1a (8 hex digits) of the stable-stringified tuning data of that
- * mode plus `APP_VERSION` and `ONLINE_PROTOCOL_VERSION`.
+ * mode plus the app **major.minor** version ({@link appCompatKey}) and `ONLINE_PROTOCOL_VERSION`.
  *
  *   championsLeague  MOVESETS + STAGES + PHYS   (everything the rollback sim reads)
  *   battleRoyale     ANIMALS (incl. ultimates) + balance + traps + arena   (everything host AND client read)
+ *
+ * VERSION COMPATIBILITY RULE (v1.5.1+): two builds can play together when they have the same
+ * `ONLINE_PROTOCOL_VERSION`, the same data fingerprint AND the same app major.minor (1.5.0 <-> 1.5.2 are compatible,
+ * 1.5.x <-> 1.6.0 are not). The patch number is deliberately ignored, so a menu-only / UI-only patch release does not
+ * force friends to reinstall. The consequence: PATCH releases must not change simulation or netcode behaviour; bump MINOR
+ * when they do (the data fingerprint catches changed tuning numbers, but NOT changed sim/netcode code).
  */
 
-import { APP_VERSION } from '../../version';
+import { APP_VERSION, parseSemver } from '../../version';
 import { ANIMALS } from '../../config/animals';
 import * as balance from '../../config/balance';
 import * as traps from '../../config/traps';
@@ -101,13 +107,22 @@ export function fingerprintData(mode: OnlineMode): unknown {
   return { animals: ANIMALS, balance: { ...balance }, traps: { ...traps }, arena: { ...arena } };
 }
 
+/**
+ * The part of an app version that must match for online play: `"major.minor"` (`"1.5.2"` -> `"1.5"`). A string that is not
+ * semver is returned unchanged, so unparseable versions still require exact equality.
+ */
+export function appCompatKey(version: string): string {
+  const v = parseSemver(version);
+  return v === null ? version : `${v.major}.${v.minor}`;
+}
+
 const cache = new Map<OnlineMode, string>();
 
-/** Fingerprint of `mode`'s data + `APP_VERSION` + protocol, as 8 lower-case hex digits. Cached per mode. */
+/** Fingerprint of `mode`'s data + the app major.minor + protocol, as 8 lower-case hex digits (patch-independent). Cached per mode. */
 export function computeFingerprint(mode: OnlineMode): string {
   const hit = cache.get(mode);
   if (hit !== undefined) return hit;
-  const text = stableStringify({ mode, protocol: ONLINE_PROTOCOL_VERSION, app: APP_VERSION, data: fingerprintData(mode) });
+  const text = stableStringify({ mode, protocol: ONLINE_PROTOCOL_VERSION, app: appCompatKey(APP_VERSION), data: fingerprintData(mode) });
   const fp = hex32(fnv1a32(text));
   cache.set(mode, fp);
   return fp;
@@ -125,11 +140,14 @@ export function localVersions(): RoomVersions {
   };
 }
 
-/** Fields that differ between two builds (`protocol`, `appVersion`, `fingerprint:<mode>`); empty = compatible. */
+/**
+ * Fields that differ between two builds (`protocol`, `appVersion`, `fingerprint:<mode>`); empty = compatible.
+ * `appVersion` is reported only when the app major.minor differs (the patch number is ignored, see the header).
+ */
 export function diffVersions(a: RoomVersions, b: RoomVersions): string[] {
   const out: string[] = [];
   if (a.protocol !== b.protocol) out.push('protocol');
-  if (a.appVersion !== b.appVersion) out.push('appVersion');
+  if (appCompatKey(a.appVersion) !== appCompatKey(b.appVersion)) out.push('appVersion');
   for (const m of ['battleRoyale', 'championsLeague'] as const) {
     if (a.fingerprints[m] !== b.fingerprints[m]) out.push(`fingerprint:${m}`);
   }

@@ -4,14 +4,6 @@
  * `.gk-brawl-*` (HUD / results / pause). Animations touch transform + opacity only.
  */
 
-/* ── Lobby nav: the long label fits the nav column ────────────────────────── */
-.gk-lobby__navbtn[data-nav='brawl'] {
-  font-size: 1.1rem;
-  letter-spacing: 0.07em;
-  padding-right: 0.3rem;
-  white-space: nowrap;
-}
-
 /* ── Setup screen ─────────────────────────────────────────────────────────── */
 .gk-bs {
   display: flex;

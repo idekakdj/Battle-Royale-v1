@@ -835,7 +835,7 @@ export class OnlineRoom {
       this.reject(
         link,
         'version-mismatch',
-        `Version mismatch: the host runs ${describeVersions(this.versions)}, you run ${describeVersions(you)}. Both players need the same version of the game.`,
+        `Version mismatch: the host runs ${describeVersions(this.versions)}, you run ${describeVersions(you)}. Both players need the same game release (same major.minor version, e.g. 1.5.x).`,
         mismatch,
         you,
       );

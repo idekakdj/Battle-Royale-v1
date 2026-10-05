@@ -469,7 +469,7 @@ function runSmokeTest(win) {
     app.exit(ok ? 0 : 1);
   };
 
-  const hardTimeout = setTimeout(() => finish(false, 'timed out after 55 s (lobby, Battle Royale match or Champions League match)'), 55000);
+  const hardTimeout = setTimeout(() => finish(false, 'timed out after 55 s (lobby, Battle Royale match, Champions League match or menu path)'), 55000);
   win.webContents.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
     if (isMainFrame) finish(false, `did-fail-load ${code} ${description} ${url}`);
   });
@@ -518,8 +518,13 @@ function runSmokeTest(win) {
       const panelOpen = await js(`!!document.querySelector('.gk-vp')`);
       if (panelOpen) return finish(false, 'Esc did not reach the page (Version History panel still open)');
 
+      // Main menu (v1.5.1): exactly PLAY / ONLINE / SETTINGS in the left nav.
+      const navLabels = await js(`[...document.querySelectorAll('.gk-lobby__navbtn')].map((b) => (b.textContent || '').trim()).join('|')`);
+      if (navLabels !== 'Play|Online|Settings') return finish(false, `lobby nav is "${navLabels}", expected "Play|Online|Settings"`);
+
       // Drive the menus into a real match: proves WebGL, the sim and audio boot in the shell.
-      for (const sel of ['.gk-lobby__play', '.gk-cs__confirm', '.gk-ds__card', '.gk-ds__start']) {
+      // PLAY -> mode select (Battle Royale) -> gladiator select -> difficulty -> START.
+      for (const sel of ['.gk-lobby__play', '.gk-ms__card[data-mode="battleRoyale"]', '.gk-cs__confirm', '.gk-ds__card', '.gk-ds__start']) {
         const clicked = await waitFor(
           js,
           `(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (!b) return false; b.click(); return true; })()`,
@@ -552,6 +557,21 @@ function runSmokeTest(win) {
       if (!clHud) return finish(false, 'Champions League HUD missing');
       const clErrors = consoleErrors.filter((m) => /Uncaught|Failed to fetch dynamically|TypeError/i.test(m) && !/pointer ?lock/i.test(m));
       if (clErrors.length > 0) return finish(false, `Champions League renderer errors: ${clErrors.join(' | ')}`);
+
+      // Champions League via the menus (v1.5.1): fresh lobby -> PLAY -> mode select -> Champions League -> its fighter/stage setup screen
+      // (the lazy brawl chunk must load under app:// through the mode-select path too).
+      await win.loadURL(base);
+      for (const sel of ['.gk-lobby__play', '.gk-ms__card[data-mode="championsLeague"]']) {
+        const clicked = await waitFor(
+          js,
+          `(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (!b) return false; b.click(); return true; })()`,
+          15000,
+        );
+        if (!clicked) return finish(false, `Champions League menu step ${sel} never appeared`);
+        await sleep(300);
+      }
+      const clSetup = await waitFor(js, `!!document.querySelector('.gk-bs .gk-bs__start')`, 15000);
+      if (!clSetup) return finish(false, 'Champions League setup screen (.gk-bs) never appeared after PLAY -> mode select -> Champions League');
 
       // Online play (v1.5): fresh lobby -> ONLINE nav entry -> the Online screen must mount under app:// (its code is lazily loaded chunks:
       // ui, room layer). Then (1) "Create room" against a closed local signalling port makes the PeerJS chunk load, evaluate and reach for a
@@ -592,7 +612,7 @@ function runSmokeTest(win) {
       clearTimeout(hardTimeout);
       finish(
         true,
-        `version=${version} origin=${probe.origin} desktopBridge=true changelogEntries=${entries} escReachesPage=true matchStarted=true championsLeague=${cl} online=mounted onlineChunks=ok peerCloud=${cloud} canvas=${canvas} loadMs=${Date.now() - started}`,
+        `version=${version} origin=${probe.origin} desktopBridge=true changelogEntries=${entries} escReachesPage=true matchStarted=true navEntries=${navLabels} championsLeague=${cl} clMenuPath=ok online=mounted onlineChunks=ok peerCloud=${cloud} canvas=${canvas} loadMs=${Date.now() - started}`,
       );
     } catch (err) {
       finish(false, `probe error: ${err && err.message ? err.message : String(err)}`);

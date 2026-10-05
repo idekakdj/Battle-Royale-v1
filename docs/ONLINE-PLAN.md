@@ -14,8 +14,9 @@ Scope: **friends-only** online play for BOTH modes, free infrastructure only, we
   `World` (+ BotManager) and streams snapshots; clients send inputs and render interpolated snapshots. Unique animal per human.
 * A host leaving ends the room. A client leaving mid-match: Champions League → their fighter forfeits (host-announced frame);
   Battle Royale → the slot becomes a bot. No pause online. After a match everyone returns to the room.
-* Both peers must run the **same version**: handshake compares `ONLINE_PROTOCOL_VERSION`, `APP_VERSION` and a data **fingerprint**
-  (hash of the mode's tuning data: CL = movesets + `PHYS`; BR = animals/balance/ultimate configs). Mismatch → clear message.
+* Both peers must run a **compatible version**: handshake compares `ONLINE_PROTOCOL_VERSION`, the app **major.minor** (patch ignored since
+  v1.5.1, see ONLINE-NOTES.md) and a data **fingerprint** (hash of the mode's tuning data: CL = movesets + `PHYS`; BR = animals/balance/ultimate
+  configs). Mismatch → clear message.
 * Free infrastructure: PeerJS public broker for signalling (room codes = peer ids), public STUN, optional TURN list from config;
   `scripts/dev-signal.mjs` (local PeerServer) for QA/LAN. No server of ours.
 

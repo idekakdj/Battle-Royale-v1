@@ -90,6 +90,12 @@ describe('version mismatch text', () => {
     expect(t.message).toMatch(/protocol 1/);
   });
 
+  it('does not blame the version when only the patch differs and the data is what differs', () => {
+    const t = describeVersionMismatch({ host: versions('1.5.0', 1, 'aaa'), local: versions('1.5.3', 1, 'bbb'), mismatch: ['fingerprint:battleRoyale'] });
+    expect(t.message).toMatch(/Battle Royale data/);
+    expect(t.message).toMatch(/host v1\.5\.0, you v1\.5\.3/);
+  });
+
   it('names the mode data when only a fingerprint differs', () => {
     const t = describeVersionMismatch({ host: versions('1.5.0', 1, 'aaa'), local: versions('1.5.0', 1, 'bbb'), mismatch: ['fingerprint:championsLeague'] });
     expect(t.message).toMatch(/Champions League data/);

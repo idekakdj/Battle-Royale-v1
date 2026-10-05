@@ -24,5 +24,5 @@ export {
   type StartBlocker,
 } from './types';
 export { generateRoomCode, hostPeerId, inviteLink, isValidRoomCode, normalizeRoomCode, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from './roomCode';
-export { computeFingerprint, diffVersions, localVersions } from './fingerprint';
+export { appCompatKey, computeFingerprint, diffVersions, localVersions } from './fingerprint';
 export { loopbackClock, realClock, type RoomClock } from './clock';

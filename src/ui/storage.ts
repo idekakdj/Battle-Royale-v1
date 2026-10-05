@@ -1,8 +1,9 @@
 /**
- * Persisted UI preferences (WP-F). Three localStorage keys (BLUEPRINT §12):
+ * Persisted UI preferences (WP-F). The core localStorage keys (BLUEPRINT §12):
  *  - `gk-settings`   → audio settings ({master, music, sfx, muted}, each 0..1)
  *  - `gk-animal`     → last-selected gladiator (lobby default)
  *  - `gk-difficulty` → last-selected difficulty tier
+ *  - `gk-mode`       → last-chosen game mode on the PLAY mode-select screen (v1.5.1)
  *
  * All reads are defensive: corrupt/missing/blocked storage falls back to sane
  * defaults so the UI never throws on boot.
@@ -17,6 +18,8 @@ export const ANIMAL_KEY = 'gk-animal';
 export const DIFFICULTY_KEY = 'gk-difficulty';
 /** v1.4 Champions League: last setup (fighter, stage, opponents, bot level, stocks, time). */
 export const BRAWL_KEY = 'gk-brawl';
+/** v1.5.1: last game mode chosen on the mode-select screen (`battleRoyale` | `championsLeague`). */
+export const MODE_KEY = 'gk-mode';
 
 /** Audio settings, all volumes normalized to 0..1 (BLUEPRINT §12/§13). */
 export interface GkSettings {
@@ -161,6 +164,30 @@ export function saveDifficulty(difficulty: Difficulty): void {
   writeRaw(DIFFICULTY_KEY, String(difficulty));
 }
 
+// ── v1.5.1 mode select (PLAY → Battle Royale | Champions League) ─────────────────────────────────────────────────
+
+/** The two game modes offered by PLAY. */
+export type GameMode = 'battleRoyale' | 'championsLeague';
+/** Every {@link GameMode}, in the order the mode-select screen shows them. */
+export const GAME_MODES: readonly GameMode[] = ['battleRoyale', 'championsLeague'];
+/** The pre-focused mode when nothing (valid) is stored yet. */
+export const DEFAULT_MODE: GameMode = 'battleRoyale';
+
+/** Validate a raw stored/received mode; anything unknown falls back to {@link DEFAULT_MODE}. */
+export function parseMode(raw: unknown): GameMode {
+  return raw === 'battleRoyale' || raw === 'championsLeague' ? raw : DEFAULT_MODE;
+}
+
+/** The last-chosen game mode (validated; {@link DEFAULT_MODE} when missing, corrupt or storage is blocked). Never throws. */
+export function loadMode(): GameMode {
+  return parseMode(readRaw(MODE_KEY));
+}
+
+/** Persist the chosen game mode under `gk-mode`. */
+export function saveMode(mode: GameMode): void {
+  writeRaw(MODE_KEY, parseMode(mode));
+}
+
 /** v1.4: the last Champions League setup; defensive parsing, `gk-animal` is the default fighter. */
 export function loadBrawlSetup(): BrawlSetupChoice {
   return parseBrawlSetup(readRaw(BRAWL_KEY), loadAnimal());
@@ -182,7 +209,7 @@ export const ONLINE_ANIMAL_KEY = 'gk-online-animal';
 /** Longest online display name (mirrors the room layer's limit, kept here so the main bundle stays free of room code). */
 export const ONLINE_NAME_MAX = 16;
 
-export type OnlineModeSetting = 'battleRoyale' | 'championsLeague';
+export type OnlineModeSetting = GameMode;
 export const DEFAULT_ONLINE_MODE: OnlineModeSetting = 'championsLeague';
 
 /** Clean a raw name: control characters dropped, whitespace collapsed and trimmed, at most {@link ONLINE_NAME_MAX} characters. */

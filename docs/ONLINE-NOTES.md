@@ -22,8 +22,14 @@ everybody goes back to the room; if the host closes the game the room ends ("The
 
 ## What everybody needs
 
-* **The same version** of the game (the lobby footer shows it, e.g. `v1.5.0`). A different version is refused with both versions
-  named. The web build and the Windows installer interoperate as long as the version number (and therefore the tuning data) matches.
+* **A compatible version** of the game (the lobby footer shows it, e.g. `v1.5.0`). Compatible means the same online protocol, the same
+  data fingerprint **and the same app major.minor**: `1.5.0` and `1.5.2` play together, `1.5.x` and `1.6.0` do not. An incompatible
+  version is refused with both full versions named. The web build and the Windows installer interoperate as long as they are compatible.
+  * **Rule for releases:** PATCH releases (`1.5.1`, `1.5.2`, ...) must not change simulation or netcode behaviour (anything the
+    rollback sim, the Battle Royale host/client code or the wire formats read or do). Menu / UI / visual-only changes are fine. Bump
+    **MINOR** whenever a release changes sim or netcode behaviour; bump `ONLINE_PROTOCOL_VERSION` when a wire format changes. The data
+    fingerprint (`src/online/room/fingerprint.ts`) catches changed tuning numbers but cannot catch changed sim/netcode *code*, so this
+    discipline is what keeps two patch versions in sync.
 * An internet connection that can reach the free matchmaking service `0.peerjs.com` (WebSocket over 443) and Google STUN (UDP 19302).
   Some school/work networks block it.
 * The host is the only one who must be reachable "enough": see strict-NAT notes below.
@@ -35,7 +41,7 @@ everybody goes back to the room; if the host closes the game the room ends ("The
 | Windows Firewall prompt on the first online game | Allow *Gladiator Kingdom* on **private** (and public if you play over the internet) networks. Without it other players often cannot connect to the host. |
 | "Cannot reach the matchmaking server" | Internet/proxy problem, or the free PeerJS cloud is down. Try again in a minute; or use the local signalling server below. |
 | "Could not connect to the host (firewall / NAT?)" | Strict / carrier-grade NAT or a corporate firewall: a TURN relay is needed. Put one in the browser storage of **every** player: `localStorage.setItem('gk-ice', JSON.stringify([{urls:'turn:turn.example.org:3478', username:'u', credential:'p'}]))` (web: browser console; desktop: start the game once with the `--devtools` argument, press F12 and run it in the console). Short form also works: `gk-ice` = `turn:turn.example.org:3478\|user\|pass`. `?ice=` on the URL does the same for one session. |
-| "Different game versions" | Everybody updates to the same release (reload the web page / reinstall). |
+| "Different game versions" | Everybody updates to the same x.y release (reload the web page / reinstall); a different patch number (1.5.0 vs 1.5.2) is fine. |
 | "The room is full" | 4 humans max. |
 | Room code not found | The host closed the room, or typo. Codes use `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no 0/O/1/I/L). Not-found takes ~5-10 s to be reported (the signalling server waits for the host). |
 | Choppy match | Add `?netsim=latency:80,jitter:30,loss:0.05` to *your own* URL to reproduce bad conditions (only outgoing packets of that tab are degraded). Battle Royale clients feel their round trip time (no prediction), Champions League hides it with rollback. |
