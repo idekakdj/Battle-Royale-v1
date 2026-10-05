@@ -36,6 +36,8 @@ import { mountFpsCounter } from './ui/FpsCounter';
 import type { BrawlSetupChoice } from './brawl/ui/setup';
 import type { BrawlResultsData } from './brawl/ui/BrawlResults';
 import { parseBrawlParams } from './brawl/ui/urlParams';
+// Tiny pure helper (no room/netcode code): the rest of the online UI is loaded lazily via `await import('./online/ui')`.
+import { joinCodeFromSearch } from './online/ui/helpers';
 
 /** Create (once) the canvas the renderer will draw into, behind the UI. */
 function ensureCanvas(): HTMLCanvasElement {
@@ -89,6 +91,7 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearch
       new Lobby({
         onPlay: () => showCharacterSelect(),
         onChampionsLeague: () => void showBrawlSetup(),
+        onOnline: () => void startOnline(),
         getSelectedAnimal: () => loadAnimal(),
         onSettingsChange: applySettings,
       }),
@@ -206,11 +209,38 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearch
     }
   };
 
+  // ── v1.5 Online multiplayer: Lobby → Online → Room → networked match → Room, lazily loaded ──────────────────────
+
+  /** Open the online screens (a `?join=CODE` deep link opens the Join tab prefilled). Falls back to the lobby if the module fails to load. */
+  const startOnline = async (joinCode: string | null = null): Promise<void> => {
+    try {
+      const online = await import('./online/ui');
+      online.startOnlineFlow({
+        screens,
+        canvas,
+        audio,
+        joinCode,
+        onExit: () => showLobby(),
+        onMenu: () => audio.playLobbyMusic(),
+      });
+    } catch (err) {
+      console.error('Online: failed to load', err);
+      showLobby();
+    }
+  };
+
   // QA / power-user shortcut: `?brawl=1&animal=lion&stage=skyAqueduct&bots=3&level=3&stocks=3[&time=5]` boots
   // straight into a Champions League match. (`&qa=1` also exposes `window.__gkBrawl` in production builds.)
   const shortcut = parseBrawlParams(params, loadBrawlSetup());
   if (shortcut !== null) {
     void startBrawl(shortcut);
+    return;
+  }
+
+  // Invite link `…/?join=K7P4Q`: straight to the Join tab (the lobby is one Back away).
+  const joinCode = joinCodeFromSearch(window.location.search);
+  if (joinCode !== null) {
+    void startOnline(joinCode);
     return;
   }
 

@@ -15,6 +15,20 @@ import { animalHeadSvg, laurelSvg } from './icons';
 import { ANIMALS } from '../config/animals';
 import { BOT_PROFILES } from '../config/botProfiles';
 
+/** v1.5 online: one line of the final standings table. */
+export interface ResultsStanding {
+  /** 1 = champion. */
+  placement: number;
+  animal: AnimalId;
+  /** The player's chosen name (or the animal's name for a bot). */
+  name: string;
+  kills: number;
+  /** This row is the local player. */
+  isYou: boolean;
+  /** A bot (never a human, even one who left and was replaced). */
+  isBot: boolean;
+}
+
 /** Everything the results screen shows; assembled by the match controller. */
 export interface MatchResults {
   victory: boolean;
@@ -29,10 +43,18 @@ export interface MatchResults {
   /** Match duration in seconds of sim time. */
   matchTimeS: number;
   difficulty: Difficulty;
+  /** v1.5 online: the whole room's final standings (shown as a table under the stats). */
+  standings?: ResultsStanding[];
 }
 
 export interface ResultsOptions {
   results: MatchResults;
+  /**
+   * v1.5 online: when set, Rematch / Change Gladiator / Lobby are replaced by a single "Back to room" button that calls this.
+   * `note` is shown under the buttons (e.g. "The host left the room.").
+   */
+  onBackToRoom?: () => void;
+  note?: string;
   /** Same animal + difficulty, straight into a new match. */
   onRematch: () => void;
   /** Back to character select. */
@@ -81,15 +103,26 @@ export class Results implements Screen {
       statRow('Difficulty', `${BOT_PROFILES[r.difficulty].label} (${r.difficulty})`),
     ]);
 
-    const buttons = el('div', { class: 'gk-results__buttons' }, [
-      button('Rematch', 'gk-results__btn gk-results__btn--primary gk-display', () => this.opts.onRematch()),
-      button('Change Gladiator', 'gk-results__btn gk-display', () => this.opts.onChangeGladiator()),
-      button('Lobby', 'gk-results__btn gk-display', () => this.opts.onLobby()),
-    ]);
+    const backToRoom = this.opts.onBackToRoom;
+    const buttons = el(
+      'div',
+      { class: 'gk-results__buttons' },
+      backToRoom !== undefined
+        ? [button('Back to room', 'gk-results__btn gk-results__btn--primary gk-display', () => backToRoom())]
+        : [
+            button('Rematch', 'gk-results__btn gk-results__btn--primary gk-display', () => this.opts.onRematch()),
+            button('Change Gladiator', 'gk-results__btn gk-display', () => this.opts.onChangeGladiator()),
+            button('Lobby', 'gk-results__btn gk-display', () => this.opts.onLobby()),
+          ],
+    );
 
-    const card = el('div', { class: 'gk-results__card' }, [crest, headline, stats, buttons]);
+    const card = el('div', { class: 'gk-results__card' }, [crest, headline, stats]);
+    if (r.standings !== undefined && r.standings.length > 0) card.appendChild(standingsTable(r.standings));
+    card.appendChild(buttons);
+    if (this.opts.note !== undefined) card.appendChild(el('p', { class: 'gk-results__note', text: this.opts.note }));
 
-    this.root = el('div', { class: `gk-screen gk-results ${r.victory ? 'is-victory' : 'is-defeat'}` }, [card]);
+    const online = r.standings !== undefined && r.standings.length > 0;
+    this.root = el('div', { class: `gk-screen gk-results ${r.victory ? 'is-victory' : 'is-defeat'}${online ? ' gk-results--online' : ''}` }, [card]);
     this.root.style.setProperty('--result-accent', accent);
     if (r.victory) this.root.appendChild(this.buildConfetti());
     root.appendChild(this.root);
@@ -116,6 +149,27 @@ export class Results implements Screen {
     }
     return host;
   }
+}
+
+/** v1.5 online: final standings, best first (names via textContent — they are other players' input). */
+function standingsTable(rows: readonly ResultsStanding[]): HTMLElement {
+  const sorted = [...rows].sort((a, b) => (a.placement || 99) - (b.placement || 99));
+  const list = el('div', { class: 'gk-results__standings', attrs: { role: 'table', 'aria-label': 'Final standings' } });
+  for (const r of sorted) {
+    list.appendChild(
+      el('div', { class: `gk-results__stand${r.isYou ? ' is-you' : ''}${r.isBot ? ' is-bot' : ''}`, attrs: { role: 'row' } }, [
+        el('span', { class: 'gk-results__stand-place gk-display', text: r.placement > 0 ? `#${r.placement}` : '–' }),
+        el('span', {
+          class: 'gk-results__stand-icon',
+          html: animalHeadSvg(r.animal, 'gk-hud__kf-head'),
+          attrs: { style: `color:${ANIMALS[r.animal].accent}` },
+        }),
+        el('span', { class: 'gk-results__stand-name', text: r.name }),
+        el('span', { class: 'gk-results__stand-kills', text: `${r.kills} ${r.kills === 1 ? 'kill' : 'kills'}` }),
+      ]),
+    );
+  }
+  return list;
 }
 
 function statRow(label: string, value: string): HTMLElement {

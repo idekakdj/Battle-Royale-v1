@@ -2,7 +2,7 @@
   "name": "gladiator-kingdom",
   "productName": "Gladiator Kingdom",
   "private": true,
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Gladiator Kingdom — an animal-gladiator battle royale in a Roman colosseum.",
   "author": "idekakdj",
   "homepage": "https://github.com/idekakdj/Battle-Royale-v1",
@@ -28,10 +28,14 @@
     "release:notes": "vite-node scripts/release-notes.ts",
     "icons": "node scripts/make-icons.mjs"
   },
+  "dependencies": {
+    "peerjs": "^1.5.5"
+  },
   "devDependencies": {
     "@types/three": "^0.169.0",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
+    "peer": "^1.0.2",
     "rcedit": "^5.0.2",
     "three": "^0.169.0",
     "typescript": "^5.6.3",

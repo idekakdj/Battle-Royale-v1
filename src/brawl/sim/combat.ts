@@ -6,6 +6,7 @@
 import type { Facing, HitboxDef, MoveId } from '../types';
 import { PHYS } from '../config';
 import { clampNum } from './geometry';
+import { dcos, dhypot, dsin } from './dmath';
 
 /** −3 % per use of `id` among the attacker's last 6 connected moves, max −15 %. Returns the multiplier (0.85..1). */
 export function staleMultiplier(queue: readonly MoveId[], id: MoveId): number {
@@ -67,8 +68,8 @@ export function computeHit(
     pctAfter,
     kb,
     angle: deg,
-    vx: Math.cos(rad) * kb,
-    vy: Math.sin(rad) * kb,
+    vx: dcos(rad) * kb,
+    vy: dsin(rad) * kb,
     hitlag,
     hitstun,
     tumble: kb > PHYS.tumbleKb,
@@ -82,8 +83,8 @@ export function computeHit(
  * and the rotated velocity). Holding along (or against) the launch rotates nothing.
  */
 export function applyDI(vx: number, vy: number, dx: number, dy: number, used: number): { vx: number; vy: number; used: number } {
-  const speed = Math.hypot(vx, vy);
-  const len = Math.hypot(dx, dy);
+  const speed = dhypot(vx, vy);
+  const len = dhypot(dx, dy);
   if (speed < 1e-6 || len < PHYS.diDeadzone) return { vx, vy, used };
   const ux = len > 1 ? dx / len : dx;
   const uy = len > 1 ? dy / len : dy;
@@ -93,7 +94,7 @@ export function applyDI(vx: number, vy: number, dx: number, dy: number, used: nu
   else if (next < -PHYS.diMaxDeg) next = -PHYS.diMaxDeg;
   const turn = ((next - used) * Math.PI) / 180;
   if (turn === 0) return { vx, vy, used: next };
-  const c = Math.cos(turn);
-  const s = Math.sin(turn);
+  const c = dcos(turn);
+  const s = dsin(turn);
   return { vx: vx * c - vy * s, vy: vx * s + vy * c, used: next };
 }

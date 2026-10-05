@@ -5,6 +5,7 @@
 
 import type { PlatformDef } from '../types';
 import { PHYS } from '../config';
+import { dsin } from './dmath';
 
 /** One platform's state at one frame (mutable scratch object; the world keeps two arrays of these). */
 export interface PlatRT {
@@ -42,7 +43,7 @@ export function movingOffsetAt(def: PlatformDef, frame: number): number {
   const m = def.moving;
   if (!m) return 0;
   const period = m.periodS > 0 ? m.periodS : 1;
-  return m.amplitude * Math.sin(2 * Math.PI * (frame / 60 / period + m.phase));
+  return m.amplitude * dsin(2 * Math.PI * (frame / 60 / period + m.phase));
 }
 
 /** Write the platform's geometry at `frame` into `out` (position only; `dx/dy` are filled by the caller). */

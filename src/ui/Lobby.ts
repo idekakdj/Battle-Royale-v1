@@ -39,6 +39,8 @@ export interface LobbyOptions {
   onPlay: () => void;
   /** v1.4: CHAMPIONS LEAGUE nav (platform-fighter mode → its setup screen). The entry is hidden when omitted. */
   onChampionsLeague?: () => void;
+  /** v1.5: ONLINE nav (play with friends -> the Online screen). The entry is hidden when omitted. */
+  onOnline?: () => void;
   /** GLADIATORS nav; defaults to {@link LobbyOptions.onPlay} if omitted. */
   onGladiators?: () => void;
   /** The lobby default gladiator to preview (from `gk-animal`). */
@@ -47,7 +49,7 @@ export interface LobbyOptions {
   onSettingsChange?: (settings: GkSettings) => void;
 }
 
-type NavId = 'play' | 'brawl' | 'gladiators' | 'settings';
+type NavId = 'play' | 'brawl' | 'online' | 'gladiators' | 'settings';
 
 export class Lobby implements Screen {
   private readonly opts: LobbyOptions;
@@ -81,6 +83,7 @@ export class Lobby implements Screen {
     const nav = el('nav', { class: 'gk-lobby__nav' }, [
       this.navButton('play', 'Play'),
       this.opts.onChampionsLeague !== undefined ? this.navButton('brawl', 'Champions League') : null,
+      this.opts.onOnline !== undefined ? this.navButton('online', 'Online') : null,
       this.navButton('gladiators', 'Gladiators'),
       this.navButton('settings', 'Settings'),
     ]);
@@ -136,6 +139,10 @@ export class Lobby implements Screen {
   private showNav(id: NavId): void {
     if (id === 'brawl') {
       this.opts.onChampionsLeague?.();
+      return;
+    }
+    if (id === 'online') {
+      this.opts.onOnline?.();
       return;
     }
     if (id === 'gladiators') {

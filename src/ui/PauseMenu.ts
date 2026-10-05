@@ -14,6 +14,10 @@ export interface PauseMenuOptions {
   onQuitToLobby: () => void;
   /** Forwarded to the embedded settings panel. */
   onSettingsChange?: (settings: GkSettings) => void;
+  /** v1.5 online (no pause): heading, the quit button's label and an explanatory line. Defaults = the offline menu. */
+  title?: string;
+  quitLabel?: string;
+  note?: string;
 }
 
 export class PauseMenu {
@@ -36,10 +40,11 @@ export class PauseMenu {
     if (this.root !== null) return;
 
     this.menuEl = el('div', { class: 'gk-pause__menu' }, [
-      el('h2', { class: 'gk-pause__title gk-display', text: 'Paused' }),
+      el('h2', { class: 'gk-pause__title gk-display', text: this.opts.title ?? 'Paused' }),
+      ...(this.opts.note !== undefined ? [el('p', { class: 'gk-pause__note', text: this.opts.note })] : []),
       button('Resume', 'gk-pause__btn gk-pause__btn--primary gk-display', () => this.opts.onResume()),
       button('Settings', 'gk-pause__btn gk-display', () => this.showSettings(true)),
-      button('Quit to Lobby', 'gk-pause__btn gk-display', () => this.opts.onQuitToLobby()),
+      button(this.opts.quitLabel ?? 'Quit to Lobby', 'gk-pause__btn gk-display', () => this.opts.onQuitToLobby()),
     ]);
 
     this.settingsEl = el('div', { class: 'gk-pause__settings' });

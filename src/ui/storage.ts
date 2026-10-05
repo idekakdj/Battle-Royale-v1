@@ -170,3 +170,58 @@ export function loadBrawlSetup(): BrawlSetupChoice {
 export function saveBrawlSetup(setup: BrawlSetupChoice): void {
   writeRaw(BRAWL_KEY, JSON.stringify(setup));
 }
+
+// ── v1.5 online multiplayer: player name, last mode, last online fighter ─────────────────────────────────────────
+
+/** v1.5 online: the display name shown to friends in a room. */
+export const ONLINE_NAME_KEY = 'gk-online-name';
+/** v1.5 online: the last room mode hosted (`battleRoyale` | `championsLeague`). */
+export const ONLINE_MODE_KEY = 'gk-online-mode';
+/** v1.5 online: the last fighter used in a room (defaults to the lobby fighter). */
+export const ONLINE_ANIMAL_KEY = 'gk-online-animal';
+/** Longest online display name (mirrors the room layer's limit, kept here so the main bundle stays free of room code). */
+export const ONLINE_NAME_MAX = 16;
+
+export type OnlineModeSetting = 'battleRoyale' | 'championsLeague';
+export const DEFAULT_ONLINE_MODE: OnlineModeSetting = 'championsLeague';
+
+/** Clean a raw name: control characters dropped, whitespace collapsed and trimmed, at most {@link ONLINE_NAME_MAX} characters. */
+export function parseOnlineName(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  // eslint-disable-next-line no-control-regex
+  const clean = raw.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  return Array.from(clean).slice(0, ONLINE_NAME_MAX).join('').trim();
+}
+
+/** Validate a stored online mode; anything unknown falls back to {@link DEFAULT_ONLINE_MODE}. */
+export function parseOnlineMode(raw: unknown): OnlineModeSetting {
+  return raw === 'battleRoyale' || raw === 'championsLeague' ? raw : DEFAULT_ONLINE_MODE;
+}
+
+/** The saved online name ('' when none). Never throws. */
+export function loadOnlineName(): string {
+  return parseOnlineName(readRaw(ONLINE_NAME_KEY));
+}
+
+export function saveOnlineName(name: string): void {
+  writeRaw(ONLINE_NAME_KEY, parseOnlineName(name));
+}
+
+export function loadOnlineMode(): OnlineModeSetting {
+  return parseOnlineMode(readRaw(ONLINE_MODE_KEY));
+}
+
+export function saveOnlineMode(mode: OnlineModeSetting): void {
+  writeRaw(ONLINE_MODE_KEY, parseOnlineMode(mode));
+}
+
+/** The last online fighter, validated; falls back to the lobby fighter (`gk-animal`). */
+export function loadOnlineAnimal(): AnimalId {
+  const raw = readRaw(ONLINE_ANIMAL_KEY);
+  if (raw !== null && (ANIMAL_IDS as readonly string[]).includes(raw)) return raw as AnimalId;
+  return loadAnimal();
+}
+
+export function saveOnlineAnimal(animal: AnimalId): void {
+  writeRaw(ONLINE_ANIMAL_KEY, animal);
+}

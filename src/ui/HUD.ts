@@ -37,6 +37,9 @@ export interface KillFeedEntry {
   cause?: 'trap';
   /** Optional trap flavour for the glyph (flame / spikes); omitted → combined glyph. */
   trapKind?: TrapKind;
+  /** v1.5 online: the human killer's / victim's chosen name, shown next to the head icon (omitted for bots and offline). */
+  killerName?: string;
+  victimName?: string;
 }
 
 /** Countdown steps for the pre-match 3-2-1-FIGHT display. */
@@ -105,6 +108,8 @@ export class HUD {
   private controlsHint!: HTMLElement;
   private spectateEl!: HTMLElement;
   private nameplate!: HTMLElement;
+  /** v1.5 online: own chosen name for the vitals plate (null = the animal's display name). */
+  private playerName: string | null = null;
   private toastEl!: HTMLElement;
   private buffTimeEls: HTMLElement[] = [];
   private buffSecs: number[] = [];
@@ -273,7 +278,7 @@ export class HUD {
       this.lastAnimal = player.animal;
       const def = ANIMALS[player.animal];
       this.root.style.setProperty('--hud-accent', def.accent);
-      this.nameplate.textContent = def.displayName;
+      this.nameplate.textContent = this.playerName ?? def.displayName;
       this.specialGlyph.innerHTML = abilityGlyphSvg(player.animal, 'special');
       this.ultGlyph.innerHTML = abilityGlyphSvg(player.animal, 'ultimate');
       this.specialName.textContent = def.special.name;
@@ -335,6 +340,12 @@ export class HUD {
     if (low) this.vignetteEl.style.setProperty('--low', String(1 - hpFrac / LOW_HP_FRAC));
   }
 
+  /** v1.5 online: show the player's chosen name on the vitals plate instead of the animal name (`null` restores it). */
+  setPlayerName(name: string | null): void {
+    this.playerName = name;
+    if (this.root !== null && this.lastAnimal !== null) this.nameplate.textContent = name ?? ANIMALS[this.lastAnimal].displayName;
+  }
+
   /** Push a kill-feed line (top-left, fades after 4 s). */
   killFeed(entry: KillFeedEntry): void {
     if (this.root === null) return;
@@ -346,10 +357,12 @@ export class HUD {
     const killer = trap
       ? `<span class="gk-hud__kf-icon is-trap is-trap--${entry.trapKind ?? 'any'}" title="Arena trap">${trapGlyphSvg(entry.trapKind)}</span>`
       : `<span class="gk-hud__kf-icon" style="color:${ANIMALS[entry.killerAnimal].accent}">${animalHeadSvg(entry.killerAnimal, 'gk-hud__kf-head')}</span>`;
+    const kName = !trap && entry.killerName !== undefined ? `<span class="gk-hud__kf-name">${escapeHtml(entry.killerName)}</span>` : '';
+    const vName = entry.victimName !== undefined ? `<span class="gk-hud__kf-name is-victim">${escapeHtml(entry.victimName)}</span>` : '';
     row.innerHTML = `
-      ${killer}
+      ${killer}${kName}
       <span class="gk-hud__kf-sep">▸</span>
-      <span class="gk-hud__kf-icon is-victim" style="color:${ANIMALS[entry.victimAnimal].accent}">${animalHeadSvg(entry.victimAnimal, 'gk-hud__kf-head')}</span>`;
+      <span class="gk-hud__kf-icon is-victim" style="color:${ANIMALS[entry.victimAnimal].accent}">${animalHeadSvg(entry.victimAnimal, 'gk-hud__kf-head')}</span>${vName}`;
     this.killFeedEl.appendChild(row);
     window.setTimeout(() => {
       row.classList.add('is-fading');

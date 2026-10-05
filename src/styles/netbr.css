@@ -1,0 +1,183 @@
+/* ── v1.5 online Battle Royale (src/online/br/netHud.ts, kill-feed names, results standings) ───────────── */
+
+.gk-nethud {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+}
+
+#app > .gk-nethud {
+  pointer-events: none;
+}
+
+.gk-nethud__chip {
+  position: absolute;
+  top: 1.2rem;
+  right: 11.5rem;
+  padding: 4px 10px;
+  border-radius: 3px;
+  border: 1px solid var(--gk-panel-border, rgba(217, 164, 65, 0.35));
+  background: rgba(20, 17, 13, 0.62);
+  font: 600 12px/1.2 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  letter-spacing: 0.04em;
+  color: #9be37a;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  font-variant-numeric: tabular-nums;
+}
+.gk-nethud__chip:empty {
+  display: none;
+}
+.gk-nethud__chip[data-quality='ok'] {
+  color: #f0c24a;
+}
+.gk-nethud__chip[data-quality='poor'] {
+  color: #ff9a3c;
+}
+.gk-nethud__chip[data-quality='bad'] {
+  color: #ff6a55;
+}
+
+.gk-nethud__banner {
+  position: absolute;
+  top: 22%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.6rem 1.6rem;
+  font-size: 1.15rem;
+  letter-spacing: 0.22em;
+  color: var(--gk-sand, #e8d8b0);
+  background: rgba(20, 17, 13, 0.78);
+  border: 1px solid var(--gk-panel-border, rgba(217, 164, 65, 0.35));
+  border-radius: 6px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+}
+.gk-nethud__banner[hidden] {
+  display: none;
+}
+
+.gk-nethud__toasts {
+  position: absolute;
+  top: 4.2rem;
+  right: 1.6rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+}
+.gk-nethud__toast {
+  padding: 0.3rem 0.8rem;
+  font-size: 0.85rem;
+  color: var(--gk-sand, #e8d8b0);
+  background: rgba(20, 17, 13, 0.7);
+  border: 1px solid rgba(217, 164, 65, 0.3);
+  border-radius: 4px;
+  opacity: 1;
+  transition: opacity 0.45s ease;
+}
+.gk-nethud__toast.is-fading {
+  opacity: 0;
+}
+
+/* Kill feed: the human players' chosen names next to their head icons. */
+.gk-hud__kf-name {
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--gk-sand, #e8d8b0);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+.gk-hud__kf-name.is-victim {
+  color: #d9c9a4;
+}
+
+/* Online pause menu note. */
+.gk-pause__note {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--gk-text-dim, #a99e85);
+  margin: -0.2rem 0 0.4rem;
+}
+
+/* Results: final standings table + note (compact so the taller online card still fits 1280x720). */
+.gk-results--online .gk-results__card {
+  gap: 0.6rem;
+  padding: 1.1rem 2.4rem 1.3rem;
+  min-width: min(700px, 90vw);
+}
+.gk-results--online .gk-laurel {
+  width: 40px;
+  height: 60px;
+}
+.gk-results--online .gk-results__head-svg {
+  width: 52px;
+  height: 52px;
+}
+.gk-results--online .gk-results__row {
+  padding: 0.22rem 0.2rem;
+}
+.gk-results--online .gk-results__stats {
+  padding-top: 0.5rem;
+}
+.gk-results__standings {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: repeat(5, auto);
+  grid-auto-flow: column;
+  gap: 0.25rem 0.6rem;
+  margin: 0.3rem 0 0.2rem;
+}
+.gk-results__stand {
+  display: grid;
+  grid-template-columns: 2.2rem 24px 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.18rem 0.6rem;
+  border-radius: 4px;
+  background: rgba(20, 17, 13, 0.5);
+  border: 1px solid rgba(217, 164, 65, 0.14);
+  font-size: 0.9rem;
+  color: var(--gk-text, #ece3d0);
+  min-width: 0;
+}
+.gk-results__stand.is-you {
+  border-color: var(--gk-gold, #d9a441);
+  background: rgba(217, 164, 65, 0.12);
+}
+.gk-results__stand.is-bot .gk-results__stand-name {
+  color: var(--gk-text-dim, #a99e85);
+}
+.gk-results__stand-place {
+  font-size: 0.9rem;
+}
+.gk-results__stand-icon {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+.gk-results__stand-icon svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+.gk-results__stand-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gk-results__stand-kills {
+  font-size: 0.75rem;
+  color: var(--gk-text-dim, #a99e85);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gk-results__note {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--gk-text-dim, #a99e85);
+}

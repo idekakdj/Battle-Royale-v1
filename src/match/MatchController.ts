@@ -45,7 +45,7 @@
 import * as THREE from 'three';
 import type { Screen } from '../core/ScreenManager';
 import { GameLoop, FIXED_DT } from '../core/GameLoop';
-import { EventBus } from '../core/EventBus';
+import type { EventBus } from '../core/EventBus';
 import { wrapAngle, clamp } from '../core/math';
 import type {
   AnimalId,
@@ -60,8 +60,6 @@ import type {
   WorldSnapshot,
 } from '../core/types';
 import { ANIMALS } from '../config/animals';
-import { World } from '../sim/World';
-import { BotManager } from '../ai/BotManager';
 import { SceneManager } from '../render/SceneManager';
 import { Stadium } from '../render/Stadium';
 import { CameraRig } from '../render/CameraRig';
@@ -86,7 +84,7 @@ import { NearCameraFade } from '../render/fpFade';
 import { UltCamera, type UltEnv } from '../render/animals/fp/ultCam';
 import { getUltDirector } from '../render/animals/fp/ult';
 import { UltOverlay } from '../render/animals/fp/ultOverlay';
-import { seatRoster } from './seating';
+import { LocalSimDriver, type SimDriver } from './SimDriver';
 import {
   LOCK_ON,
   assistAimYaw,
@@ -156,6 +154,11 @@ export interface MatchControllerOptions {
   onMatchEnd: (results: MatchResults) => void;
   /** Pause menu → QUIT TO LOBBY. */
   onQuitToLobby: () => void;
+  /**
+   * v1.5 online: where the simulation lives (see `SimDriver.ts`). Omitted = the offline World + BotManager path, which
+   * behaves exactly as before. An online driver also decides names, pausability and (for clients) pulls snapshots.
+   */
+  sim?: SimDriver;
 }
 
 export class MatchController implements Screen {
@@ -163,8 +166,9 @@ export class MatchController implements Screen {
 
   // Per-match object graph (created in mount, destroyed in unmount).
   private bus!: EventBus;
-  private world!: World;
-  private bots!: BotManager;
+  private sim!: SimDriver; // v1.5: World+BotManager (offline), + network host, or a snapshot-pulling client
+  /** Display name per fighter id (`null` = animal name). All null offline. */
+  private names: readonly (string | null)[] = [];
   private sceneManager!: SceneManager;
   private stadium!: Stadium;
   private cameraRig!: CameraRig;
@@ -270,15 +274,14 @@ export class MatchController implements Screen {
     const { canvas, audio, animal, difficulty, seed } = this.opts;
 
     // Roster: player's pick at index 0, the other nine seated by a seeded
-    // shuffle (fresh neighbours every match / REMATCH).
-    const roster = seatRoster(animal, seed);
-    this.rosterAnimals = roster.map((r) => r.animal);
-
+    // shuffle (fresh neighbours every match / REMATCH). Online, the driver
+    // supplies the fixed room roster with the local player remapped to id 0.
     // One shared bus: sim emits; AI, audio, and the pipes below subscribe.
-    this.bus = new EventBus();
-    this.world = new World({ roster, difficulty }, seed, this.bus);
-    // BotManager MUST share the bus and exist before the first step.
-    this.bots = new BotManager(this.bus, difficulty, seed);
+    this.sim = this.opts.sim ?? new LocalSimDriver({ animal, difficulty, seed });
+    const roster = this.sim.roster;
+    this.rosterAnimals = roster.map((r) => r.animal);
+    this.names = this.sim.names;
+    this.bus = this.sim.bus;
     audio.attachBus(this.bus);
 
     // Render stack.
@@ -314,7 +317,7 @@ export class MatchController implements Screen {
     this.posCurr = new Float32Array(n * 3);
     this.yawPrev = new Float32Array(n);
     this.yawCurr = new Float32Array(n);
-    this.snap = this.world.snapshot();
+    this.snap = this.sim.snapshot();
     this.captureTransforms();
     this.posPrev.set(this.posCurr);
     this.yawPrev.set(this.yawCurr);
@@ -352,6 +355,7 @@ export class MatchController implements Screen {
     this.input.enable();
     this.hud = new HUD();
     this.hud.mount(root);
+    if (this.names[0] != null) this.hud.setPlayerName(this.names[0]); // v1.5 online: own chosen name on the vitals plate
     this.overlay = new CombatOverlay();
     const layer = this.hud.layer;
     if (layer !== null) {
@@ -361,11 +365,16 @@ export class MatchController implements Screen {
         this.rigs.map((r) => r.root.position),
         this.measurePlateHeights(),
         0,
+        this.names,
       );
     }
     this.pauseMenu = new PauseMenu({
       onResume: () => this.resume(),
       onQuitToLobby: () => this.opts.onQuitToLobby(),
+      // v1.5 online: no pause — the menu says so and quitting is "leave match".
+      ...(this.sim.pausable
+        ? {}
+        : { title: 'Menu', quitLabel: 'Leave Match', note: 'The match keeps running while this menu is open.' }),
       onSettingsChange: (s) => {
         audio.setVolumes({ master: s.master, music: s.music, sfx: s.sfx });
         audio.setMuted(s.muted);
@@ -411,6 +420,7 @@ export class MatchController implements Screen {
     this.hud.unmount();
     this.pauseMenu.unmount();
     this.bus.clear();
+    this.sim.dispose(); // v1.5: online drivers drop their network listeners
     for (const rig of this.rigs) {
       this.sceneManager.scene.remove(rig.root);
       rig.dispose();
@@ -438,29 +448,45 @@ export class MatchController implements Screen {
     const lockCycle = this.input.consumeLockCycle();
     // v1.3 WP-Q: V toggles first/third person (ignored while dead / spectating).
     if (this.input.consumeViewToggle() && !this.playerDead) this.toggleView();
+    let playerIntent: FighterIntent | null = null;
     if (!this.playerDead) {
       this.refreshAimTargets();
       this.updateLock(lockToggle, lockCycle);
       this.applyAim(intent);
-      this.world.setIntent(0, intent);
+      playerIntent = intent;
     } else if (intent.attack || lockCycle) {
       this.cycleSpectate();
     }
 
-    // Bots read the last completed snapshot, then hand intents to the sim.
-    this.bots.update(this.snap, dt);
-    for (let id = 1; id < this.rosterAnimals.length; id++) {
-      this.world.setIntent(id, this.bots.getIntent(id));
-    }
-
-    // Advance, roll interpolation buffers.
+    // Advance (player intent → bots read the last completed snapshot → sim step), rolling the interpolation buffers.
+    // v1.5: the SimDriver does this (World+BotManager offline; + network host; or just "send the intent" for a client).
     this.posPrev.set(this.posCurr);
     this.yawPrev.set(this.yawCurr);
-    this.world.step(dt);
-    this.snap = this.world.snapshot();
+    this.sim.tick(dt, playerIntent);
+    if (!this.sim.stepsSim) return; // online client: snapshots arrive via pullSim() once per render frame
+    this.snap = this.sim.snapshot();
     this.captureTransforms();
     this.applyBlinkSnaps();
 
+    this.checkCountdown();
+    this.checkBloodlust();
+    this.checkSwings();
+  }
+
+  /**
+   * v1.5 online client: install the freshest host state. The driver's view is already interpolated (and blink-safe), so both
+   * interpolation buffers get it and the render `alpha` is moot; the events that are now due go out on the same bus the
+   * local World would have used, so audio / hit VFX / kill feed / ultimate FX work unchanged.
+   */
+  private pullSim(): void {
+    const pulled = this.sim.pull?.() ?? null;
+    if (pulled === null) return;
+    this.snap = pulled.snapshot;
+    this.captureTransforms();
+    this.posPrev.set(this.posCurr);
+    this.yawPrev.set(this.yawCurr);
+    for (let i = 0; i < pulled.events.length; i++) this.bus.emit(pulled.events[i]);
+    this.applyBlinkSnaps();
     this.checkCountdown();
     this.checkBloodlust();
     this.checkSwings();
@@ -645,7 +671,13 @@ export class MatchController implements Screen {
 
   // ── Render frame ────────────────────────────────────────────────────────────
 
-  private render(alpha: number, dtRender: number): void {
+  private render(loopAlpha: number, dtRender: number): void {
+    // v1.5 online client: the view is already interpolated, so render at alpha = 1 after pulling the freshest state.
+    let alpha = loopAlpha;
+    if (!this.sim.stepsSim) {
+      this.pullSim();
+      alpha = 1;
+    }
     const md = this.input.consumeMouseDelta();
     const mdx = md.dx * this.cameraRig.ult.mouseYaw; // v1.3 FP ult: a directive may briefly lock the yaw look
     if (md.dx !== 0 || md.dy !== 0) {
@@ -894,11 +926,15 @@ export class MatchController implements Screen {
       const killerAnimal =
         e.killerId >= 0 ? this.rosterAnimals[e.killerId] : this.rosterAnimals[e.targetId];
       // killerId −1 = the arena (trap): no credit, trap glyph in the feed.
+      const killerName = e.killerId >= 0 ? (this.names[e.killerId] ?? null) : null; // v1.5 online names
+      const victimName = this.names[e.targetId] ?? null;
       this.hud.killFeed({
         killerAnimal,
         victimAnimal: this.rosterAnimals[e.targetId],
         killerIsPlayer: e.killerId === 0,
         victimIsPlayer: e.targetId === 0,
+        ...(killerName !== null ? { killerName } : {}),
+        ...(victimName !== null ? { victimName } : {}),
         ...(e.killerId === -1 ? { cause: 'trap' as const } : {}),
         ...(e.killerId === -1 && this.lastTrapKind[e.targetId] !== undefined
           ? { trapKind: this.lastTrapKind[e.targetId] }
@@ -1048,7 +1084,7 @@ export class MatchController implements Screen {
     this.spectateId = next;
     const animal = this.rosterAnimals[next];
     this.cameraRig.follow(this.makeFollow(next), HEAD_HEIGHT[animal]);
-    this.hud.setSpectate({ name: `${animal.toUpperCase()} (BOT)`, animal });
+    this.hud.setSpectate({ name: this.names[next] ?? `${animal.toUpperCase()} (BOT)`, animal });
   }
 
   // ── v1.3 WP-Q: first-person mode ────────────────────────────────────────────
@@ -1227,8 +1263,10 @@ export class MatchController implements Screen {
     this.ultPreview.hide(true);
     this.hud.setUltPreview('off');
     this.hud.setLockTag(false);
-    this.sceneManager.render(); // refresh the frozen frame without the preview markers
-    this.loop.pause();
+    if (this.sim.pausable) {
+      this.sceneManager.render(); // refresh the frozen frame without the preview markers
+      this.loop.pause();
+    } // v1.5 online: the menu opens but the match keeps running (no pause)
     this.input.disable(); // also exits pointer lock
     this.pauseMenu.mount(this.root);
   }
@@ -1239,7 +1277,7 @@ export class MatchController implements Screen {
     this.pauseMenu.unmount();
     this.input.enable();
     this.input.requestPointerLock();
-    this.loop.resume();
+    if (this.sim.pausable) this.loop.resume();
   }
 
   // ── Results ─────────────────────────────────────────────────────────────────

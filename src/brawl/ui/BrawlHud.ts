@@ -27,6 +27,13 @@ export interface BrawlHudOptions {
   project: (x: number, y: number) => { x: number; y: number; onScreen: boolean };
   /** Viewport size in CSS pixels (default: the window). */
   viewport?: () => { w: number; h: number };
+  /**
+   * Online (v1.5): the human name of each fighter (index = fighter id). Cards, world tags and KO banners show it instead of
+   * the animal's name, and the small card tag of the other humans shows their animal instead of a bot level.
+   */
+  names?: readonly string[];
+  /** Replace the controls hint (online: "Esc menu" instead of "Esc pause"). */
+  hint?: string;
 }
 
 interface CardRefs {
@@ -98,7 +105,7 @@ export class BrawlHud {
     this.bannerEl = el('div', { class: 'gk-brawl-banner gk-display' });
     this.hintEl = el('div', {
       class: 'gk-brawl-hint',
-      text: 'A / D move  ·  W / Space jump  ·  J light  ·  K heavy  ·  L dodge  ·  Esc pause',
+      text: this.opts.hint ?? 'A / D move  ·  W / Space jump  ·  J light  ·  K heavy  ·  L dodge  ·  Esc pause',
     });
 
     const cardsEl = el('div', { class: 'gk-brawl-cards' });
@@ -113,8 +120,8 @@ export class BrawlHud {
         el('div', { class: 'gk-brawl-card__badge', html: animalHeadSvg(r.animal, 'gk-brawl-card__head') }),
         el('div', { class: 'gk-brawl-card__body' }, [
           el('div', { class: 'gk-brawl-card__top' }, [
-            el('span', { class: 'gk-brawl-card__name gk-display', text: def.displayName }),
-            el('span', { class: 'gk-brawl-card__tag', text: r.isPlayer ? 'YOU' : `LV ${cfg.difficulty}` }),
+            el('span', { class: 'gk-brawl-card__name gk-display', text: this.labelOf(id) }),
+            el('span', { class: 'gk-brawl-card__tag', text: r.isPlayer ? 'YOU' : this.opts.names !== undefined ? def.displayName : `LV ${cfg.difficulty}` }),
           ]),
           el('div', { class: 'gk-brawl-card__pct' }, [pct, el('span', { class: 'gk-brawl-card__sign', text: '%' })]),
           el('div', { class: 'gk-brawl-card__stocks' }, pips),
@@ -126,7 +133,7 @@ export class BrawlHud {
 
       // world markers
       const tag = el('div', { class: `gk-brawl-tag${r.isPlayer ? ' is-player' : ''}`, html: '' }, [
-        el('span', { class: 'gk-brawl-tag__label', text: r.isPlayer ? 'YOU' : def.displayName }),
+        el('span', { class: 'gk-brawl-tag__label', text: r.isPlayer ? 'YOU' : this.labelOf(id) }),
         el('span', { class: 'gk-brawl-tag__chev' }),
       ]);
       tag.style.setProperty('--accent', def.accent);
@@ -235,7 +242,7 @@ export class BrawlHud {
         if (victim === undefined) continue;
         const killer = e.killerId >= 0 && e.killerId !== e.fighterId ? roster[e.killerId] : undefined;
         this.showBanner(
-          koBannerText(nameOf(victim.animal), killer !== undefined ? nameOf(killer.animal) : null),
+          koBannerText(this.labelOf(e.fighterId), killer !== undefined ? this.labelOf(e.killerId) : null),
           ANIMALS[victim.animal].accent,
           e.stocksLeft <= 0,
         );
@@ -268,6 +275,14 @@ export class BrawlHud {
     this.bannerFlip = this.bannerFlip === 0 ? 1 : 0;
     b.classList.remove('is-a', 'is-b');
     b.classList.add(this.bannerFlip === 0 ? 'is-a' : 'is-b');
+  }
+
+  /** What a fighter is called on the HUD: the human's name online, the animal's name otherwise. */
+  private labelOf(id: number): string {
+    const n = this.opts.names?.[id];
+    if (n !== undefined && n.length > 0) return n;
+    const r = this.opts.config.roster[id];
+    return r === undefined ? '' : nameOf(r.animal);
   }
 
   private viewport(): { w: number; h: number } {

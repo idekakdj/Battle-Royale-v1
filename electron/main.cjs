@@ -62,7 +62,9 @@ const CSP = [
   "img-src 'self' data: blob:",
   "media-src 'self' data: blob:",
   "font-src 'self' data:",
-  "connect-src 'self' data: blob:",
+  // Online play (v1.5): PeerJS cloud signalling + a local dev signalling server (scripts/dev-signal.mjs). WebRTC data
+  // channels themselves are not CSP-gated.
+  "connect-src 'self' data: blob: wss://0.peerjs.com https://0.peerjs.com ws://localhost:* http://localhost:* ws://127.0.0.1:* http://127.0.0.1:*",
   "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'none'",
@@ -551,10 +553,46 @@ function runSmokeTest(win) {
       const clErrors = consoleErrors.filter((m) => /Uncaught|Failed to fetch dynamically|TypeError/i.test(m) && !/pointer ?lock/i.test(m));
       if (clErrors.length > 0) return finish(false, `Champions League renderer errors: ${clErrors.join(' | ')}`);
 
+      // Online play (v1.5): fresh lobby -> ONLINE nav entry -> the Online screen must mount under app:// (its code is lazily loaded chunks:
+      // ui, room layer). Then (1) "Create room" against a closed local signalling port makes the PeerJS chunk load, evaluate and reach for a
+      // WebSocket (allowed by the CSP: ws://127.0.0.1:*) -> the friendly "cannot reach the matchmaking server" panel, no network needed;
+      // (2) a raw WebSocket to the PeerJS cloud host proves the CSP lets it through (offline it just errors; a CSP block is a console error).
+      await win.loadURL(base);
+      const onlineNav = await waitFor(
+        js,
+        `(() => { const b = document.querySelector('.gk-lobby__navbtn[data-nav="online"]'); if (!b) return false; b.click(); return true; })()`,
+        15000,
+      );
+      if (!onlineNav) return finish(false, 'lobby ONLINE nav entry (.gk-lobby__navbtn[data-nav="online"]) missing');
+      const onlineUi = await waitFor(js, `!!document.querySelector('.gk-on-online') && !!document.querySelector('#gk-on-name')`, 15000);
+      if (!onlineUi) return finish(false, 'Online screen (.gk-on-online) never mounted (the lazy online chunks failed to load under app://)');
+      await js(`(() => { localStorage.setItem('gk-signal', '127.0.0.1:9'); const n = document.querySelector('#gk-on-name'); n.value = 'smoke'; n.dispatchEvent(new Event('input', { bubbles: true })); n.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+      await js(`(() => { const b = [...document.querySelectorAll('button')].find((x) => /create room/i.test(x.textContent || '')); if (b) b.click(); return !!b; })()`);
+      const onlineAlert = await waitFor(
+        js,
+        `(() => { const a = document.querySelector('.gk-on-alert:not(.is-hidden)'); return a && a.textContent ? a.textContent.trim().slice(0, 80) : false; })()`,
+        15000,
+      );
+      await js(`localStorage.removeItem('gk-signal')`);
+      if (!onlineAlert) return finish(false, 'Online "Create room" gave neither a room nor an error panel within 15 s (the PeerJS chunk did not load or hung)');
+      if (!/matchmaking|reach|signal|connect/i.test(onlineAlert)) return finish(false, `Online "Create room" produced an unexpected panel: ${onlineAlert}`);
+      const cloud = await js(
+        `new Promise((resolve) => { let ws = null; const done = (v) => { try { if (ws) ws.close(); } catch (e) {} resolve(v); };
+           try { ws = new WebSocket('wss://0.peerjs.com/peerjs?key=peerjs&id=gk-smoke-' + Math.random().toString(36).slice(2, 8) + '&token=smoke'); ws.onopen = () => done('reachable'); ws.onerror = () => done('offline'); setTimeout(() => done('timeout'), 6000); }
+           catch (e) { resolve('exception: ' + (e && e.message)); } })`,
+      );
+      await sleep(300);
+      const onlineCsp = consoleErrors.filter((m) => /Content Security Policy|violates|Refused to/i.test(m));
+      if (onlineCsp.length > 0) return finish(false, `Online CSP violations: ${onlineCsp.join(' | ')}`);
+      const onlineErrors = consoleErrors.filter((m) => /Failed to fetch dynamically|Failed to load module|Uncaught|TypeError/i.test(m) && !/pointer ?lock/i.test(m));
+      if (onlineErrors.length > 0) return finish(false, `Online renderer errors: ${onlineErrors.join(' | ')}`);
+      // The closed-port probe makes PeerJS log "ERROR PeerJS: … Lost connection to server" — expected here, so keep the report clean.
+      for (let i = consoleErrors.length - 1; i >= 0; i--) if (/ERROR PeerJS/.test(consoleErrors[i])) consoleErrors.splice(i, 1);
+
       clearTimeout(hardTimeout);
       finish(
         true,
-        `version=${version} origin=${probe.origin} desktopBridge=true changelogEntries=${entries} escReachesPage=true matchStarted=true championsLeague=${cl} canvas=${canvas} loadMs=${Date.now() - started}`,
+        `version=${version} origin=${probe.origin} desktopBridge=true changelogEntries=${entries} escReachesPage=true matchStarted=true championsLeague=${cl} online=mounted onlineChunks=ok peerCloud=${cloud} canvas=${canvas} loadMs=${Date.now() - started}`,
       );
     } catch (err) {
       finish(false, `probe error: ${err && err.message ? err.message : String(err)}`);

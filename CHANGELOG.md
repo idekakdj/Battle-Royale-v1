@@ -17,6 +17,18 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.5.0] - 2026-10-04
+
+### Added
+- **Online multiplayer with friends, for both Battle Royale and Champions League.** From the lobby open **Online**, then **Host a room** or **Join a room**. The host gets a short room code (and a link) to send to friends, everyone picks a name and a fighter and presses Ready, and the host starts the match. No account and nothing to set up; it works between the desktop app and the web version, and everyone needs to be on the same version of the game.
+- **Champions League online (2–4 players):** every player's game runs the same match and only button presses are exchanged, with rollback so it stays responsive when the connection has some lag. If a player leaves, they forfeit and the others carry on.
+- **Battle Royale online (2–4 players plus bots):** one player's computer hosts the arena and the bots, and the others see it live. Names show on the nameplates, kill feed and results. If a player leaves, a bot takes over their fighter.
+- A room screen with player cards (name, fighter, ready, ping), host controls for the mode and rules, kick, a list of what the host is waiting for before it can start, and clear messages when the host leaves, a room can't be found or the versions don't match. Online matches have no pause (Esc opens a menu while the match keeps running), and afterwards everyone returns to the room.
+- Network help tools: `?netsim=latency:80,jitter:20,loss:0.05` simulates a poor connection for testing, `gk-ice` lets you add a relay (TURN) server for strict networks, and `scripts/dev-signal.mjs` runs a local connection server for LAN or offline play. See `docs/ONLINE-NOTES.md`.
+
+### Changed
+- Internal: the Champions League simulation now uses exact, machine-independent math and can save and restore its state (needed for rollback). Gameplay and balance are unchanged.
+
 ## [1.4.1] - 2026-10-03
 
 ### Added
@@ -149,7 +161,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.3.1...v1.3.2

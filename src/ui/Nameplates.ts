@@ -91,6 +91,12 @@ export class Nameplates {
     p.root.style.setProperty('--np-accent', def.accent);
   }
 
+  /** v1.5 online: label a slot with a human player's chosen name instead of the animal's (call after {@link setAnimal}). */
+  setName(slot: number, name: string): void {
+    const p = this.plates[slot];
+    if (p !== undefined) p.name.textContent = name;
+  }
+
   /** Brief guard-break flash on a slot's plate. */
   flashGuardBreak(slot: number, nowMs: number): void {
     const p = this.plates[slot];

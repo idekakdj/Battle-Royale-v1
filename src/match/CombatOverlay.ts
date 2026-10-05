@@ -59,6 +59,7 @@ export class CombatOverlay {
    * @param positions live (interpolated) root position per fighter id
    *                  (the rigs' `root.position` vectors; read, never written)
    * @param heights   head-anchor height per fighter id (m above the feet)
+   * @param names     v1.5 online: chosen player names per fighter id (`null` = show the animal name)
    */
   mount(
     layer: HTMLElement,
@@ -66,6 +67,7 @@ export class CombatOverlay {
     positions: readonly THREE.Vector3[],
     heights: readonly number[],
     playerId: number,
+    names?: readonly (string | null)[],
   ): void {
     this.plates.mount(layer);
     this.threats.mount(layer);
@@ -80,6 +82,8 @@ export class CombatOverlay {
         continue;
       }
       this.plates.setAnimal(slot, animals[id]);
+      const name = names?.[id];
+      if (name !== undefined && name !== null) this.plates.setName(slot, name);
       this.slotOf.push(slot++);
     }
     this.mounted = true;

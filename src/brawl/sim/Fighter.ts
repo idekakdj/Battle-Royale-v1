@@ -6,6 +6,7 @@
 
 import type { AnimalId } from '../../core/types';
 import type { BrawlAction, BrawlFighterState, CharacterStats, Facing, MoveBody, MoveId, MovePhase, MovesetDef, V2 } from '../types';
+import type { StateIO } from './stateIO';
 
 /** "No buffered press". */
 export const NO_BUF = -1;
@@ -119,6 +120,88 @@ export class Fighter {
     this.stats = moveset.stats;
     this.stocks = stocks;
     this.jumpsLeft = moveset.stats.maxJumps;
+  }
+
+  /**
+   * Save / load / checksum of every MUTABLE field except `body` (a shared registry object, saved by reference by the
+   * world). The order below is the canonical checksum order — appending a field here is all a new sim field needs
+   * (tests/brawl/determinism.state.test.ts fails if a field of this class is neither listed here nor immutable).
+   */
+  sync(io: StateIO): void {
+    this.alive = io.b(this.alive);
+    this.pos.x = io.n(this.pos.x);
+    this.pos.y = io.n(this.pos.y);
+    this.vel.x = io.n(this.vel.x);
+    this.vel.y = io.n(this.vel.y);
+    this.facing = io.n(this.facing) as Facing;
+    this.grounded = io.b(this.grounded);
+    this.platIdx = io.n(this.platIdx);
+    this.action = io.action(this.action);
+    this.actionFrame = io.n(this.actionFrame);
+    this.actionFrames = io.n(this.actionFrames);
+    this.moveId = io.moveId(this.moveId);
+    this.moveChain = io.n(this.moveChain);
+    this.moveAir = io.b(this.moveAir);
+    this.moveFrame = io.n(this.moveFrame);
+    this.moveFrames = io.n(this.moveFrames);
+    this.movePhase = io.phase(this.movePhase);
+    this.dodgeCd = io.n(this.dodgeCd);
+    this.hitstunTotal = io.n(this.hitstunTotal);
+    this.lastHitBy = io.n(this.lastHitBy);
+    this.percent = io.n(this.percent);
+    this.stocks = io.n(this.stocks);
+    this.jumpsLeft = io.n(this.jumpsLeft);
+    this.hitstun = io.n(this.hitstun);
+    this.hitlag = io.n(this.hitlag);
+    this.invuln = io.n(this.invuln);
+    this.lastLaunch = io.launch(this.lastLaunch);
+    this.kos = io.n(this.kos);
+    this.falls = io.n(this.falls);
+    this.damageDealt = io.n(this.damageDealt);
+    this.hitReg = io.nums(this.hitReg);
+    this.armorLeft = io.n(this.armorLeft);
+    this.moveConnected = io.b(this.moveConnected);
+    this.movePushed = io.b(this.movePushed);
+    this.staleQueue = io.moveIds(this.staleQueue);
+    this.recoveryUsed = io.b(this.recoveryUsed);
+    this.inX = io.n(this.inX);
+    this.inY = io.n(this.inY);
+    this.inJumpHeld = io.b(this.inJumpHeld);
+    this.pendJump = io.b(this.pendJump);
+    this.pendLight = io.b(this.pendLight);
+    this.pendHeavy = io.b(this.pendHeavy);
+    this.pendDodge = io.b(this.pendDodge);
+    this.bufJump = io.n(this.bufJump);
+    this.bufLight = io.n(this.bufLight);
+    this.bufHeavy = io.n(this.bufHeavy);
+    this.bufDodge = io.n(this.bufDodge);
+    this.lightDx = io.n(this.lightDx);
+    this.lightDy = io.n(this.lightDy);
+    this.heavyDx = io.n(this.heavyDx);
+    this.heavyDy = io.n(this.heavyDy);
+    this.dodgeDx = io.n(this.dodgeDx);
+    this.dodgeDy = io.n(this.dodgeDy);
+    this.freeFall = io.b(this.freeFall);
+    this.airDodgeUsed = io.b(this.airDodgeUsed);
+    this.fastFalling = io.b(this.fastFalling);
+    this.groundedFrames = io.n(this.groundedFrames);
+    this.dropPlat = io.n(this.dropPlat);
+    this.dropTimer = io.n(this.dropTimer);
+    this.jumpWasHeld = io.b(this.jumpWasHeld);
+    this.jumpReleased = io.b(this.jumpReleased);
+    this.hopWindow = io.n(this.hopWindow);
+    this.hopCut = io.b(this.hopCut);
+    this.pendingTumble = io.b(this.pendingTumble);
+    this.diUsed = io.n(this.diUsed);
+    this.lastHitFrame = io.n(this.lastHitFrame);
+    this.dodgeDir = io.n(this.dodgeDir);
+    this.ledgeIdx = io.n(this.ledgeIdx);
+    this.ledgeRegrab = io.n(this.ledgeRegrab);
+    this.grabFrames = io.nums(this.grabFrames);
+    this.climbRoll = io.b(this.climbRoll);
+    this.climbFromX = io.n(this.climbFromX);
+    this.climbFromY = io.n(this.climbFromY);
+    this.respawnIn = io.n(this.respawnIn);
   }
 
   /** A fresh, independent public snapshot of this fighter. */

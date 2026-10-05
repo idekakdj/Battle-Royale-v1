@@ -60,10 +60,20 @@
  *
  * Extensions beyond `BrawlWorldApi` (not part of the contract): `stage`, `seed`, `skipCountdown()`,
  * and the `debug*` helpers used by tests / tooling.
+ *
+ * ── Online rollback support (v1.5, additive) ─────────────────────────────────────────────────
+ * The simulation is bit-deterministic across machines: it uses only `+ − × ÷`, comparisons and exactly-specified
+ * `Math.*` (sqrt/abs/min/max/floor/round, imul) — trigonometry comes from `./dmath` and the RNG is the serialisable
+ * `SimRng` (tests/brawl/determinism.scan.test.ts enforces this on every file under sim/). On top of that:
+ * `frame`, `isOver`, `saveState(into?)` / `loadState(s)` (full gameplay state, pooled buffers), `checksum()`
+ * (32-bit, canonical order) and `forfeit(id)` (idempotent, removes a fighter like a final KO without crediting anyone).
+ * Events are NOT part of the saved state: drain them after every step (`loadState` discards any pending ones).
  */
 
-import { mulberry32 } from '../../core/math';
-import type { Rng } from '../../core/math';
+import { SimRng } from './rng';
+import { dhypot } from './dmath';
+import { StateIO, createSavedState, hashWords } from './stateIO';
+import type { BrawlSavedState } from './stateIO';
 import type {
   BrawlEvent,
   BrawlIntent,
@@ -143,7 +153,7 @@ export class BrawlWorld implements BrawlWorldApi {
   readonly stage: StageDef;
 
   private readonly src: BrawlDataSource;
-  private readonly rng: Rng;
+  private readonly rng: SimRng;
   private readonly defs: PlatformDef[];
   private readonly plat: PlatRT[];
   private readonly ledges: LedgeRT[] = [];
@@ -152,19 +162,21 @@ export class BrawlWorld implements BrawlWorldApi {
   private readonly fighters: Fighter[] = [];
   private readonly timeLimitFrames: number;
 
-  private frame = 0;
+  private frameNo = 0;
   private over = false;
   private winner = -1;
   private events: BrawlEvent[] = [];
   private hitViews: HitboxView[] = [];
   private readonly boxes: ActiveBox[] = [];
   private readonly pending: PendingHit[] = [];
+  private readonly io = new StateIO();
+  private scratch: BrawlSavedState | null = null;
 
   constructor(config: BrawlMatchConfig, seed: number, source: BrawlDataSource = DEFAULT_DATA_SOURCE) {
     this.config = config;
     this.seed = seed;
     this.src = source;
-    this.rng = mulberry32(seed);
+    this.rng = new SimRng(seed);
     this.stage = source.getStage(config.stage);
     this.defs = this.stage.platforms;
     this.plat = this.defs.map(makePlatRT);
@@ -213,9 +225,9 @@ export class BrawlWorld implements BrawlWorldApi {
 
   step(): void {
     if (this.over) return;
-    this.frame++;
+    this.frameNo++;
     this.updatePlatforms();
-    if (this.frame <= PHYS.countdownFrames) {
+    if (this.frameNo <= PHYS.countdownFrames) {
       for (const f of this.fighters) this.clearPending(f);
       return;
     }
@@ -227,12 +239,12 @@ export class BrawlWorld implements BrawlWorldApi {
   }
 
   snapshot(): BrawlSnapshot {
-    const time = (this.frame - PHYS.countdownFrames) * PHYS.dt;
+    const time = (this.frameNo - PHYS.countdownFrames) * PHYS.dt;
     const limit = this.config.timeLimitS;
     return {
-      frame: this.frame,
+      frame: this.frameNo,
       time,
-      countdown: this.frame < PHYS.countdownFrames ? (PHYS.countdownFrames - this.frame) * PHYS.dt : 0,
+      countdown: this.frameNo < PHYS.countdownFrames ? (PHYS.countdownFrames - this.frameNo) * PHYS.dt : 0,
       timeLeft: limit > 0 ? Math.max(0, limit - Math.max(0, time)) : null,
       fighters: this.fighters.map((f) => f.toState(f.platIdx >= 0 ? this.defs[f.platIdx].id : null)),
       platforms: this.plat.map((p) => ({ id: p.id, x0: p.x0, x1: p.x1, y: p.y })),
@@ -248,12 +260,126 @@ export class BrawlWorld implements BrawlWorldApi {
     return out;
   }
 
+  // ── online rollback support ──────────────────────────────────────────────
+
+  /** Current sim frame (0 = before the first step; the countdown occupies frames 1…180). */
+  get frame(): number {
+    return this.frameNo;
+  }
+
+  /** True once the match has been decided (`step()` is then a no-op). */
+  get isOver(): boolean {
+    return this.over;
+  }
+
+  /**
+   * Capture the complete gameplay state. Pass the object returned by an earlier call as `into` to reuse its buffers
+   * (no allocation in steady state). Undrained events are not part of the state.
+   */
+  saveState(into?: BrawlSavedState): BrawlSavedState {
+    const s = into ?? createSavedState();
+    this.io.beginWrite(s);
+    this.syncState(this.io);
+    this.io.endWrite(s);
+    s.frame = this.frameNo;
+    const n = this.fighters.length;
+    s.bodies.length = n;
+    for (let i = 0; i < n; i++) s.bodies[i] = this.fighters[i].body;
+    s.hitViews = this.hitViews;
+    return s;
+  }
+
+  /** Restore a state captured by {@link saveState} on a world built from the same config / seed. Pending events are dropped. */
+  loadState(s: BrawlSavedState): void {
+    this.io.beginRead(s);
+    this.syncState(this.io);
+    if (this.io.pos !== s.len) throw new Error(`BrawlWorld.loadState: state layout mismatch (${this.io.pos} != ${s.len})`);
+    const n = this.fighters.length;
+    for (let i = 0; i < n; i++) this.fighters[i].body = s.bodies[i] ?? null;
+    this.hitViews = s.hitViews as HitboxView[];
+    this.events = [];
+  }
+
+  /**
+   * 32-bit checksum of the complete gameplay state in canonical order (integer mixing of the float bit patterns, so it
+   * is identical on every machine). Equal to `checksumOfSaved(saveState())`.
+   */
+  checksum(): number {
+    if (this.scratch === null) this.scratch = createSavedState();
+    const s = this.scratch;
+    this.io.beginWrite(s);
+    this.syncState(this.io);
+    this.io.endWrite(s);
+    return hashWords(s.words, s.len);
+  }
+
+  /**
+   * Remove a fighter from play like a final KO — no stock bookkeeping beyond zeroing it, no KO credit, no fall counted —
+   * and re-evaluate the match end. Idempotent; a no-op once the match is over or the fighter is already out.
+   */
+  forfeit(id: number): void {
+    const f = this.fighters[id];
+    if (!f || this.over) return;
+    if (!f.alive && f.stocks === 0) return;
+    const wasAlive = f.alive;
+    const b = this.stage.blast;
+    this.releaseLedge(f);
+    f.stocks = 0;
+    f.alive = false;
+    f.percent = 0;
+    f.pos.x = clampNum(f.pos.x, b.left, b.right);
+    f.pos.y = clampNum(f.pos.y, b.bottom, b.top);
+    f.vel.x = 0;
+    f.vel.y = 0;
+    f.grounded = false;
+    f.platIdx = -1;
+    f.hitstun = 0;
+    f.hitlag = 0;
+    f.invuln = 0;
+    f.body = null;
+    f.moveId = null;
+    f.moveChain = 0;
+    f.moveFrame = 0;
+    f.moveFrames = 0;
+    f.movePhase = null;
+    f.pendingTumble = false;
+    f.respawnIn = 0;
+    f.inX = 0;
+    f.inY = 0;
+    f.inJumpHeld = false;
+    this.clearPending(f);
+    f.bufJump = f.bufLight = f.bufHeavy = f.bufDodge = NO_BUF;
+    this.setAction(f, 'ko', 0);
+    if (wasAlive) {
+      this.emit({ type: 'ko', fighterId: f.id, killerId: -1, side: 'bottom', pos: { x: f.pos.x, y: f.pos.y }, stocksLeft: 0 });
+    }
+    this.checkMatchEnd();
+  }
+
+  /** Every mutable gameplay field in canonical order (write mode: save / checksum, read mode: load). */
+  private syncState(io: StateIO): void {
+    this.frameNo = io.n(this.frameNo);
+    this.over = io.b(this.over);
+    this.winner = io.n(this.winner);
+    this.rng.setState(io.n(this.rng.getState()));
+    for (let i = 0; i < this.ledgeOwner.length; i++) this.ledgeOwner[i] = io.n(this.ledgeOwner[i]);
+    for (let i = 0; i < this.plat.length; i++) {
+      const p = this.plat[i];
+      p.x0 = io.n(p.x0);
+      p.x1 = io.n(p.x1);
+      p.y = io.n(p.y);
+      p.dx = io.n(p.dx);
+      p.dy = io.n(p.dy);
+    }
+    for (let i = 0; i < this.fighters.length; i++) this.fighters[i].sync(io);
+  }
+
   // ── extensions (tests / tooling) ─────────────────────────────────────────
 
   /** Jump straight to the first live frame (skips the 3 s countdown). */
   skipCountdown(): void {
-    if (this.frame < PHYS.countdownFrames) {
-      this.frame = PHYS.countdownFrames;
+    if (this.frameNo < PHYS.countdownFrames) {
+      this.frameNo = PHYS.countdownFrames;
       this.updatePlatforms();
     }
   }
@@ -329,7 +455,7 @@ export class BrawlWorld implements BrawlWorldApi {
       const p = this.plat[i];
       const px = p.x0;
       const py = p.y;
-      platformAtFrame(this.defs[i], this.frame, p);
+      platformAtFrame(this.defs[i], this.frameNo, p);
       p.dx = p.x0 - px;
       p.dy = p.y - py;
     }
@@ -824,7 +950,7 @@ export class BrawlWorld implements BrawlWorldApi {
     } else {
       f.airDodgeUsed = true;
       f.fastFalling = false;
-      const len = Math.hypot(dx, dy);
+      const len = dhypot(dx, dy);
       if (len > PHYS.dodgeDirThreshold) {
         f.vel.x = (dx / Math.max(1, len)) * PHYS.airDodgeSpeed;
         f.vel.y = (dy / Math.max(1, len)) * PHYS.airDodgeSpeed;
@@ -1085,12 +1211,12 @@ export class BrawlWorld implements BrawlWorldApi {
     let recent = 0;
     const keep: number[] = [];
     for (const g of f.grabFrames) {
-      if (this.frame - g <= PHYS.ledgeInvulnWindow) {
+      if (this.frameNo - g <= PHYS.ledgeInvulnWindow) {
         recent++;
         keep.push(g);
       }
     }
-    keep.push(this.frame);
+    keep.push(this.frameNo);
     f.grabFrames = keep;
     const inv = Math.max(0, PHYS.ledgeInvuln - PHYS.ledgeInvulnPenalty * recent);
     if (f.invuln < inv) f.invuln = inv;
@@ -1201,7 +1327,7 @@ export class BrawlWorld implements BrawlWorldApi {
     f.vel.y = 0;
     f.grounded = false;
     f.platIdx = -1;
-    f.facing = rp.x < 0 ? 1 : rp.x > 0 ? -1 : this.rng() < 0.5 ? 1 : -1;
+    f.facing = rp.x < 0 ? 1 : rp.x > 0 ? -1 : this.rng.next() < 0.5 ? 1 : -1;
     f.percent = 0;
     f.jumpsLeft = f.stats.maxJumps;
     f.hitstun = 0;
@@ -1430,7 +1556,7 @@ export class BrawlWorld implements BrawlWorldApi {
       if (a.staleQueue.length > PHYS.staleQueue) a.staleQueue.shift();
     }
     v.lastHitBy = a.id;
-    v.lastHitFrame = this.frame;
+    v.lastHitFrame = this.frameNo;
 
     // armor: absorb (damage × scale), no knockback / hitstun
     if (this.armorActive(v)) {
@@ -1572,7 +1698,7 @@ export class BrawlWorld implements BrawlWorldApi {
 
   private koFighter(f: Fighter, side: 'left' | 'right' | 'top' | 'bottom'): void {
     const b = this.stage.blast;
-    const credited = f.lastHitBy >= 0 && f.lastHitBy !== f.id && this.frame - f.lastHitFrame <= PHYS.koCreditFrames;
+    const credited = f.lastHitBy >= 0 && f.lastHitBy !== f.id && this.frameNo - f.lastHitFrame <= PHYS.koCreditFrames;
     const killerId = credited ? f.lastHitBy : -1;
     if (credited) this.fighters[killerId].kos++;
     this.releaseLedge(f);
@@ -1615,7 +1741,7 @@ export class BrawlWorld implements BrawlWorldApi {
       this.finish(withStocks === 1 ? last : -1);
       return;
     }
-    if (this.timeLimitFrames > 0 && this.frame - PHYS.countdownFrames >= this.timeLimitFrames) {
+    if (this.timeLimitFrames > 0 && this.frameNo - PHYS.countdownFrames >= this.timeLimitFrames) {
       let top = -1;
       for (const f of this.fighters) if (f.stocks > top) top = f.stocks;
       let low = Infinity;
