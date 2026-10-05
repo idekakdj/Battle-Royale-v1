@@ -82,42 +82,79 @@ const tunnelLunge: ArchFn = (c) => {
   };
 };
 
+/** Both claws at the same swing / spread (the digging stroke uses them together). */
+const claws = (swing: number, spread = 0.3): DofPartial => ({ foreNearSwing: swing, foreFarSwing: swing, foreNearSpread: spread, foreFarSpread: spread });
+
 /**
- * Heavy Down — Burrow Strike. Ground: scoop, nose-dive under the floor (the body sinks `neckExt` metres), erupt claws-first
- * in front (claws overhead, nose up). Air: the drill-down (nose and claws straight down).
+ * Heavy Down, ground — Burrow Strike (v1.6, WP-B2). The timeline follows the data's `burrow` window `[from, to)` (default 6-24):
+ *   f0 .. from   DIG-IN: rear up, claws raised (f ~1.5), scoop down-and-back while the nose dives and the body sinks (`neckExt` = depth)
+ *                until only a bump is left on the floor (f ~5); the rig is hidden from `from` on (BrawlView / BrawlRig, `underground`).
+ *   from .. to   TUNNEL (hidden): sunk, nose along the tunnel, then the nose comes up and the claws rise (the view shows the mound).
+ *   to           the strike peak on the first active frame: claws overhead, nose up, half out of the hole, bursting upward (drift lifts the
+ *                body out through the active window); then the generic overshoot / settle lands it back on the floor.
  */
-const burrowStrike: ArchFn = (c) => {
-  if (c.air) {
-    return {
-      tip: 'foreNear',
-      B: { bodyPitch: -1.35, foreNearSwing: 1.5, foreFarSwing: 1.5, foreNearSpread: -0.05, foreFarSpread: -0.05, headPitch: -0.1, bodyFwd: 0.1 },
-      free: [
-        { d: 'bodyPitch', lo: -1.5, hi: -0.6 },
-        { d: 'bodyFwd', lo: -0.1, hi: 0.4 },
-        { d: 'foreNearSwing', lo: 1.0, hi: 1.8, tie: ['foreFarSwing'] },
-      ],
-      A: () => ({ bodyPitch: 0.5, foreNearSwing: 2.2, foreFarSwing: 2.2, foreNearSpread: 0.3, foreFarSpread: 0.3, bodyUp: 0.06, headPitch: 0.3 }),
-      drift: { bodyRoll: Math.min(TAU * 0.5, 0.6 * Math.max(1, c.A - 1)) },
-      end: { bodyRoll: TAU },
-      over: 0.04,
-    };
-  }
+const burrowDig: ArchFn = (c) => {
+  if (c.air) return drillDown(c); // (the data gives the air form the 'dive' archetype; this keeps a stray 'burrow' aerial sane)
+  const from = Math.max(2, c.body.burrow?.from ?? 6);
+  const to = Math.max(from + 2, c.body.burrow?.to ?? c.S);
+  const k = from / 6;
+  const rise = Math.min(5, (to - from) * 0.5);
+  const raw: NonNullable<ArchSpec['script']> = [
+    // dig-in: rear up a touch, claws raised, the nose starts to tip down
+    { f: 2.8 * k, v: { bodyPitch: 0.1, ...claws(0.8, 0.4), headPitch: -0.15, neckExt: 0.05 }, ease: 'lin' },
+    // scoop: claws rake down-and-back, nose dives, the body sinks
+    { f: 4.4 * k, v: { bodyPitch: -0.5, ...claws(0.2, 0.55), headPitch: -0.3, neckExt: 0.34 }, ease: 'lin' },
+    // nearly gone: only the back is above the floor
+    { f: 5.8 * k, v: { bodyPitch: -0.95, ...claws(-0.35, 0.6), headPitch: -0.35, neckExt: 0.7 }, ease: 'inout' },
+    // hidden from here
+    { f: from + 1.6, v: { bodyPitch: -1.1, ...claws(-0.4, 0.55), headPitch: -0.3, neckExt: 0.88 }, ease: 'inout' },
+    { f: (from + to) / 2, v: { bodyPitch: -0.9, ...claws(0.2, 0.4), headPitch: -0.2, neckExt: 0.9 }, ease: 'inout' },
+    { f: to - rise, v: { bodyPitch: -0.6, ...claws(0.7, 0.3), headPitch: 0, neckExt: 0.84, bodyFwd: 0.1 }, ease: 'inout' },
+    // the nose comes up, the claws rise ahead of the burst
+    { f: to - rise * 0.5, v: { bodyPitch: 0.1, ...claws(1.7, 0.3), headPitch: 0.15, neckExt: 0.5, bodyFwd: 0.28 }, ease: 'lin' },
+  ];
+  const script = raw.filter((s) => s.f > 0.2 && s.f < to - 0.4);
   return {
     tip: 'foreNear',
-    B: { bodyPitch: 0.6, foreNearSwing: 2.5, foreFarSwing: 2.5, foreNearSpread: 0.25, foreFarSpread: 0.25, headPitch: 0.3, bodyFwd: 0.45, neckExt: 0.12 },
+    B: { bodyPitch: 0.6, ...claws(2.5, 0.25), headPitch: 0.3, bodyFwd: 0.45, neckExt: 0.16 },
     free: [
-      { d: 'foreNearSwing', lo: 1.5, hi: 3.0, tie: ['foreFarSwing'] },
+      { d: 'foreNearSwing', lo: 1.5, hi: 2.9, tie: ['foreFarSwing'] },
       { d: 'bodyFwd', lo: 0.2, hi: 0.7 },
       { d: 'bodyPitch', lo: 0.2, hi: 1.0 },
+      { d: 'bodyUp', lo: 0, hi: 0.5 },
     ],
-    A: () => ({ bodyPitch: -1.0, foreNearSwing: 1.2, foreFarSwing: 1.2, foreNearSpread: 0.2, foreFarSpread: 0.2, headPitch: -0.5, bodyFwd: 0.25, neckExt: 0.34 }),
-    pre: [{ before: 5, v: () => ({ bodyPitch: -0.7, foreNearSwing: 0.8, foreFarSwing: 1.4, headPitch: -0.4, bodyFwd: 0.2, neckExt: 0.1, bodyUp: -0.05 }) }],
-    // The claws keep rising through the hit: the eruption.
-    drift: { foreNearSwing: 0.9, foreFarSwing: 0.9, bodyPitch: 0.3, neckExt: -0.08 },
-    over: 0.06,
-    ftFrac: 0.35,
+    A: () => ({ bodyPitch: 0.1, ...claws(1.7, 0.3), headPitch: 0.15, neckExt: 0.5, bodyFwd: 0.28 }),
+    script,
+    strikeEase: 'out',
+    strikePow: 1.3,
+    // the burst keeps going through the active window: the body is thrown out of the hole, the claws rise
+    drift: { foreNearSwing: 0.4, foreFarSwing: 0.4, bodyPitch: 0.15, neckExt: -0.16, bodyUp: 0.1 },
+    over: 0.05,
+    ftFrac: 0.1,
+    commit: 0,
+    // the body drops back onto all fours quickly after the burst, then eases in
+    settleEase: 'out',
+    settlePow: 1.5,
+    windup: false,
   };
 };
+
+/** Heavy Down, air — Drill Down (the air form of the move is an `dive`): nose and claws straight down, spinning about the long axis. */
+const drillDown: ArchFn = (c) => ({
+  tip: 'foreNear',
+  B: { bodyPitch: -1.35, foreNearSwing: 1.5, foreFarSwing: 1.5, foreNearSpread: -0.05, foreFarSpread: -0.05, headPitch: -0.1, bodyFwd: 0.1 },
+  free: [
+    { d: 'bodyPitch', lo: -1.5, hi: -0.6 },
+    { d: 'bodyFwd', lo: -0.1, hi: 0.4 },
+    { d: 'foreNearSwing', lo: 1.0, hi: 1.8, tie: ['foreFarSwing'] },
+  ],
+  A: () => ({ bodyPitch: 0.5, foreNearSwing: 2.2, foreFarSwing: 2.2, foreNearSpread: 0.3, foreFarSpread: 0.3, bodyUp: 0.06, headPitch: 0.3 }),
+  drift: { bodyRoll: Math.min(TAU * 0.5, 0.8 * Math.max(1, c.A - 1)) },
+  end: { bodyRoll: TAU },
+  over: 0.04,
+  // the rest of the turn is spun down over a long follow-through (a short one broke the per-frame budget)
+  ftFrac: 0.55,
+});
 
 /** Heavy Up — Drill Ascent: nose straight up, claws stretched above the head, rolling about the long axis like a corkscrew. */
 const drillAscent: ArchFn = (c) => {
@@ -198,7 +235,8 @@ export const moleProfile: AnimalProfile = {
     uppercut: pair(ARCHETYPES.uppercut),
     spinAttack: drillSpin,
     charge: tunnelLunge,
-    burrow: burrowStrike,
+    burrow: burrowDig,
+    dive: drillDown,
     leapUp: drillAscent,
   },
   note: 'hand-written (WP-A3)',

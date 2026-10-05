@@ -21,6 +21,7 @@ import { MOVE_IDS } from '../../src/brawl/types';
 import type { BrawlDataSource } from '../../src/brawl/sim/dataSource';
 import { BrawlWorld } from '../../src/brawl/sim/BrawlWorld';
 import { PHYS } from '../../src/brawl/config';
+import { STAGE_DEFS } from '../../src/brawl/data/stages';
 
 // ── stats ────────────────────────────────────────────────────────────────────
 
@@ -208,6 +209,9 @@ export const FIX_STAGES: Record<StageId, StageDef> = {
     cameraFocus: { x: 0, y: 4 },
     camera: { minHalfW: 12, maxHalfW: 21 },
   },
+  // v1.6 dynamic stages: the sim tests exercise the SHIPPED geometry (an independent copy, so a test may mutate it freely)
+  clockworkHeights: structuredClone(STAGE_DEFS.clockworkHeights),
+  crumblingAmphitheatre: structuredClone(STAGE_DEFS.crumblingAmphitheatre),
 };
 
 /** Mirrors the shipped registry's body resolution (air partial over ground; chain > 0 = chain[chain − 1]). */

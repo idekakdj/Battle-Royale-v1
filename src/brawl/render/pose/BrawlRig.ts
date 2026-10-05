@@ -22,6 +22,7 @@ import { STEP_NORMAL, STEP_STRIKE, entryBlendFrames, getBuilt, type BuiltMove } 
 import { DOF, newVec } from './dof';
 import { CompiledProfile, TIP_ROLES, type AnimalProfile, type TipRole } from './profile';
 import { getSolver } from './solver';
+import { rigHiddenUnderground } from './underground';
 import { newStatePose, poseState, type StateCtx, type StateKey, type StatePose } from './states';
 
 /** Facing yaw magnitude: 90° minus the 22° turn toward the camera. */
@@ -87,6 +88,7 @@ export class BrawlRig {
   private lastAir = false;
   private lastBuilt: BuiltMove | null = null;
   private stateKey: StateKey = 'idle';
+  private hiddenUg = false;
   /** Debug / demo read-outs. */
   lastKey = '';
   strikeRole: TipRole | null = null;
@@ -131,11 +133,15 @@ export class BrawlRig {
     const dt = dtRender < 0 ? 0 : dtRender > 0.1 ? 0.1 : dtRender;
     if (!cur.alive || cur.action === 'ko') {
       this.root.visible = false;
+      this.hiddenUg = false;
       this.yawInit = false;
       return;
     }
-    this.root.visible = true;
     const a = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+    // v1.6 burrow: the rig is not drawn while the fighter is underground (the view shows a dirt mound instead). The pose keeps
+    // running underneath, so it is exactly where the timeline says the frame it surfaces. Stateless: a rollback cannot leave it hidden.
+    this.hiddenUg = rigHiddenUnderground(cur, prev, a);
+    this.root.visible = !this.hiddenUg;
     this.facing = cur.facing;
 
     // Position (interpolated; a teleport such as a respawn snaps).
@@ -391,6 +397,11 @@ export class BrawlRig {
   tipFighterLocal(role: string): { x: number; y: number } | null {
     const p = this.tipLocal(role);
     return p === null ? null : { x: p.z, y: p.y };
+  }
+
+  /** True while the rig is hidden because the fighter is underground (v1.6 burrow): no body, no contact shadow. */
+  get hiddenUnderground(): boolean {
+    return this.hiddenUg;
   }
 
   /** Current (eased) facing yaw in radians — demo / tests. */

@@ -19,6 +19,7 @@ export { getBuilt, STEP_NORMAL, STEP_STRIKE } from './build';
 export type { AnimalProfile, TipRole } from './profile';
 export { registerProfile, getRegisteredProfile } from './profile';
 export { getSolver } from './solver';
+export { rigHiddenUnderground } from './underground';
 
 /**
  * Pre-build (and cache) every move pose of `animal` — forward-kinematics fits for ~20 bodies, ≈ 50–150 ms. `createBrawlRig`

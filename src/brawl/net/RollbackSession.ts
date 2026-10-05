@@ -131,6 +131,14 @@ function eventKey(e: BrawlEvent, frame: number): string {
       return `${frame}|ko|${e.fighterId}`;
     case 'respawn':
       return `${frame}|resp|${e.fighterId}`;
+    case 'platformHit':
+      return `${frame}|phit|${e.platformId}|${e.attackerId}`;
+    // A platform breaks and the stage flips to its final form at most ONCE per match, so these two are deduplicated without the frame:
+    // a rollback that re-simulates the moment on a different frame must not play the one-off set piece (break burst, final-form flip) twice.
+    case 'platformBreak':
+      return `pbrk|${e.platformId}`;
+    case 'stageFinal':
+      return 'final';
     case 'matchEnd':
       return `${frame}|end`;
   }

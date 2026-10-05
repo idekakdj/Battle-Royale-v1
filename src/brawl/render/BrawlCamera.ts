@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import type { StageDef } from '../types';
+import { stageExtent } from './stages/dynamic';
 
 export const CAM_FOV_DEG = 28;
 export const CAM_PITCH_DEG = 4;
@@ -94,15 +95,16 @@ export class BrawlCamera {
   constructor(readonly stage: StageDef, camera?: THREE.PerspectiveCamera) {
     this.camera = camera ?? new THREE.PerspectiveCamera(CAM_FOV_DEG, this.aspect, 0.5, 700);
     this.camera.fov = CAM_FOV_DEG;
-    let top = 0;
-    for (const p of stage.platforms) top = Math.max(top, p.y + (p.moving !== undefined && p.moving.axis === 'y' ? p.moving.amplitude : 0));
-    this.viewTop = top + 2.4;
-    this.viewBot = -3.0;
-    let px = 0;
-    for (const p of stage.platforms) px = Math.max(px, Math.abs(p.x0), Math.abs(p.x1));
+    // v1.6: the always-in-view band and the in-play field come from the extents of EVERY platform over its whole loop and over every
+    // form (moving / path platforms at their extremes, `finalOnly` platforms included), so nothing is cut off and the zoom never pumps
+    // while platforms glide or the arena transforms.
+    const ext = stageExtent(stage);
+    this.viewTop = Math.max(0, ext.yMax) + 2.4;
+    this.viewBot = Math.min(-3.0, ext.yMin - 3.0);
+    const px = Math.max(Math.abs(ext.x0), Math.abs(ext.x1));
     this.pfL = -(px + 3);
     this.pfR = px + 3;
-    this.pfB = -4;
+    this.pfB = this.viewBot - 1;
     this.pfT = this.viewTop + 3;
     this.x = stage.cameraFocus.x;
     this.y = stage.cameraFocus.y;
@@ -137,6 +139,12 @@ export class BrawlCamera {
     const t = clamp((kbSpeed - 12) / 48, 0, 1) * (sweet ? 1.25 : 1);
     if (t <= 0) return;
     this.trauma = Math.min(1, this.trauma + t * 0.55);
+  }
+
+  /** A short rumble that is not a hit (v1.6: the mole's eruption breaking through the floor); `amount` is added trauma (0..1). */
+  rumble(amount: number): void {
+    if (this.reduceMotion || amount <= 0) return;
+    this.trauma = Math.min(1, this.trauma + amount);
   }
 
   /** KO: zoom pulse toward the KO position + a big shake. */

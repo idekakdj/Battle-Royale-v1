@@ -145,7 +145,7 @@ describe('move data in the real simulation', () => {
     }
   });
 
-  it('effects behave: pull drags victims in, stun and flinch cap hitstun, bury holds grounded victims', () => {
+  it('effects behave: pull drags victims in, stun and flinch cap hitstun, the burrow launches upward', () => {
     // crocodile Death Roll: a victim 1.4 m away ends up closer to the crocodile
     {
       const w = setup('crocodile', 'lion', 1.4);
@@ -176,18 +176,22 @@ describe('move data in the real simulation', () => {
       expect(hit, 'roar hits').toBe(true);
       expect(tumbled, 'flinch never tumbles').toBe(false);
     }
-    // mole Burrow Strike on a grounded lion at 0 %: knockdown (buried), not launched
+    // mole Burrow Strike (v1.6): tunnels ~3.3 m underground, then the eruption launches a grounded lion straight UP (no bury any more)
     {
-      const w = setup('mole', 'lion', 0.9);
+      const w = setup('mole', 'lion', 3.6);
       w.setIntent(0, pressFor('heavyD'));
       w.step();
       w.setIntent(0, idleIntent());
+      let launchedUp = false;
       let buried = false;
-      for (let f = 0; f < 60; f++) {
+      for (let f = 0; f < 70; f++) {
         w.step();
-        if (w.snapshot().fighters[1].action === 'knockdown') buried = true;
+        const v = w.snapshot().fighters[1];
+        if (v.action === 'knockdown') buried = true;
+        if ((v.action === 'hitstun' || v.action === 'tumble') && v.vel.y > 5 && Math.abs(v.vel.x) < 1.5) launchedUp = true;
       }
-      expect(buried, 'mole bury').toBe(true);
+      expect(launchedUp, 'mole burrow erupts upward under the target').toBe(true);
+      expect(buried, 'mole burrow no longer buries').toBe(false);
     }
     // python Constrict ends with a stun (long hitstun, no tumble)
     {

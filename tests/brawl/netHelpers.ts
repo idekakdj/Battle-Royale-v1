@@ -13,6 +13,7 @@ import type { RollbackSessionOptions } from '../../src/brawl/net/types';
 import { packIntent, quantizeIntent, unpackIntent } from '../../src/brawl/net/inputCodec';
 import type { PackedInput } from '../../src/brawl/net/inputCodec';
 import { BrawlWorld } from '../../src/brawl/sim/BrawlWorld';
+import type { BrawlDataSource } from '../../src/brawl/sim/dataSource';
 import type { BrawlIntent, BrawlMatchConfig, StageId } from '../../src/brawl/types';
 import type { AnimalId } from '../../src/core/types';
 
@@ -45,6 +46,31 @@ export function scriptIntent(seed: number, slot: number, frame: number): BrawlIn
   const heavy = ((r >>> 9) & 31) === 0;
   const dodge = ((r >>> 14) & 63) === 0;
   return { moveX: moveX + 0.01, moveY, jump, jumpHeld, light, heavy, dodge };
+}
+
+/**
+ * v1.6: a pure scripted "demolition crew": every 24 frames (staggered per slot) each fighter swings a mostly DOWNWARD attack while sweeping
+ * across the stage and jumping now and then — on the Crumbling Amphitheatre this breaks the pieces (and, for suitable seeds, flips the
+ * stage to its final form) within a couple of thousand frames. Fully determined by (seed, slot, frame).
+ */
+export function hammerIntent(seed: number, slot: number, frame: number): BrawlIntent {
+  const seg = mix(seed, slot, frame >> 4);
+  const dirs = [-1, -0.5, 0.5, 1, 0.75, -0.75, 0, 1];
+  const r = mix(seed ^ 0x55, slot, frame);
+  const phase = (frame + slot * 7) % 24;
+  const attack = phase === 0;
+  const lowMove = (r & 3) !== 0;
+  const heavy = attack && ((r >>> 4) & 3) === 0;
+  const jumpTick = (mix(seed ^ 0x99, slot, frame >> 5) & 3) === 0 && phase < 2;
+  return {
+    moveX: dirs[seg & 7] + 0.01,
+    moveY: attack && lowMove ? -1 : ((r >>> 8) & 7) === 0 ? 1 : 0,
+    jump: jumpTick || ((r >>> 12) & 31) === 0,
+    jumpHeld: true,
+    light: attack && !heavy,
+    heavy,
+    dodge: ((r >>> 20) & 63) === 0,
+  };
 }
 
 export interface Rules {
@@ -82,8 +108,9 @@ export function runReference(
   truth: (slot: number, frame: number) => PackedInput,
   checkpoints: ReadonlySet<number>,
   forfeits: ReadonlyArray<{ slot: number; frame: number }> = [],
+  source?: BrawlDataSource,
 ): Map<number, number> {
-  const w = new BrawlWorld(config, seed);
+  const w = new BrawlWorld(config, seed, source);
   const sums = new Map<number, number>();
   const intent = quantizeIntent({ moveX: 0, moveY: 0, jump: false, jumpHeld: false, light: false, heavy: false, dodge: false });
   for (let f = 0; f < frames; f++) {
@@ -221,6 +248,10 @@ export interface ScriptedRun {
   hits: number;
   kos: number;
   moveStarts: number;
+  /** v1.6 dynamic stages: counted platform hits, destroyed platforms and the frame the final form began (−1 = never). */
+  platHits: number;
+  platBreaks: number;
+  finalFrame: number;
   frames: number;
   over: boolean;
   winner: number;
@@ -230,7 +261,7 @@ export interface ScriptedRun {
 export function playScripted(stage: StageId, n: number, seed: number, frames: number, checkpoints: readonly number[]): ScriptedRun {
   const w = new BrawlWorld(makeConfig(n, stage), seed);
   const want = new Set(checkpoints);
-  const run: ScriptedRun = { checksums: new Map(), hits: 0, kos: 0, moveStarts: 0, frames: 0, over: false, winner: -1 };
+  const run: ScriptedRun = { checksums: new Map(), hits: 0, kos: 0, moveStarts: 0, platHits: 0, platBreaks: 0, finalFrame: -1, frames: 0, over: false, winner: -1 };
   const intent = unpackIntent(0);
   for (let f = 0; f < frames; f++) {
     if (want.has(w.frame)) run.checksums.set(w.frame, w.checksum());
@@ -240,6 +271,9 @@ export function playScripted(stage: StageId, n: number, seed: number, frames: nu
       if (e.type === 'hit') run.hits++;
       else if (e.type === 'ko') run.kos++;
       else if (e.type === 'moveStart') run.moveStarts++;
+      else if (e.type === 'platformHit') run.platHits++;
+      else if (e.type === 'platformBreak') run.platBreaks++;
+      else if (e.type === 'stageFinal') run.finalFrame = w.frame;
     }
     if (w.isOver) break;
   }

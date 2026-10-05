@@ -1,6 +1,6 @@
 /**
  * Champions League — audio glue between the match and the shared {@link AudioEngine}: translates sim events and
- * snapshots into procedural cues (hit weight by damage, whoosh on moveStart, jump / land / dodge / ledge, armor
+ * snapshots into procedural cues (hit weight by damage, stone crack / crash / final-form rumble for the v1.6 stages, whoosh on moveStart, jump / land / dodge / ledge, armor
  * clink, KO boom + crowd swell, respawn chime, 3-2-1-FIGHT ticks) and runs the battle music loop (from FIGHT
  * until `stop()`). Safe before the AudioContext is running (the engine gates it; music starts on the first live
  * frame after the context resumes) and respects the master / music / sfx / mute settings via the engine's buses.
@@ -77,6 +77,18 @@ export class BrawlAudio {
           break;
         case 'respawn':
           sfx.respawn(this.pan(e.pos.x));
+          break;
+        case 'platformHit':
+          sfx.stoneCrack(this.pan(e.pos.x));
+          break;
+        case 'platformBreak':
+          sfx.stoneCrash(this.pan(e.pos.x));
+          this.engine.spikeExcitement(0.3);
+          break;
+        case 'stageFinal':
+          sfx.stageFinal();
+          this.engine.spikeExcitement(0.7);
+          this.engine.crowdCheer(true);
           break;
         case 'matchEnd':
           this.engine.matchEndSfx();

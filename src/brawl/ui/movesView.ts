@@ -23,6 +23,7 @@ export type MoveTagId =
   | 'recovery'
   | 'armor'
   | 'invuln'
+  | 'underground'
   | 'multi'
   | 'sweet'
   | 'spike'
@@ -226,11 +227,19 @@ function buildTags(slot: MoveId, m: MoveData, isKill: boolean, killPct: number |
       detail: `Absorbs ${g.armor.hits} ${plural(g.armor.hits, 'hit')} without flinching from frame ${g.armor.from} to ${g.armor.to}.`,
     });
   }
+  // v1.6: a burrow (the mole's Burrow Strike) is its own thing — untouchable underground, then an eruption that launches upward.
+  if (g.burrow !== undefined) {
+    tags.push({
+      id: 'underground',
+      label: 'Underground',
+      detail: 'Untouchable while tunnelling; erupts upward and launches enemies',
+    });
+  }
   if (g.invuln !== undefined) {
     tags.push({
       id: 'invuln',
-      label: g.invuln.from < g.startup ? 'Invulnerable start' : 'Invulnerable',
-      detail: `Cannot be hit from frame ${g.invuln.from} to ${g.invuln.to}.`,
+      label: g.invuln.from < g.startup && g.burrow === undefined ? 'Invulnerable start' : 'Invulnerable',
+      detail: `Cannot be hit from frame ${g.invuln.from} to ${g.invuln.to}${g.burrow !== undefined ? ' (attacks pass straight through you)' : ''}.`,
     });
   }
   const multi = g.hitboxes.reduce((n, h) => Math.max(n, hitsOf(h)), 1);
@@ -261,7 +270,8 @@ function buildTags(slot: MoveId, m: MoveData, isKill: boolean, killPct: number |
   }
   if (slot !== 'heavyU') {
     const t = travelOf(g);
-    if (t.dx >= 0.8) tags.push({ id: 'travel', label: 'Lunges', detail: `Moves about ${f1(t.dx)} m forward during the attack.` });
+    if (g.burrow !== undefined && t.dx >= 0.8) tags.push({ id: 'travel', label: 'Tunnels', detail: `Tunnels about ${f1(t.dx)} m forward underground; it stops at the edge of the platform you stand on.` });
+    else if (t.dx >= 0.8) tags.push({ id: 'travel', label: 'Lunges', detail: `Moves about ${f1(t.dx)} m forward during the attack.` });
     else if (t.dy >= 1.5) tags.push({ id: 'travel', label: 'Rises', detail: `Climbs about ${f1(t.dy)} m during the attack.` });
     else if (t.dy <= -1.5) tags.push({ id: 'travel', label: 'Drops', detail: `Falls about ${f1(-t.dy)} m during the attack.` });
   }
@@ -387,7 +397,9 @@ function buildTips(set: MovesetDef, entries: MoveEntry[]): string[] {
   if (ghosts.length > 0) {
     const list = ghosts
       .map((e) => {
-        const v = set.moves[e.slot].ground.invuln!;
+        const g = set.moves[e.slot].ground;
+        const v = g.invuln!;
+        if (g.burrow !== undefined) return `${label(e)} goes underground on frames ${g.burrow.from}-${g.burrow.to} (nothing can touch you), then erupts upward`;
         return `${label(e)} cannot be hit on frames ${v.from}-${v.to}`;
       })
       .join('; ');

@@ -32,9 +32,11 @@ import type {
 import { MOVESETS, getMoveBody } from '../data';
 import { LEVELS, TACTICS } from './profiles';
 import type { AnimalTactics, LevelParams } from './profiles';
-import { animalInfo, moveInfo, probeHit } from './moveInfo';
+import { animalInfo, moveInfo, probeHit, probeRect } from './moveInfo';
 import type { AnimalInfo, MoveInfo } from './moveInfo';
 import { StageInfo, stageFromSnapshot, supportedBy } from './stageInfo';
+import type { Plat } from './stageInfo';
+import { PHYS } from '../config';
 import { flight, ledgeSpot, simRecovery, steerTo } from './kinematics';
 import type { RecEnv, RecPolicy, RecState } from './kinematics';
 
@@ -119,6 +121,33 @@ interface RecWin {
   frames: number;
 }
 
+interface SmashPlan {
+  /** Platform index of the piece to break. */
+  plat: number;
+  /** hp of the piece when planned (a change means someone hit it: re-plan). */
+  hp: number;
+  /** Where to stand, which move, which way to face. */
+  x: number;
+  /** null = go stand on the piece first (soft pieces). */
+  id: MoveId | null;
+  dir: 1 | -1;
+  until: number;
+  /** Cannot stand on it: jump under it and hit it from below. */
+  jab?: boolean;
+}
+
+/** One verified step of the platform graph: leave run A from `launchX` and land on run B (v1.6 dynamic stages). */
+interface HopEdge {
+  /** Representative platform index of the target run (the member under `tx`). */
+  to: number;
+  launchX: number;
+  dir: 1 | -1;
+  kind: 'jump' | 'drop' | 'walk';
+  /** Where to steer in the air and the air-jump height rule of the verified policy. */
+  tx: number;
+  jumpY: number;
+}
+
 interface LedgePlan {
   opt: 'climb' | 'jump' | 'roll' | 'drop';
   at: number;
@@ -181,6 +210,40 @@ export class BrawlBot implements BrawlBotApi {
   private crossGoal = -1;
   private preferLandUntil = 0;
   private crossUntil = 0;
+  // stall tracking: the frame since which the bot has been calm and standing still (platform-relative, ±0.5 m)
+  private stillSince = 0;
+  private stillAnchor = 0;
+  private stillPlat = '';
+  // v1.6 breakables: demolition plan (hit a nearby piece in downtime), appetite drawn once per match on stages that have breakables
+  // v1.6 platform graph: walkable runs (touching platforms at one height), verified hops between them, the hop in flight
+  private runOf: number[] = [];
+  private runLo: number[] = [];
+  private runHi: number[] = [];
+  private runY: number[] = [];
+  private runN = 0;
+  private readonly hopCache = new Map<number, HopEdge | null>();
+  private hopStamp = -1;
+  private hopTx = NaN;
+  private hopJumpY = NEG_INF;
+  private hopUntil = 0;
+  private anySig = 0;
+  private lastAny = 0;
+  private diveUntil = 0;
+  private diveDir: 1 | -1 = 1;
+  private jabPlat = -1;
+  private jabUntil = 0;
+  private relocUntil = 0;
+  private relocTx = 0;
+  private relocCool = 0;
+  private hopCommitUntil = 0;
+  private hopCommitX = 0;
+  private hopCommitY = 0;
+  private boredTx = NaN;
+  private boredUntil = 0;
+  private smashAppetite = 0;
+  private smashNext = 0;
+  private smashPlan: SmashPlan | null = null;
+  private readonly span = { lo: 0, hi: 0 };
 
   constructor(selfId: number, difficulty: BrawlDifficulty, seed: number) {
     this.selfId = selfId;
@@ -202,7 +265,7 @@ export class BrawlBot implements BrawlBotApi {
     if (this.hist.length > 40) this.hist.shift();
     if (!this.stage) this.init(snap);
     const stage = this.stage as StageInfo;
-    stage.sync(snap.platforms);
+    stage.sync(snap.platforms, snap.frame);
     const me = snap.fighters[this.selfId];
     const c = this.cur;
     if (this.afterPress) {
@@ -219,6 +282,7 @@ export class BrawlBot implements BrawlBotApi {
       return this.emit();
     }
     this.trackExchange(snap, me);
+    this.trackStill(snap, me);
     // reaction delay jitters a little over time
     if (snap.frame >= this.delayRedrawAt) {
       this.delay = this.drawDelay();
@@ -245,6 +309,11 @@ export class BrawlBot implements BrawlBotApi {
 
   private init(snap: BrawlSnapshot): void {
     this.stage = stageFromSnapshot(snap);
+    if (this.stage.hasBreakables) {
+      // how much of its downtime this bot spends smashing the ruins (drawn only on breakable stages: the other stages keep their rng stream)
+      const base = this.lp.level >= 4 ? 0.85 : this.lp.level === 3 ? 0.75 : this.lp.level === 2 ? 0.4 : 0;
+      this.smashAppetite = base * (0.75 + this.rng() * 0.5);
+    }
     const me = snap.fighters[this.selfId];
     if (me) {
       this.animal = me.animal;
@@ -264,6 +333,7 @@ export class BrawlBot implements BrawlBotApi {
   private resetMemory(): void {
     this.plan = null;
     this.ledgePlan = null;
+    this.diveUntil = 0;
     this.diKey = -1;
     this.diSign = 0;
     this.connected = false;
@@ -315,7 +385,40 @@ export class BrawlBot implements BrawlBotApi {
     return base;
   }
 
+  /** Calm + standing still on the same spot of its platform (±0.5 m): the stall breaker reads `stillFrames`. */
+  private trackStill(snap: BrawlSnapshot, me: BrawlFighterState): void {
+    const calm = me.grounded && me.platformId !== null && (me.action === 'idle' || me.action === 'walk' || me.action === 'run' || me.action === 'crouch');
+    const stage = this.stage as StageInfo;
+    const pi = calm ? stage.platIndex(me.platformId) : -1;
+    if (pi < 0) {
+      this.stillSince = snap.frame;
+      this.stillPlat = '';
+      return;
+    }
+    const p = stage.plats[pi];
+    const rel = me.pos.x - (p.x0 + p.x1) * 0.5;
+    if (this.stillPlat !== me.platformId || Math.abs(rel - this.stillAnchor) > 0.5) {
+      this.stillPlat = me.platformId as string;
+      this.stillAnchor = rel;
+      this.stillSince = snap.frame;
+    }
+  }
+
+  /** Stall-breaker pressure 0..1: grows with the time since the last damage exchange (900 f) and with the time spent standing still (100-240 f). */
+  private pressureNow(snap: BrawlSnapshot): number {
+    const ex = clamp((snap.frame - this.lastExchange) / 900, 0, 1);
+    const still = clamp((snap.frame - this.stillSince - 100) / 140, 0, 1);
+    return ex > still ? ex : still;
+  }
+
   private trackExchange(snap: BrawlSnapshot, me: BrawlFighterState): void {
+    // anybody's damage or stock change (for the stalemate dive; `lastExchange` keeps the older "my own" meaning)
+    let sig = me.percent + me.stocks * 1000;
+    for (const f of snap.fighters) if (f.id !== this.selfId) sig += f.percent * 1.37 + f.stocks * 777;
+    if (sig !== this.anySig) {
+      this.anySig = sig;
+      this.lastAny = snap.frame;
+    }
     if (me.percent !== this.prevPercent || me.stocks !== this.prevStocks) {
       this.lastExchange = snap.frame;
       this.prevPercent = me.percent;
@@ -339,6 +442,7 @@ export class BrawlBot implements BrawlBotApi {
   private ledgeFree(i: number): boolean {
     const stage = this.stage as StageInfo;
     const L = stage.ledges[i];
+    if (!L.open) return false;
     const p = stage.plats[L.plat];
     for (let k = 0; k < this.nOpps; k++) {
       const o = this.opps[k];
@@ -419,6 +523,11 @@ export class BrawlBot implements BrawlBotApi {
       o.grounded = s.grounded;
       o.hanging = s.action === 'ledgeHang';
       o.invuln = s.invuln;
+      // v1.6: a burrowed fighter cannot be hit until it surfaces — count the remaining underground frames as invulnerability
+      if (s.underground === true && s.moveId) {
+        const bw = moveInfo(s.animal, s.moveId, s.moveAir, s.moveChain).burrow;
+        if (bw) o.invuln = Math.max(o.invuln, bw.to - s.moveFrame);
+      }
       // frames until it can act
       let free = 0;
       switch (s.action) {
@@ -561,12 +670,29 @@ export class BrawlBot implements BrawlBotApi {
       return;
     }
     const stage = this.stage as StageInfo;
+    if (stage.dyn) {
+      // dynamic stage: drop onto the nearest platform that exists right now (any kind), preferring the solid ones
+      let bestD = Infinity;
+      let gx = stage.centerX;
+      for (const p of stage.plats) {
+        if (!p.active || p.y > me.pos.y - 1) continue;
+        const cx = clamp(me.pos.x, p.x0 + 0.8, p.x1 - 0.8);
+        const d = Math.abs(cx - me.pos.x) + (p.solid ? 0 : 1.2) + (me.pos.y - p.y) * 0.1;
+        if (d < bestD) {
+          bestD = d;
+          gx = p.x1 - p.x0 > 1.6 ? cx : (p.x0 + p.x1) * 0.5;
+        }
+      }
+      c.moveX = Math.abs(gx - me.pos.x) > 0.8 ? sgn(gx - me.pos.x) : 0;
+      c.moveY = -1;
+      return;
+    }
     // drop toward an island/stage the opponents are not standing on
     let tx = stage.centerX;
     if (!stage.overSolid(me.pos.x, -1)) {
       let bestD = Infinity;
       for (const p of stage.plats) {
-        if (!p.solid) continue;
+        if (!p.solid || !p.active) continue;
         const cx = (p.x0 + p.x1) * 0.5;
         const d = Math.abs(cx - me.pos.x) + this.rng() * 4;
         if (d < bestD) {
@@ -756,6 +882,13 @@ export class BrawlBot implements BrawlBotApi {
     const c = this.cur;
     const lp = this.lp;
     this.mode = 'recover';
+    if (snap.frame < this.diveUntil) {
+      // a deliberate stalemate dive: do not come back
+      this.mode = 'dive';
+      c.moveX = this.diveDir * 0.3;
+      c.moveY = -1;
+      return;
+    }
     const st = this.stats;
     // (re)plan
     const every = this.plan && this.plan.kind === 'fallback' ? 14 : lp.recovery >= 3 ? 5 : 8;
@@ -810,16 +943,37 @@ export class BrawlBot implements BrawlBotApi {
       if (!this.ledgeFree(i)) continue;
       const L = stage.ledges[i];
       const p = stage.plats[L.plat];
-      const sp = ledgeSpot(L.x, L.side, p.y, st);
+      let cornerX = L.x;
+      let platY = p.y;
+      if (stage.dyn && p.moving) {
+        // aim where the corner will be when we get there
+        const lead = Math.min(70, Math.round((Math.hypot(L.x - s0.x, p.y - s0.y) / Math.max(1, st.airSpeed)) * 60 * 0.7));
+        stage.rectAt(L.plat, lead, this.rectScratch);
+        cornerX = L.side < 0 ? this.rectScratch.x0 : this.rectScratch.x1;
+        platY = this.rectScratch.y;
+      }
+      const sp = ledgeSpot(cornerX, L.side, platY, st);
       tgts.push({ kind: 'ledge', tx: sp.x, ty: sp.y, ledge: i, plat: L.plat, d: Math.hypot(sp.x - s0.x, (sp.y - s0.y) * 1.3) + (this.crossGoal >= 0 && L.plat !== this.crossGoal ? 8 : 0) + (this.lastThinkFrame < this.preferLandUntil ? 7 : 0) });
     }
     for (let i = 0; i < stage.plats.length; i++) {
       const p = stage.plats[i];
+      if (!p.active) continue;
       if (p.y < s0.y - 0.3) continue;
-      const lo = p.x0 + 0.9;
-      const hi = p.x1 - 0.9;
-      const tx = lo <= hi ? clamp(s0.x, lo, hi) : (p.x0 + p.x1) * 0.5;
-      tgts.push({ kind: 'land', tx, ty: p.y, ledge: -1, plat: i, d: Math.hypot(tx - s0.x, (p.y - s0.y) * 1.3) + 1.5 + (this.crossGoal >= 0 && i !== this.crossGoal ? 8 : 0) });
+      let px0 = p.x0;
+      let px1 = p.x1;
+      let py = p.y;
+      if (stage.dyn && p.moving) {
+        const lead = Math.min(60, Math.round((Math.abs((px0 + px1) * 0.5 - s0.x) / Math.max(1, st.airSpeed)) * 60 * 0.7));
+        stage.rectAt(i, lead, this.rectScratch);
+        px0 = this.rectScratch.x0;
+        px1 = this.rectScratch.x1;
+        py = this.rectScratch.y;
+      }
+      const lo = px0 + 0.9;
+      const hi = px1 - 0.9;
+      const tx = lo <= hi ? clamp(s0.x, lo, hi) : (px0 + px1) * 0.5;
+      const p_y = py;
+      tgts.push({ kind: 'land', tx, ty: p_y, ledge: -1, plat: i, d: Math.hypot(tx - s0.x, (p.y - s0.y) * 1.3) + 1.5 + (this.crossGoal >= 0 && i !== this.crossGoal ? 8 : 0) });
     }
     tgts.sort((a, b) => a.d - b.d);
     return tgts;
@@ -865,6 +1019,7 @@ export class BrawlBot implements BrawlBotApi {
     return wins;
   }
 
+  private readonly rectScratch = { x0: 0, x1: 0, y: 0 };
   private recMemo = new Map<number, boolean>();
   private recMemoFrame = -1;
 
@@ -1028,6 +1183,13 @@ export class BrawlBot implements BrawlBotApi {
     const pi = stage.platIndex(me.platformId);
     if (pi < 0) return false;
     const p = stage.plats[pi];
+    if (stage.dyn) {
+      // dynamic stage: touching platforms at one height are one floor (the Amphitheatre's tiles); a pit or a vanished platform is a real edge
+      stage.runSpan(pi, this.span);
+      const e = dir > 0 ? this.span.hi : this.span.lo;
+      if ((e - me.pos.x) * dir > 1.3) return false;
+      return stage.platformBelow(e + dir * 0.8, me.pos.y + 0.35, this.stats.width, 0) < 0;
+    }
     const edge = dir > 0 ? p.x1 : p.x0;
     const toEdge = (edge - me.pos.x) * dir;
     if (toEdge > 1.3) return false;
@@ -1166,7 +1328,7 @@ export class BrawlBot implements BrawlBotApi {
     this.oppMotion(o, this.motion);
     const m = this.motion;
     const ids = air ? AIR_IDS : GROUND_IDS;
-    const pressure = clamp((snap.frame - this.lastExchange) / 900, 0, 1);
+    const pressure = this.pressureNow(snap);
     const smart = lp.engine === 2;
     // distance misjudgement for sloppy levels
     const err = lp.noise > 0 ? (this.rng() - 0.5) * 2 * lp.noise : 0;
@@ -1187,7 +1349,16 @@ export class BrawlBot implements BrawlBotApi {
       const relY = o.y - me.pos.y;
       const rvx = (m.vx - (air ? me.vel.x : 0)) * face;
       const rvy = m.vy - (air ? me.vel.y : 0);
-      const pr = probeHit(info, relX, relY, o.w, o.h, rvx, rvy, m.ay);
+      // a burrow tunnels at most to the end of the platform it stands on (the sim clamps it)
+      let room = Infinity;
+      if (info.stopsAtEdge && !air) {
+        const pi = (this.stage as StageInfo).platformBelow(me.pos.x, me.pos.y, this.stats.width, 0.05);
+        if (pi >= 0) {
+          const pl = (this.stage as StageInfo).plats[pi];
+          room = Math.max(0, face > 0 ? pl.x1 - me.pos.x : me.pos.x - pl.x0);
+        }
+      }
+      const pr = probeHit(info, relX, relY, o.w, o.h, rvx, rvy, m.ay, 0, room);
       if (pr.frame < 0) continue;
       const t = pr.frame;
       if (smart && (air || info.travelX > 0.4 || info.travelY > 0.4) && this.rng() < lp.edgeSafe && this.endUnsafe(me, info, face, air, snap)) continue;
@@ -1248,7 +1419,8 @@ export class BrawlBot implements BrawlBotApi {
         const fl = (this.stage as StageInfo).platformBelow(me.pos.x, me.pos.y, this.stats.width, 0.3);
         if (fl >= 0 && me.pos.y - (this.stage as StageInfo).plats[fl].y < 2.2) endlag += info.body.landingLag ?? 10;
       }
-      const risk = (1 - P) * endlag * 0.2 + extraRisk;
+      let risk = (1 - P) * endlag * 0.2 + extraRisk;
+      if ((this.stage as StageInfo).hasBreakables) risk -= this.breakAdjust(me, o, info, face);
       let bias = tac.bias[id] ?? 1;
       if (!committed && tac.risky.includes(id) && !kill && smart) bias *= 0.55;
       if (air && tac.aerials.includes(id)) bias *= 1.1;
@@ -1289,13 +1461,17 @@ export class BrawlBot implements BrawlBotApi {
     let vx = me.vel.x;
     let vy = air ? me.vel.y : 0;
     let grounded = !air;
+    // a stopAtEdge window keeps a grounded fighter on its platform (v1.6 burrow)
+    const stopPlat = !air && info.stopsAtEdge ? stage.platformBelow(x, y, st.width, 0.05) : -1;
     for (let mf = 0; mf < info.total; mf++) {
       let g = 1;
       let setX = false;
       let setY = false;
+      let edge = false;
       if (body.motion) {
         for (const m of body.motion) {
           if (mf < m.from || mf >= m.to) continue;
+          if (m.stopAtEdge) edge = true;
           const mvx = m.vx !== undefined ? m.vx * face : 0;
           const mvy = m.vy ?? 0;
           if (m.set) {
@@ -1318,6 +1494,7 @@ export class BrawlBot implements BrawlBotApi {
       }
       if (grounded) {
         if (!setX) vx *= 0.8;
+        if (!air && body.burrow && mf === body.burrow.to) vx = 0;
         if (vy > 0) grounded = false;
       } else if (!setX) vx *= 0.985;
       if (!grounded) {
@@ -1327,10 +1504,15 @@ export class BrawlBot implements BrawlBotApi {
       const ox = x;
       const oy = y;
       x += vx * (1 / 60);
+      if (edge && grounded && stopPlat >= 0) {
+        const sp = stage.plats[stopPlat];
+        x = x < sp.x0 ? sp.x0 : x > sp.x1 ? sp.x1 : x;
+      }
       if (!grounded) {
         y += vy * (1 / 60);
         if (vy < 0) {
           for (const p of stage.plats) {
+            if (!p.active) continue;
             if (oy >= p.y - 1e-3 && y <= p.y + 1e-3 && supportedBy(x, st.width, p.x0, p.x1)) return false;
           }
         }
@@ -1421,19 +1603,31 @@ export class BrawlBot implements BrawlBotApi {
     this.mode = 'neutral';
     c.moveY = 0;
     c.moveX = 0;
-    const pressure = clamp((snap.frame - this.lastExchange) / 900, 0, 1);
+    const pressure = this.pressureNow(snap);
+
+    // v1.6 breakables: relocate off a nearly broken floor, or use the downtime to smash a piece
+    if (stage.hasBreakables && lp.engine >= 1 && this.breakableNeutral(me, t, snap)) return;
+
+    // stalemate on a broken-up arena: nobody can reach anybody (or the last pieces), nothing has happened for 25 s and we are not ahead:
+    // sacrifice a stock - the respawn drops us into the middle of the arena, where the pieces are
+    if (stage.hasBreakables && this.stalemateDive(me, t, snap)) return;
+    // stall breaker: standing still for a long time (nothing reachable, everybody waiting): walk somewhere else on the floor
+    if (this.stillBored(me, snap)) return;
 
     // vertical separation: different tier
     const myPlat = stage.platIndex(me.platformId);
-    if (lp.stagePlay || lp.engine === 1) {
+    if (stage.dyn) {
+      // dynamic stage: route over the platform graph (verified hops) to the floor the opponent stands on
+      if (lp.engine >= 1 && !t.offstage && this.hopToward(me, this.goalPlat(t), snap, lp.level >= 3 ? 0.12 : lp.level === 2 ? 0.06 : 0)) return;
+    } else if (lp.stagePlay || lp.engine === 1) {
       if (this.navigateTiers(me, t, myPlat, snap)) return;
     }
 
     // edge-guard: the opponent is off the stage — stand at the ledge it must reach
-    if (lp.edgeGuard && (t.offstage || t.hanging) && this.guardLedge(me, t)) return;
+    if (lp.edgeGuard && (t.offstage || t.hanging) && snap.frame - this.stillSince < 180 && this.guardLedge(me, t)) return;
 
     // the opponent is on another island: cross the gap (Sky Aqueduct)
-    if (lp.engine >= 1 && this.tryCross(me, t, snap, pressure)) return;
+    if (!stage.dyn && lp.engine >= 1 && this.tryCross(me, t, snap, pressure)) return;
 
     // whiff-punish dash
     const punishable = t.free >= 6 && this.punishOk(t);
@@ -1472,7 +1666,7 @@ export class BrawlBot implements BrawlBotApi {
     let ti = -1;
     for (let i = 0; i < stage.plats.length; i++) {
       const p = stage.plats[i];
-      if (p.solid && t.x > p.x0 - 0.5 && t.x < p.x1 + 0.5) {
+      if (p.solid && p.active && t.x > p.x0 - 0.5 && t.x < p.x1 + 0.5) {
         ti = i;
         break;
       }
@@ -1480,8 +1674,17 @@ export class BrawlBot implements BrawlBotApi {
     if (ti < 0 || ti === si) return false;
     const S = stage.plats[si];
     const T = stage.plats[ti];
-    const dir: 1 | -1 = T.x0 + T.x1 > S.x0 + S.x1 ? 1 : -1;
-    const edge = dir > 0 ? S.x1 : S.x0;
+    let sx0 = S.x0;
+    let sx1 = S.x1;
+    if (stage.dyn) {
+      // the target stands on the same walkable run (touching tiles): no crossing
+      stage.runSpan(si, this.span);
+      if (T.x1 > this.span.lo - 0.1 && T.x0 < this.span.hi + 0.1 && Math.abs(T.y - S.y) <= 0.12) return false;
+      sx0 = this.span.lo;
+      sx1 = this.span.hi;
+    }
+    const dir: 1 | -1 = T.x0 + T.x1 > sx0 + sx1 ? 1 : -1;
+    const edge = dir > 0 ? sx1 : sx0;
     const toEdge = (edge - me.pos.x) * dir;
     // in no hurry: a level-3/4 bot first tries to make the opponent come (the stall breaker is `pressure`)
     if (pressure < 0.12 && lp.level >= 3 && t.free === 0 && this.rng() < 0.97) return false;
@@ -1587,6 +1790,7 @@ export class BrawlBot implements BrawlBotApi {
       let bestScore = Infinity;
       for (let i = 0; i < stage.plats.length; i++) {
         const p = stage.plats[i];
+        if (!p.active) continue;
         const rise = p.y - me.pos.y;
         if (rise < 1 || rise > reach || i === myPlat) continue;
         const cx = clamp(me.pos.x, p.x0 - 0.5, p.x1 + 0.5);
@@ -1625,6 +1829,584 @@ export class BrawlBot implements BrawlBotApi {
     return false;
   }
 
+  // ── v1.6 breakables ─────────────────────────────────────────────────────
+
+  /** First move frame at which `info` (started now, facing `face`, feet at (x, y)) would count a hit on platform `p`; -1 = never. */
+  private hitsPlatform(info: MoveInfo, x: number, y: number, face: 1 | -1, p: Plat): number {
+    const pad = PHYS.platHitPad;
+    const rx0 = face > 0 ? p.x0 - pad - x : x - (p.x1 + pad);
+    const rx1 = face > 0 ? p.x1 + pad - x : x - (p.x0 - pad);
+    return probeRect(info, rx0, rx1, p.y - p.thickness - pad - y, p.y + pad - y);
+  }
+
+  /**
+   * Score adjustment (added to the move's value) for what the move does to the BREAKABLE platforms: a hit that would break the floor
+   * under our own feet is (nearly) forbidden, chipping a floor that is two hits from breaking is discouraged, breaking the piece under
+   * a grounded opponent is a bonus (it falls).
+   */
+  private breakAdjust(me: BrawlFighterState, o: Opp, info: MoveInfo, face: 1 | -1): number {
+    const stage = this.stage as StageInfo;
+    const own = me.grounded ? stage.platIndex(me.platformId) : -1;
+    // standing at a seam the sim may count either piece as ours
+    const own2 = me.grounded ? stage.platformBelow(me.pos.x, me.pos.y, this.stats.width, 0.05) : -1;
+    const oppI = o.grounded ? stage.platIndex(o.s.platformId) : -1;
+    let adj = 0;
+    let breaksOwn = false;
+    const lastPiece = stage.activeBreakCount() === 1;
+    for (let n = 0; n < stage.breakIdx.length; n++) {
+      const j = stage.breakIdx[n];
+      const p = stage.plats[j];
+      if (!p.active || p.hp <= 0) continue;
+      // an aerial near a floor hits it as it falls: count every breakable just below us as "ours"
+      const below = !me.grounded && p.y <= me.pos.y + 0.3 && p.y >= me.pos.y - 3.5 && me.pos.x > p.x0 - 2.5 && me.pos.x < p.x1 + 2.5;
+      const mine = j === own || j === own2 || below;
+      if (!mine && j !== oppI) continue;
+      const yy = below ? p.y : me.pos.y;
+      if (this.hitsPlatform(info, me.pos.x, yy, face, p) < 0) continue;
+      if (mine) {
+        // the very last piece: breaking it flips the arena to its final form (new platforms rise), so it is worth the fall
+        if (lastPiece && me.jumpsLeft > 0) continue;
+        if (p.hp <= 1) {
+          adj -= p.solid ? 30 : 5;
+          breaksOwn = true;
+        } else if (p.hp <= 2 && p.solid && this.lp.level >= 3) adj -= 3;
+      } else if (p.hp <= 1 && p.solid) adj += 9;
+      else if (p.hp <= 1) adj += 4;
+    }
+    if (breaksOwn) adj = Math.min(adj, -30);
+    return adj;
+  }
+
+  /**
+   * Neutral-time behaviours on stages with breakable pieces. Returns true when it set the stick. (1) Level 3+: leave a floor that is two
+   * hits from breaking while the opponent is around. (2) Level 2+: in the downtime (opponent far away) smash a nearby piece: the soft
+   * arches and the crown by standing on them, the tiles from the run of floor we stand on; never the last hits of the floor under us.
+   */
+  private breakableNeutral(me: BrawlFighterState, t: Opp, snap: BrawlSnapshot): boolean {
+    const stage = this.stage as StageInfo;
+    const lp = this.lp;
+    const c = this.cur;
+    if (!me.grounded) return false;
+    const mi = stage.platIndex(me.platformId);
+    if (mi < 0) return false;
+    const mp = stage.plats[mi];
+    // (1) a nearly broken solid floor under us while the opponent is near: walk to a sturdier piece of the same run (committed, then a cooldown)
+    if (snap.frame < this.relocUntil) {
+      const d = this.relocTx - me.pos.x;
+      if (Math.abs(d) > 0.5) {
+        this.mode = 'relocate';
+        c.moveX = sgn(d);
+        c.moveY = 0;
+        return true;
+      }
+      this.relocUntil = 0;
+      this.relocCool = snap.frame + 300;
+    }
+    if (lp.level >= 3 && snap.frame >= this.relocCool && mp.breakable && mp.solid && mp.hp <= 2 && t.dist < 5 && Math.abs(t.dy) < 4) {
+      stage.runSpan(mi, this.span);
+      let bj = -1;
+      let bd = Infinity;
+      for (let j = 0; j < stage.plats.length; j++) {
+        const q = stage.plats[j];
+        if (j === mi || !q.active || !q.solid || Math.abs(q.y - mp.y) > 0.12) continue;
+        if (q.x1 < this.span.lo - 0.1 || q.x0 > this.span.hi + 0.1) continue;
+        if (q.breakable && q.hp <= 2) continue;
+        const d = Math.abs((q.x0 + q.x1) * 0.5 - me.pos.x);
+        if (d < bd) {
+          bd = d;
+          bj = j;
+        }
+      }
+      if (bj >= 0) {
+        const q = stage.plats[bj];
+        this.relocTx = clamp(me.pos.x, q.x0 + 1.2, q.x1 - 1.2);
+        if (Math.abs(this.relocTx - me.pos.x) > 0.5) {
+          this.relocUntil = snap.frame + 90;
+          this.mode = 'relocate';
+          c.moveX = sgn(this.relocTx - me.pos.x);
+          c.moveY = 0;
+          return true;
+        }
+      }
+    }
+    // (2) downtime: smash a piece
+    if (this.smashAppetite <= 0) return false;
+    const near = (t.dist < 4.6 && Math.abs(t.dy) < 3.5) || (t.s.action === 'attack' && t.dist < 7) || t.offstage;
+    if (near) {
+      this.smashPlan = null;
+      return false;
+    }
+    // the last piece, or a long standoff: breaking even the floor under us is worth it (the final form catches us, a stall helps nobody)
+    const desperate = (stage.activeBreakCount() === 1 && me.jumpsLeft > 0) || this.pressureNow(snap) >= 0.5;
+    let sp = this.smashPlan;
+    if (sp) {
+      const P = stage.plats[sp.plat];
+      if (!P.active || snap.frame > sp.until) {
+        this.smashPlan = null;
+        this.smashNext = snap.frame + 20 + Math.floor(this.rng() * 40);
+        return false;
+      }
+      if (P.hp !== sp.hp) {
+        // a hit counted (ours or not): keep going on the same piece (re-plan the stance), no new roll
+        this.smashPlan = sp = this.makeSmashPlan(me, mi, t, snap, sp.plat, desperate);
+        if (!sp) return false;
+      }
+    } else {
+      if (snap.frame < this.smashNext) return false;
+      this.smashNext = snap.frame + 50 + Math.floor(this.rng() * 90);
+      if (this.rng() >= this.smashAppetite) return false;
+      this.smashPlan = sp = this.makeSmashPlan(me, mi, t, snap, -1, desperate);
+      if (!sp) return false;
+    }
+    const P = stage.plats[sp.plat];
+    if (sp.id === null) {
+      // go stand on the piece
+      if (me.platformId === P.id) {
+        this.smashPlan = null;
+        this.smashNext = 0;
+        return false;
+      }
+      if (!sp.jab && this.hopToward(me, sp.plat, snap)) {
+        this.mode = 'smash-go';
+        return true;
+      }
+      // cannot stand on it (out of reach of the graph): jump under it and hit it from below
+      if (!sp.jab) {
+        sp.jab = true;
+        sp.until = Math.min(sp.until, snap.frame + 240);
+      }
+      stage.runSpan(mi, this.span);
+      const jlo = Math.max(P.x0 + 0.8, this.span.lo + 0.5);
+      const jhi = Math.min(P.x1 - 0.8, this.span.hi - 0.5);
+      if (jlo > jhi || P.y - me.pos.y > 6.5) {
+        // not above the floor we stand on: nothing to jab from here
+        this.smashPlan = null;
+        this.smashNext = snap.frame + 150;
+        return false;
+      }
+      const gx = clamp(me.pos.x, jlo, jhi);
+      const gdx = gx - me.pos.x;
+      if (Math.abs(gdx) > 0.45) {
+        this.mode = 'smash-walk';
+        c.moveY = 0;
+        c.moveX = sgn(gdx) * (Math.abs(gdx) > 1.2 ? 1 : 0.5);
+        return true;
+      }
+      if (snap.frame >= this.jabUntil) {
+        this.jabPlat = sp.plat;
+        this.jabUntil = snap.frame + 75;
+        this.doJump(snap.frame, 0);
+        this.mode = 'smash-jump';
+        return true;
+      }
+      return false;
+    }
+    const dx = sp.x - me.pos.x;
+    if (Math.abs(dx) > 0.3) {
+      this.mode = 'smash-walk';
+      c.moveY = 0;
+      // the stance is always inside the floor we stand on (>= 0.5 m from its ends), so no edge check
+      c.moveX = sgn(dx) * (Math.abs(dx) > 1.2 ? 1 : 0.5);
+      return true;
+    }
+    this.mode = 'smash:' + sp.id;
+    this.pressCand(me, { id: sp.id, air: false, dir: sp.dir, score: 1, frame: 0, kill: false });
+    return true;
+  }
+
+  /** Pick the piece to smash (`want` >= 0: keep that one) and where to stand / which move to use. Null when nothing sensible. */
+  private makeSmashPlan(me: BrawlFighterState, mi: number, t: Opp, snap: BrawlSnapshot, want: number, desperate: boolean): SmashPlan | null {
+    const stage = this.stage as StageInfo;
+    const animal = this.animal as AnimalId;
+    const stats = this.stats;
+    const jumpH = (stats.jumpVel * stats.jumpVel) / (2 * GRAV * stats.gravityMult);
+    const airH = ((stats.airJumpVel * stats.airJumpVel) / (2 * GRAV * stats.gravityMult)) * (stats.maxJumps - 1);
+    const reach = jumpH + airH - 0.4;
+    stage.runSpan(mi, this.span);
+    const runLo = this.span.lo;
+    const runHi = this.span.hi;
+    const mp = stage.plats[mi];
+    let best: SmashPlan | null = null;
+    let bestCost = Infinity;
+    // top-down: the soft arches / crown first (they are only reachable from the floors below them), the floors last
+    let softRemain = false;
+    for (const j of stage.breakIdx) if (stage.plats[j].active && !stage.plats[j].solid) softRemain = true;
+    for (let n = 0; n < stage.breakIdx.length; n++) {
+      const j = stage.breakIdx[n];
+      if (want >= 0 && j !== want) continue;
+      const P = stage.plats[j];
+      if (!P.active || P.hp <= 0) continue;
+      let lo: number;
+      let hi: number;
+      let standY = mp.y;
+      if (P.solid) {
+        // from the floor we stand on: the piece must belong to our walkable run
+        if (Math.abs(P.y - mp.y) > 0.12 || P.x1 < runLo - 0.1 || P.x0 > runHi + 0.1) continue;
+        if (j === mi && P.hp <= 2 && !desperate) continue;
+        lo = runLo + 0.5;
+        hi = runHi - 0.5;
+      } else {
+        // a soft piece: stand on it; it must be within jump reach (or below us)
+        if (P.y - me.pos.y > reach + 2.2) continue;
+        if (!desperate && stage.platformBelow((P.x0 + P.x1) * 0.5, P.y - 0.4, stats.width, 0) < 0 && P.hp <= 1) continue;
+        if (me.platformId !== P.id) {
+          const goCost = Math.abs((P.x0 + P.x1) * 0.5 - me.pos.x) * 0.6 + Math.abs(P.y - me.pos.y) * 1.2 + 4 - P.y * 1.5;
+          if (goCost < bestCost) {
+            bestCost = goCost;
+            best = { plat: j, hp: P.hp, x: me.pos.x, id: null, dir: 1, until: snap.frame + 420 };
+          }
+          continue;
+        }
+        standY = P.y;
+        lo = P.x0 + 0.5;
+        hi = P.x1 - 0.5;
+      }
+      if (lo > hi) continue;
+      for (let x = lo; x <= hi + 1e-6; x += 0.5) {
+        // the floor under the stance must not be (or be about to become) the piece that breaks
+        const sup = stage.platformBelow(x, standY, stats.width, 0.05);
+        if (sup < 0) continue;
+        if (sup === j && P.solid && P.hp <= 2 && !desperate) continue;
+        for (const id of GROUND_IDS) {
+          if (id === 'heavyU' || MOVESETS[animal].moves[id].airOnly) continue;
+          const info = moveInfo(animal, id, false, 0);
+          if (info.travelX > 0.5 || info.stopsAtEdge || info.burrow) continue;
+          for (const face of [1, -1] as const) {
+            if (this.hitsPlatform(info, x, standY, face, P) < 0) continue;
+            // never also break the nearly broken floor under our own feet
+            let unsafe = false;
+            for (let m = 0; m < stage.breakIdx.length && !unsafe; m++) {
+              const q = stage.plats[stage.breakIdx[m]];
+              if (q === P || !q.active || q.hp > 2) continue;
+              if (desperate && q.hp > 0 && stage.activeBreakCount() <= 2) continue;
+              if ((stage.breakIdx[m] === mi || stage.breakIdx[m] === sup) && this.hitsPlatform(info, x, standY, face, q) >= 0) unsafe = true;
+            }
+            if (unsafe) continue;
+            const cost = Math.abs(x - me.pos.x) * 9 + info.first + info.endlag * 0.4 + (face !== me.facing ? 5 : 0) + (P.solid ? (softRemain ? 16 : 0) : -3 - P.y * 1.5) - (t.dist > 8 ? 0 : 4);
+            if (cost < bestCost) {
+              bestCost = cost;
+              best = { plat: j, hp: P.hp, x, id, dir: face, until: snap.frame + 420 };
+            }
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  // ── v1.6 platform graph (dynamic stages) ─────────────────────────────────
+
+  /** Walkable runs of the ACTIVE platforms: touching platforms at one height are one floor. */
+  private buildRuns(): void {
+    const stage = this.stage as StageInfo;
+    const pl = stage.plats;
+    const n = pl.length;
+    this.runOf.length = n;
+    this.runOf.fill(-1);
+    let r = 0;
+    const stack: number[] = [];
+    for (let i = 0; i < n; i++) {
+      if (!pl[i].active || this.runOf[i] >= 0) continue;
+      let lo = pl[i].x0;
+      let hi = pl[i].x1;
+      this.runOf[i] = r;
+      stack.length = 0;
+      stack.push(i);
+      while (stack.length > 0) {
+        const j = stack.pop() as number;
+        for (let k = 0; k < n; k++) {
+          const q = pl[k];
+          if (this.runOf[k] >= 0 || !q.active || Math.abs(q.y - pl[j].y) > 0.12) continue;
+          if (q.x1 < pl[j].x0 - 0.1 || q.x0 > pl[j].x1 + 0.1) continue;
+          this.runOf[k] = r;
+          lo = Math.min(lo, q.x0);
+          hi = Math.max(hi, q.x1);
+          stack.push(k);
+        }
+      }
+      this.runLo[r] = lo;
+      this.runHi[r] = hi;
+      this.runY[r] = pl[i].y;
+      r++;
+    }
+    this.runN = r;
+  }
+
+  /** The platform the opponent is (or is about to be) standing on, −1 when it is off the stage. */
+  private goalPlat(t: Opp): number {
+    const stage = this.stage as StageInfo;
+    if (t.grounded) return stage.platIndex(t.s.platformId);
+    if (t.hanging) return -1;
+    return stage.platformBelow(t.x, t.y, t.w, 0.3);
+  }
+
+  /** Verified one-step hop from run `a` to run `b` for this animal (cached per ~16 frames), or null. */
+  private hopEdge(a: number, b: number, snap: BrawlSnapshot): HopEdge | null {
+    const stage = this.stage as StageInfo;
+    const stamp = stage.version * 100000 + (snap.frame >> 4);
+    if (stamp !== this.hopStamp) {
+      this.hopCache.clear();
+      this.hopStamp = stamp;
+    }
+    const key = a * 64 + b;
+    const hit = this.hopCache.get(key);
+    if (hit !== undefined) return hit;
+    const e = this.computeHop(a, b);
+    this.hopCache.set(key, e);
+    return e;
+  }
+
+  private computeHop(a: number, b: number): HopEdge | null {
+    const stage = this.stage as StageInfo;
+    const st = this.stats;
+    const env = this.recEnv as RecEnv;
+    const aLo = this.runLo[a];
+    const aHi = this.runHi[a];
+    const bLo = this.runLo[b];
+    const bHi = this.runHi[b];
+    const yA = this.runY[a];
+    const yB = this.runY[b];
+    const jumpH = (st.jumpVel * st.jumpVel) / (2 * GRAV * st.gravityMult);
+    const airH = ((st.airJumpVel * st.airJumpVel) / (2 * GRAV * st.gravityMult)) * (st.maxJumps - 1);
+    const rise = yB - yA;
+    if (rise > jumpH + airH + 0.3) return null;
+    const gap = bLo > aHi ? bLo - aHi : aLo > bHi ? aLo - bHi : 0;
+    if (gap > 9 || (rise < -9 && gap > 4)) return null;
+    const dirB: 1 | -1 = bLo + bHi > aLo + aHi ? 1 : -1;
+    const up = rise > 0.4;
+    // a soft floor can be dropped through where the lower run lies straight under it
+    let aSoft = true;
+    for (let i = 0; i < stage.plats.length; i++) if (this.runOf[i] === a && stage.plats[i].solid) aSoft = false;
+    const xs: number[] = [dirB > 0 ? aHi - 0.3 : aLo + 0.3];
+    if (gap === 0) xs.push(clamp((Math.max(aLo, bLo) + Math.min(aHi, bHi)) * 0.5, aLo + 0.4, aHi - 0.4));
+    for (const x of xs) {
+      const edge = x === xs[0];
+      const dir: 1 | -1 = gap > 0 || edge ? dirB : (bLo + bHi) * 0.5 >= x ? 1 : -1;
+      const interiorDrop = !up && !edge && aSoft && gap === 0;
+      if (!up && !edge && !aSoft) continue;
+      const tx = bHi - bLo < 1.8 ? (bLo + bHi) * 0.5 : clamp(x + (gap > 0 ? dir * 2.5 : 0), bLo + 0.9, bHi - 0.9);
+      const s0: RecState = {
+        // a walk-off starts just past the end of the floor (inside the support tolerance the sim would land on it again at once)
+        x: edge && !up ? (dir > 0 ? aHi + 0.45 : aLo - 0.45) : x,
+        y: interiorDrop ? yA - 0.1 : edge && !up ? yA - 0.02 : yA,
+        vx: up ? (edge ? dir * st.airSpeed * 0.5 : 0) : edge ? dir * st.runSpeed * 0.8 : 0,
+        vy: up ? st.jumpVel : 0,
+        jumps: st.maxJumps - 1,
+        recoveryUsed: false,
+        ledgeCd: 0,
+        facing: dir,
+        freeFall: false,
+      };
+      const jys = up ? [yB + 1.2, yB - 0.8] : [NEG_INF, yB + 1.2];
+      for (const jy of jys) {
+        const pol: RecPolicy = { tx, glide: st.glideFall !== undefined, jumpY: jy, heavyY: NEG_INF, heavyLast: true };
+        const r = simRecovery(env, s0, pol, 150);
+        if (!r.ok) continue;
+        const landRun = r.kind === 'land' ? this.runOf[r.plat] : r.kind === 'ledge' ? this.runOf[stage.ledges[r.ledge].plat] : -1;
+        if (landRun !== b) continue;
+        let rep = -1;
+        for (let i = 0; i < stage.plats.length; i++) {
+          if (this.runOf[i] !== b) continue;
+          if (rep < 0 || (tx >= stage.plats[i].x0 && tx <= stage.plats[i].x1)) rep = i;
+        }
+        return { to: rep, launchX: x, dir, kind: up ? 'jump' : interiorDrop ? 'drop' : 'walk', tx, jumpY: jy };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Route the bot over the platform graph to platform `goal` (breadth first over verified hops, at most 3 deep; when the goal cannot be
+   * reached, to the reachable floor nearest to it). Walks to the launch point and starts the hop. Returns true when it set the stick.
+   */
+  private hopToward(me: BrawlFighterState, goal: number, snap: BrawlSnapshot, waitPressure = 0): boolean {
+    if (!me.grounded || this.recEnv === null) return false;
+    // a walk-off / drop that has started is committed (no back and forth around the launch point)
+    if (snap.frame < this.hopCommitUntil) {
+      this.cur.moveX = this.hopCommitX;
+      this.cur.moveY = this.hopCommitY;
+      this.mode = 'hop-walk';
+      return true;
+    }
+    if (goal < 0) return false;
+    const stage = this.stage as StageInfo;
+    const mi = stage.platIndex(me.platformId);
+    if (mi < 0) return false;
+    this.buildRuns();
+    const ra = this.runOf[mi];
+    const rb = this.runOf[goal];
+    if (ra < 0 || rb < 0 || ra === rb) return false;
+    const n = this.runN;
+    const prev: number[] = new Array<number>(n).fill(-2);
+    const depth: number[] = new Array<number>(n).fill(0);
+    const q: number[] = [ra];
+    prev[ra] = -1;
+    let found = false;
+    for (let h = 0; h < q.length && !found; h++) {
+      const r = q[h];
+      if (depth[r] >= 3) continue;
+      for (let k = 0; k < n; k++) {
+        if (prev[k] !== -2) continue;
+        if (!this.hopEdge(r, k, snap)) continue;
+        prev[k] = r;
+        depth[k] = depth[r] + 1;
+        q.push(k);
+        if (k === rb) {
+          found = true;
+          break;
+        }
+      }
+    }
+    let end = rb;
+    if (!found) {
+      // nearest reachable floor to the goal, if it brings us clearly closer
+      const gx = (this.runLo[rb] + this.runHi[rb]) * 0.5;
+      const dist = (r: number): number => Math.abs((this.runLo[r] + this.runHi[r]) * 0.5 - gx) * 0.5 + Math.abs(this.runY[r] - this.runY[rb]);
+      let bd = dist(ra) - 1.5;
+      end = -1;
+      for (let i = 1; i < q.length; i++) {
+        const d = dist(q[i]);
+        if (d < bd) {
+          bd = d;
+          end = q[i];
+        }
+      }
+      if (end < 0) return false;
+    }
+    // first hop of the path
+    let step = end;
+    while (prev[step] !== ra && prev[step] >= 0) step = prev[step];
+    const e = this.hopEdge(ra, step, snap);
+    if (!e) return false;
+    // chasing an opponent over a gap: a strong bot lets it come first (the stall breaker `pressure` ends the standoff)
+    if (waitPressure > 0 && e.kind !== 'jump' && this.pressureNow(snap) < waitPressure) return false;
+    const c = this.cur;
+    const dx = e.launchX - me.pos.x;
+    if (Math.abs(dx) > 0.35) {
+      c.moveX = sgn(dx) * (Math.abs(dx) > 1.2 ? 1 : 0.5);
+      c.moveY = 0;
+      this.mode = 'hop-go';
+      return true;
+    }
+    this.crossGoal = e.to;
+    this.crossUntil = snap.frame + 110;
+    this.hopUntil = snap.frame + 110;
+    this.hopTx = e.tx;
+    this.hopJumpY = e.jumpY;
+    if (e.kind === 'jump') {
+      this.doJump(snap.frame, e.dir * 0.5);
+      this.mode = 'hop-jump';
+    } else if (e.kind === 'drop') {
+      c.moveX = 0;
+      c.moveY = -1;
+      this.mode = 'hop-drop';
+      this.hopCommitUntil = snap.frame + 12;
+      this.hopCommitX = 0;
+      this.hopCommitY = -1;
+    } else {
+      c.moveX = e.dir;
+      c.moveY = 0;
+      this.mode = 'hop-walk';
+      this.hopCommitUntil = snap.frame + 25;
+      this.hopCommitX = e.dir;
+      this.hopCommitY = 0;
+    }
+    return true;
+  }
+
+  /** Airborne under a breakable piece: press the aerial that will overlap it by the time it starts (the piece is hit from below). */
+  private jabAttack(me: BrawlFighterState): boolean {
+    const stage = this.stage as StageInfo;
+    const P = stage.plats[this.jabPlat];
+    if (!P || !P.active || P.hp <= 0 || this.animal === null) {
+      this.jabUntil = 0;
+      return false;
+    }
+    const gm = this.stats.gravityMult;
+    let bestId: MoveId | null = null;
+    let bestFace: 1 | -1 = me.facing;
+    let bestFirst = 99;
+    for (const id of AIR_IDS) {
+      if (MOVESETS[this.animal].moves[id].groundOnly) continue;
+      const info = moveInfo(this.animal, id, true, 0);
+      const t = info.first / 60;
+      const y = me.pos.y + me.vel.y * t - 0.5 * GRAV * gm * t * t;
+      const x = me.pos.x + me.vel.x * t * 0.9;
+      for (const face of id.endsWith('S') ? ([me.facing, -me.facing] as (1 | -1)[]) : ([me.facing] as (1 | -1)[])) {
+        if (this.hitsPlatform(info, x, y, face, P) < 0) continue;
+        // never also hit a nearly broken floor we are about to land on
+        if (info.first < bestFirst) {
+          bestFirst = info.first;
+          bestId = id;
+          bestFace = face;
+        }
+      }
+    }
+    if (bestId === null) return false;
+    this.mode = 'smash-jab:' + bestId;
+    this.jabUntil = 0;
+    this.pressCand(me, { id: bestId, air: true, dir: bestFace, score: 1, frame: 0, kill: false });
+    return true;
+  }
+
+  /** Level 3+ on a breakable arena: after 35-60 s without any exchange (the longer the better its position) the bot walks off its floor and does not recover. */
+  private stalemateDive(me: BrawlFighterState, t: Opp, snap: BrawlSnapshot): boolean {
+    const stage = this.stage as StageInfo;
+    if (snap.frame < this.diveUntil) {
+      this.mode = 'dive';
+      this.cur.moveX = this.diveDir;
+      this.cur.moveY = 0;
+      return true;
+    }
+    if (this.lp.level < 3 || me.stocks < 2 || !me.grounded) return false;
+    if (stage.activeBreakCount() === 0) return false;
+    // not ahead: 35 s; far ahead (2+ stocks): 45 s; a narrow lead only waits a little longer (60 s) - the clock must not decide a standoff
+    const ahead = me.stocks > t.s.stocks || (me.stocks === t.s.stocks && me.percent < t.s.percent);
+    const wait = !ahead ? 2100 : me.stocks - t.s.stocks >= 2 ? 2700 : 3600;
+    if (snap.frame - this.lastAny < wait) return false;
+    const mi = stage.platIndex(me.platformId);
+    if (mi < 0) return false;
+    this.buildRuns();
+    const goal = this.goalPlat(t);
+    if (goal >= 0 && this.runOf[goal] === this.runOf[mi]) return false;
+    // the edge towards the middle of the arena
+    this.diveDir = me.pos.x > stage.centerX ? -1 : 1;
+    this.diveUntil = snap.frame + 400;
+    this.mode = 'dive';
+    this.cur.moveX = this.diveDir;
+    this.cur.moveY = 0;
+    return true;
+  }
+
+  /** Standing still for a long time with nothing to do: walk to another spot of the same floor (the streak ends, the situation changes). */
+  private stillBored(me: BrawlFighterState, snap: BrawlSnapshot): boolean {
+    const still = snap.frame - this.stillSince;
+    if (still < 200 && snap.frame >= this.boredUntil) return false;
+    const stage = this.stage as StageInfo;
+    const mi = stage.platIndex(me.platformId);
+    if (mi < 0) return false;
+    if (snap.frame >= this.boredUntil || !Number.isFinite(this.boredTx)) {
+      stage.runSpan(mi, this.span);
+      const lo = this.span.lo + 1.0;
+      const hi = this.span.hi - 1.0;
+      if (lo >= hi) return false;
+      // the farther end of the floor (always well inside it, so no edge check is needed)
+      const far = me.pos.x - lo > hi - me.pos.x ? lo : hi;
+      this.boredTx = far;
+      this.boredUntil = snap.frame + 150;
+    }
+    const d = this.boredTx - me.pos.x;
+    if (Math.abs(d) < 0.5) {
+      this.boredUntil = 0;
+      this.boredTx = NaN;
+      return false;
+    }
+    this.mode = 'bored';
+    this.cur.moveX = sgn(d);
+    this.cur.moveY = 0;
+    return true;
+  }
+
   // ── airborne (not recovering) ───────────────────────────────────────────
 
   private doAir(me: BrawlFighterState, snap: BrawlSnapshot): void {
@@ -1656,6 +2438,18 @@ export class BrawlBot implements BrawlBotApi {
       this.mode = 'airdodge';
       return;
     }
+    if (snap.frame < this.jabUntil && this.jabPlat >= 0 && tgt.dist > 4.6) {
+      if (this.jabAttack(me)) return;
+      // not high enough yet: spend the air jump at the top of the first jump
+      const jp = (this.stage as StageInfo).plats[this.jabPlat];
+      if (jp && me.jumpsLeft > 0 && me.vel.y <= 1.5 && me.pos.y < jp.y - 0.4 && !me.freeFall) {
+        c.jump = true;
+        c.jumpHeld = true;
+        this.jumpHoldUntil = snap.frame + 10;
+        this.mode = 'smash-jump';
+        return;
+      }
+    }
     const cand = this.bestAttack(me, tgt, true, snap, thr);
     if (cand) {
       this.mode = 'air:' + cand.id;
@@ -1665,7 +2459,16 @@ export class BrawlBot implements BrawlBotApi {
     // drift toward the target, but never off the stage unless it is safe
     let mx = clamp(tgt.dx * 0.6, -1, 1);
     if (Math.abs(tgt.dx) < 0.8) mx = 0;
-    if (snap.frame < this.crossUntil && this.crossGoal >= 0) mx = sgn(tgt.dx);
+    if (snap.frame < this.hopUntil && Number.isFinite(this.hopTx)) {
+      // a verified hop is in flight: steer onto the landing floor and spend the air jump where the plan did
+      mx = steerTo(me.pos.x, me.vel.x, this.hopTx, this.stats.airSpeed);
+      if (me.jumpsLeft > 0 && me.vel.y <= 1.0 && me.pos.y <= this.hopJumpY && !me.freeFall) {
+        c.jump = true;
+        c.jumpHeld = true;
+        this.jumpHoldUntil = snap.frame + 10;
+      }
+      this.mode = 'hop-air';
+    } else if (snap.frame < this.crossUntil && this.crossGoal >= 0) mx = sgn(tgt.dx);
     else if (lp.edgeSafe > this.rng()) {
       const nextX = me.pos.x + me.vel.x * 0.25 + mx * 1.2;
       if (stage.platformBelow(nextX, me.pos.y, this.stats.width, 0.3) < 0 && stage.platformBelow(me.pos.x, me.pos.y, this.stats.width, 0.3) >= 0) {

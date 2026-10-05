@@ -427,26 +427,37 @@ export function buildMove(animal: AnimalId, body: MoveBody, air: boolean, chain:
   const assemble = (La: number, ampA: number, pow: number, useLoad = true): Key[] => {
     const keys: Key[] = [{ f: 0, v: Zv, ease: 'lin' }];
     const A = vecOf(spec.A(B0));
-    applyWindup(A, B0, ctx, spec, prof, solveRole, { weight, amp: wAmp });
-    for (let i = 0; i < DOF_N; i++) A[i] *= ampA;
-    if (La >= 0.05) keys.push({ f: La, v: finish(A), ease: 'out', pow: Math.max(1, Math.min(1.7, pow + 0.25)) });
-    // "Load": a slightly deeper coil just before the release, so the wind-up keeps building instead of parking.
-    const Rl = useLoad && strikeF >= 8 && wAmp > 0.25 && La >= 0.05 ? Math.min(3.5, Math.max(1.5, 0.2 * strikeF)) : 0;
-    if (Rl > 0 && strikeF - Rl > La + 0.75) {
-      const L = copyVec(A);
-      for (let i = 0; i < DOF_N; i++) L[i] = A[i] * (1 + 0.14 * wAmp);
-      keys.push({ f: strikeF - Rl, v: finish(L), ease: 'inout' });
-    }
-    if (spec.pre) {
-      for (const p of spec.pre) {
-        const pf = Math.max(La + 0.25, strikeF - p.before);
-        if (pf < strikeF - 0.01) {
-          const pv = vecOf(p.v(B0));
-          keys.push({ f: pf, v: finish(pv), ease: 'inout' });
+    if (spec.script !== undefined) {
+      // WP-B2: an authored script replaces the anticipation / load / pre keys and the wind-up layer entirely.
+      for (const s of spec.script) {
+        if (s.f <= 0.01 || s.f >= strikeF - 0.01) continue;
+        const sv = vecOf(typeof s.v === 'function' ? s.v(B0) : s.v);
+        keys.push({ f: s.f, v: finish(sv), ease: s.ease ?? 'inout', pow: s.pow });
+      }
+      for (let i = 0; i < DOF_N; i++) A[i] *= ampA;
+      keys.push({ f: strikeF, v: finish(B0), ease: spec.strikeEase ?? 'inout', pow: spec.strikePow });
+    } else {
+      applyWindup(A, B0, ctx, spec, prof, solveRole, { weight, amp: wAmp });
+      for (let i = 0; i < DOF_N; i++) A[i] *= ampA;
+      if (La >= 0.05) keys.push({ f: La, v: finish(A), ease: 'out', pow: Math.max(1, Math.min(1.7, pow + 0.25)) });
+      // "Load": a slightly deeper coil just before the release, so the wind-up keeps building instead of parking.
+      const Rl = useLoad && strikeF >= 8 && wAmp > 0.25 && La >= 0.05 ? Math.min(3.5, Math.max(1.5, 0.2 * strikeF)) : 0;
+      if (Rl > 0 && strikeF - Rl > La + 0.75) {
+        const L = copyVec(A);
+        for (let i = 0; i < DOF_N; i++) L[i] = A[i] * (1 + 0.14 * wAmp);
+        keys.push({ f: strikeF - Rl, v: finish(L), ease: 'inout' });
+      }
+      if (spec.pre) {
+        for (const p of spec.pre) {
+          const pf = Math.max(La + 0.25, strikeF - p.before);
+          if (pf < strikeF - 0.01) {
+            const pv = vecOf(p.v(B0));
+            keys.push({ f: pf, v: finish(pv), ease: 'inout' });
+          }
         }
       }
+      keys.push({ f: strikeF, v: finish(B0), ease: 'in', pow });
     }
-    keys.push({ f: strikeF, v: finish(B0), ease: 'in', pow });
     for (let i = 1; i < solved.length; i++) {
       let v = solved[i];
       if (drift !== null && i === solved.length - 1) {
@@ -494,7 +505,7 @@ export function buildMove(animal: AnimalId, body: MoveBody, air: boolean, chain:
       for (let i = 0; i < DOF_N; i++) Df[i] += (endV[i] - Df[i]) * 0.1;
       keys.push({ f: activeEnd + ft + dwell, v: Df, ease: 'inout' });
     }
-    keys.push({ f: total, v: endV, ease: 'inout' });
+    keys.push({ f: total, v: endV, ease: spec.settleEase ?? 'inout', pow: spec.settlePow });
     keys.sort((a, b) => a.f - b.f);
     return keys;
   };
@@ -506,7 +517,8 @@ export function buildMove(animal: AnimalId, body: MoveBody, air: boolean, chain:
   const La0 = strikeF <= 2 ? Math.max(0.5, strikeF * 0.5) : Math.min(Math.max(0.55 * strikeF, 1.5), Math.max(1.0, strikeF - 1.2));
   const bf = entryBlendFrames(strikeF);
   const tries: [number, number, number, boolean][] = [];
-  for (const amp of [1, 0.7, 0.4, 0.15, 0]) for (const lf of [1, 0.6, 0.2]) for (const pow of [1.45, 1.2, 1.0]) for (const ld of [true, false]) tries.push([lf === 0.2 && La0 < 3 ? 0 : La0 * lf, amp, pow, ld]);
+  if (spec.script !== undefined) tries.push([spec.script.length > 0 ? spec.script[0].f : 0, 1, 1.45, false]); // an authored script is built once, as written
+  else for (const amp of [1, 0.7, 0.4, 0.15, 0]) for (const lf of [1, 0.6, 0.2]) for (const pow of [1.45, 1.2, 1.0]) for (const ld of [true, false]) tries.push([lf === 0.2 && La0 < 3 ? 0 : La0 * lf, amp, pow, ld]);
   let best: { tl: Timeline; maxStep: number; maxStrike: number; score: number; La: number } | null = null;
   const nTouched = solver.cp.touched.length;
   const eA = new Float64Array(nTouched * 3);

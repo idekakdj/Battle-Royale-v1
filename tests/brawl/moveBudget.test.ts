@@ -42,11 +42,28 @@ const BUDGET: Record<MoveId, { su: [number, number]; act: [number, number]; rec:
   heavyU: { su: [6, 14], act: [8, 24], rec: [18, 30], dmg: [7, 12], heavy: true },
 };
 
+/**
+ * v1.6 budget exceptions (all documented in docs/CHAMPIONS-LEAGUE-BALANCE.md, "v1.6 changes"):
+ *  - Burrow Strike (mole.heavyD ground form): 24-frame startup (6 frames of digging + 18 underground frames); the aerial drill-down keeps
+ *    the normal 12-22 band. Damage and recovery stay inside the normal heavyD band.
+ *  - Panther damage: the user asked for a weaker panther, but nearly every panther slot already sat at the floor of its band, so the
+ *    floor is relaxed to 66 % for the panther only (lightN 3 -> 2 on the last link, lightS 6 -> 5, ...). A dedicated test below checks the
+ *    panther really lost 8-20 % of its total slot damage, so this is not a free pass.
+ */
+const DMG_FLOOR_RELAX: Partial<Record<AnimalId, number>> = { panther: 0.66 };
+
+function budgetOf(nb: { animal: AnimalId; id: MoveId; kind: 'ground' | 'air' | 'chain' }): (typeof BUDGET)[MoveId] {
+  const b = BUDGET[nb.id];
+  if (nb.animal === 'mole' && nb.id === 'heavyD' && nb.kind === 'ground') return { ...b, su: [b.su[0], 24] };
+  return b;
+}
+
 /** Plan §3.1 roster table (the data may deviate by at most ±15 % after the WP-T balance pass). */
 const PLAN: Record<AnimalId, Partial<CharacterStats> & { weight: number }> = {
   lion: { weight: 100, walkSpeed: 4.6, runSpeed: 8.6, airSpeed: 6.6, jumpVel: 14.5, airJumpVel: 13.0, maxJumps: 2, gravityMult: 1.0, fallSpeed: 18, fastFallSpeed: 26, width: 1.1, height: 1.5 },
   gorilla: { weight: 125, walkSpeed: 3.8, runSpeed: 7.2, airSpeed: 5.4, jumpVel: 13.5, airJumpVel: 12.0, maxJumps: 2, gravityMult: 1.1, fallSpeed: 19, fastFallSpeed: 27, width: 1.5, height: 2.0 },
-  crocodile: { weight: 115, walkSpeed: 3.6, runSpeed: 7.0, airSpeed: 5.0, jumpVel: 12.5, airJumpVel: 11.5, maxJumps: 2, gravityMult: 1.15, fallSpeed: 21, fastFallSpeed: 28, width: 2.0, height: 1.0 },
+  // v1.6: the crocodile's base (ground) jump HEIGHT was doubled on request (apex = v^2 / 2g, so jumpVel = 12.5 x sqrt 2); every other stat stays within +-15 %
+  crocodile: { weight: 115, walkSpeed: 3.6, runSpeed: 7.0, airSpeed: 5.0, jumpVel: 12.5 * Math.SQRT2, airJumpVel: 11.5, maxJumps: 2, gravityMult: 1.15, fallSpeed: 21, fastFallSpeed: 28, width: 2.0, height: 1.0 },
   hippo: { weight: 140, walkSpeed: 3.2, runSpeed: 6.2, airSpeed: 4.6, jumpVel: 12.5, airJumpVel: 11.0, maxJumps: 2, gravityMult: 1.2, fallSpeed: 22, fastFallSpeed: 29, width: 1.8, height: 1.5 },
   rhino: { weight: 130, walkSpeed: 3.6, runSpeed: 7.6, airSpeed: 5.0, jumpVel: 13.0, airJumpVel: 11.5, maxJumps: 2, gravityMult: 1.15, fallSpeed: 21, fastFallSpeed: 28, width: 1.9, height: 1.7 },
   eagle: { weight: 78, walkSpeed: 5.2, runSpeed: 9.4, airSpeed: 8.0, jumpVel: 15.0, airJumpVel: 13.5, maxJumps: 4, gravityMult: 0.8, fallSpeed: 14, fastFallSpeed: 24, glideFall: 6.5, width: 1.0, height: 1.2 },
@@ -139,7 +156,7 @@ describe('registry', () => {
 describe('frame budgets (plan §3)', () => {
   it('every body respects the slot startup / active / recovery ranges and the 62-frame cap', () => {
     for (const nb of allBodies()) {
-      const bud = BUDGET[nb.id];
+      const bud = budgetOf(nb);
       const b = nb.body;
       expect(b.startup, `${nb.label} startup`).toBeGreaterThanOrEqual(bud.su[0]);
       expect(b.startup, `${nb.label} startup`).toBeLessThanOrEqual(bud.su[1]);
@@ -154,19 +171,20 @@ describe('frame budgets (plan §3)', () => {
   it('damage stays inside the slot bands (per victim; chain hits 3-5 and chain totals 9-14)', () => {
     for (const nb of allBodies()) {
       const [lo, hi] = BUDGET[nb.id].dmg;
+      const relax = DMG_FLOOR_RELAX[nb.animal] ?? 1;
       const d = victimDamage(nb.body);
       if (nb.id === 'lightN') {
-        expect(d.base, nb.label).toBeGreaterThanOrEqual(3);
+        expect(d.base, nb.label).toBeGreaterThanOrEqual(3 * relax - 1e-9);
         expect(d.max, nb.label).toBeLessThanOrEqual(5);
       } else {
-        expect(d.base, `${nb.label} base damage`).toBeGreaterThanOrEqual(lo);
+        expect(d.base, `${nb.label} base damage`).toBeGreaterThanOrEqual(lo * relax - 1e-9);
         expect(d.max, `${nb.label} max (sweetspot) damage`).toBeLessThanOrEqual(hi);
       }
     }
     for (const a of ANIMALS) {
       const m = MOVESETS[a].moves.lightN;
       const total = [m.ground, ...(m.chain ?? [])].reduce((s, b) => s + victimDamage(b).base, 0);
-      expect(total, `${a} lightN chain total`).toBeGreaterThanOrEqual(9);
+      expect(total, `${a} lightN chain total`).toBeGreaterThanOrEqual(9 * (DMG_FLOOR_RELAX[a] ?? 1) - 1e-9);
       expect(total, `${a} lightN chain total`).toBeLessThanOrEqual(14);
     }
   });
@@ -272,15 +290,20 @@ describe('hitboxes, motion, armor, cancels', () => {
     }
   });
 
-  it('armor only on gorilla / hippo / rhino heavies; invulnerability only on the panther (Shadow Dash, Shadow Leap)', () => {
+  it('armor only on gorilla / hippo / rhino heavies; invulnerability only on the panther (Shadow Dash, Shadow Leap) and the ground Burrow Strike of the mole', () => {
     for (const nb of allBodies()) {
       if (nb.body.armor) {
         expect(['gorilla', 'hippo', 'rhino'], `${nb.label} armor`).toContain(nb.animal);
         expect(BUDGET[nb.id].heavy, `${nb.label} armor on a heavy`).toBe(true);
       }
       if (nb.body.invuln) {
-        expect(nb.animal, `${nb.label} invuln`).toBe('panther');
-        expect(['heavyS', 'heavyU']).toContain(nb.id);
+        if (nb.animal === 'mole') {
+          expect(nb.id, `${nb.label} invuln`).toBe('heavyD');
+          expect(nb.kind, `${nb.label} invuln is ground-only`).toBe('ground');
+        } else {
+          expect(nb.animal, `${nb.label} invuln`).toBe('panther');
+          expect(['heavyS', 'heavyU']).toContain(nb.id);
+        }
       }
     }
     for (const a of ['gorilla', 'hippo', 'rhino'] as const) {
@@ -360,7 +383,8 @@ describe('hitboxes, motion, armor, cancels', () => {
     expect(fx('crocodile', 'heavyN', false)).toContain('pull');
     expect(fx('python', 'heavyN', false)).toContain('pull');
     expect(fx('python', 'heavyN', false)).toContain('stun');
-    expect(fx('mole', 'heavyD', false)).toContain('bury');
+    // v1.6: the mole's ground heavyD no longer buries: it is the underground Burrow Strike, an upward launcher
+    expect(fx('mole', 'heavyD', false)).not.toContain('bury');
     expect(fx('lion', 'heavyN', false)).toContain('flinch');
     // nobody else spikes by accident
     for (const nb of allBodies()) {
@@ -438,11 +462,15 @@ describe('stats (plan §3.1, ±15 %: WP-T retune)', () => {
 });
 
 describe('balance', () => {
-  it('power index (damage x knockback value per frame) stays within ±15 % of the roster mean', () => {
+  it('power index (damage x knockback value per frame) stays within ±15 % of the roster mean (±20 % for the v1.6 panther nerf / mole buff)', () => {
+    // v1.6: the user asked for a weaker panther (about -13 % damage) and a stronger mole (+1 damage on most hits and a real up-launching
+    // Burrow Strike instead of the weak burying one), so those two sit a little further from the mean by design; the balance sweep is the
+    // real check (docs/CHAMPIONS-LEAGUE-BALANCE.md, "v1.6 changes").
+    const tol: Partial<Record<AnimalId, number>> = { panther: 0.2, mole: 0.2 };
     const idx = ANIMALS.map((a) => powerIndex(MOVESETS[a]));
     const mean = idx.reduce((s, v) => s + v, 0) / idx.length;
     idx.forEach((v, i) => {
-      expect(Math.abs(v / mean - 1), `${ANIMALS[i]} power index ${v.toFixed(3)} vs mean ${mean.toFixed(3)}`).toBeLessThanOrEqual(0.15);
+      expect(Math.abs(v / mean - 1), `${ANIMALS[i]} power index ${v.toFixed(3)} vs mean ${mean.toFixed(3)}`).toBeLessThanOrEqual(tol[ANIMALS[i]] ?? 0.15);
     });
   });
 
@@ -522,6 +550,71 @@ describe('balance', () => {
   });
 });
 
+describe('v1.6 requested balance changes (panther weaker, crocodile taller jump, mole stronger)', () => {
+  /** Per-slot victim damage of the v1.5 data (docs/CHAMPIONS-LEAGUE-BALANCE.md, "v1.6 changes"). */
+  const PANTHER_V15: Record<MoveId, number> = { lightN: 9, lightS: 6, lightD: 5, lightU: 6, heavyN: 10, heavyS: 15, heavyD: 12, heavyU: 7 };
+  const MOLE_V15: Record<MoveId, number> = { lightN: 12, lightS: 8, lightD: 7, lightU: 8, heavyN: 13, heavyS: 14, heavyD: 12, heavyU: 10 };
+  const slotDamage = (a: AnimalId, id: MoveId): number => {
+    const m = MOVESETS[a].moves[id];
+    return [m.ground, ...(m.chain ?? [])].reduce((sum, b) => sum + victimDamage(b).base, 0);
+  };
+
+  it('panther: no slot deals more than before and the total lost 8-20 % (this is what the relaxed damage floor is for)', () => {
+    let before = 0;
+    let after = 0;
+    for (const id of MOVE_IDS) {
+      expect(slotDamage('panther', id), `panther.${id}`).toBeLessThanOrEqual(PANTHER_V15[id]);
+      before += PANTHER_V15[id];
+      after += slotDamage('panther', id);
+    }
+    expect(after / before).toBeGreaterThanOrEqual(0.8);
+    expect(after / before).toBeLessThanOrEqual(0.92);
+  });
+
+  it('panther: Shadow Slash and Shadow Dash reach 10-20 % less far (hitbox reach + lunge / dash travel)', () => {
+    const travel = (b: MoveBody): number => (b.motion ?? []).reduce((sum, m) => sum + (Math.abs(m.vx ?? 0) * (m.to - m.from)) / 60, 0);
+    const slash = getMoveBody('panther', 'lightS', false);
+    const dash = getMoveBody('panther', 'heavyS', false);
+    const slashReach = bodyReach(slash) + travel(slash);
+    const dashReach = bodyReach(dash) + travel(dash);
+    expect(slashReach, 'Shadow Slash total reach (v1.5: 1.8 + 0.42 = 2.22 m)').toBeLessThanOrEqual(2.22 * 0.9);
+    expect(slashReach).toBeGreaterThanOrEqual(2.22 * 0.8);
+    expect(dashReach, 'Shadow Dash total reach (v1.5: 2.1 + 2.5 = 4.6 m)').toBeLessThanOrEqual(4.6 * 0.9);
+    expect(dashReach).toBeGreaterThanOrEqual(4.6 * 0.8);
+    expect(travel(dash), 'dash distance (v1.5: 2.5 m)').toBeLessThanOrEqual(2.5 * 0.9);
+    // identity kept: still the fastest runner after the eagle, fast light moves, dash with invulnerable start
+    expect(dash.invuln).toBeDefined();
+    expect(MOVESETS.panther.stats.runSpeed).toBeGreaterThanOrEqual(9);
+  });
+
+  it('crocodile: ground jump apex doubled (jumpVel x sqrt 2), air jump and every other stat untouched', () => {
+    const s = MOVESETS.crocodile.stats;
+    expect(s.jumpVel).toBeCloseTo(12.5 * Math.SQRT2, 3);
+    expect(s.airJumpVel).toBe(11.5);
+    expect(s.gravityMult).toBe(1.15);
+  });
+
+  it('mole: +1 damage on most hits (the non-heavyD slots total +8-14 %, no slot lowered); the burrow is the new ground heavyD', () => {
+    let before = 0;
+    let after = 0;
+    for (const id of MOVE_IDS) {
+      expect(slotDamage('mole', id), `mole.${id}`).toBeGreaterThanOrEqual(MOLE_V15[id]);
+      if (id === 'heavyD') continue;
+      before += MOLE_V15[id];
+      after += slotDamage('mole', id);
+    }
+    expect(after / before).toBeGreaterThanOrEqual(1.08);
+    expect(after / before).toBeLessThanOrEqual(1.14);
+    const burrow = getMoveBody('mole', 'heavyD', false);
+    expect(burrow.name).toBe('Burrow Strike');
+    expect(burrow.archetype).toBe('burrow');
+    expect(burrow.burrow).toBeDefined();
+    expect(totalFrames(burrow)).toBeLessThanOrEqual(MAX_MOVE_FRAMES);
+    // the aerial form is the old drill-down, with no burrow window
+    expect(getMoveBody('mole', 'heavyD', true).burrow).toBeUndefined();
+  });
+});
+
 describe('stages', () => {
   it('exports both stages with matching ids', () => {
     expect(Object.keys(STAGES).sort()).toEqual([...STAGE_IDS].sort());
@@ -555,9 +648,10 @@ describe('stages', () => {
           expect(p.moving.phase).toBeLessThan(1);
         }
       }
-      // solid platforms: ledges on both ends in both stages
+      // solid platforms: ledges on both ends — except the v1.6 breakable tiles, which only have one on the side that faces a neighbour
       for (const p of st.platforms.filter((q) => q.kind === 'solid')) {
-        expect(p.ledgeLeft && p.ledgeRight, `${id}.${p.id} has both ledges`).toBe(true);
+        if (p.breakable) expect(p.ledgeLeft || p.ledgeRight, `${id}.${p.id} has a ledge`).toBe(true);
+        else expect(p.ledgeLeft && p.ledgeRight, `${id}.${p.id} has both ledges`).toBe(true);
       }
     }
   });

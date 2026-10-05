@@ -68,6 +68,9 @@ export interface MoveInfo {
   travelY: number;
   armor: { from: number; to: number } | null;
   invuln: { from: number; to: number } | null;
+  /** v1.6 burrow: the underground window (untouchable, hits bypass it) of a ground move, and whether its travel stops at the platform end. */
+  burrow: { from: number; to: number } | null;
+  stopsAtEdge: boolean;
   /** Light-neutral string links: the cancel windows of this body. */
   cancels: NonNullable<MoveBody['cancels']>;
   /** Frames after the last active frame (the punishable endlag). */
@@ -111,6 +114,8 @@ function sweepDisp(body: MoveBody, air: boolean, gm: number): { x: Float32Array;
     }
     if (grounded) {
       if (!setX) vx *= 0.8;
+      // surfacing from a burrow: the sim stops the fighter dead (no slide)
+      if (!air && body.burrow && mf === body.burrow.to) vx = 0;
       if (vy > 0) grounded = false;
     } else if (!setX) {
       vx *= 0.99;
@@ -268,6 +273,8 @@ function build(animal: AnimalId, id: MoveId, air: boolean, chain: number): MoveI
     travelY: disp.y[total],
     armor: body.armor ? { from: body.armor.from, to: body.armor.to } : null,
     invuln: body.invuln ? { from: body.invuln.from, to: body.invuln.to } : null,
+    burrow: body.burrow && !air ? { from: body.burrow.from, to: body.burrow.to } : null,
+    stopsAtEdge: !air && (body.motion ?? []).some((m) => m.stopAtEdge === true),
     cancels: body.cancels ?? [],
     endlag: Math.max(0, total - last),
     power100: main.baseKb + main.kbGrowth,
@@ -308,9 +315,10 @@ function circleRect(cx: number, cy: number, r: number, x0: number, y0: number, x
  * Would `info` hit a target whose hurtbox is `tw × th`, its feet at (relX, relY) relative to the attacker's feet
  * (relX is positive in FRONT of the attacker), if the move starts now? The target drifts with (vx, vy) (forward-relative
  * m/s) and `ay` (m/s², vertical) over the frames. Returns the scratch probe (valid until the next call).
- * `fromFrame` skips earlier frames (e.g. when the move is already running).
+ * `fromFrame` skips earlier frames (e.g. when the move is already running). `room` = how far forward the attacker can still travel
+ * before the end of the platform it stands on: moves with `stopAtEdge` (the mole's burrow) are clipped to it, the way the sim clamps them.
  */
-export function probeHit(info: MoveInfo, relX: number, relY: number, tw: number, th: number, vx = 0, vy = 0, ay = 0, fromFrame = 0): Probe {
+export function probeHit(info: MoveInfo, relX: number, relY: number, tw: number, th: number, vx = 0, vy = 0, ay = 0, fromFrame = 0, room = Infinity): Probe {
   scratch.frame = -1;
   scratch.box = null;
   scratch.sweet = false;
@@ -327,10 +335,14 @@ export function probeHit(info: MoveInfo, relX: number, relY: number, tw: number,
     const y1 = ty + th;
     let bestDmg = -1;
     let best: FrameBox | null = null;
+    // travel the platform edge takes away from this frame's boxes
+    const over = info.stopsAtEdge ? info.dispX[Math.min(mf, info.total)] - room : 0;
+    const clip = over > 0 ? over : 0;
     for (const b of row) {
+      const bcx = b.cx - clip;
       const hit = b.circle
-        ? circleRect(b.cx, b.cy, b.r, x0, y0, x1, y1)
-        : b.cx + b.hw >= x0 && b.cx - b.hw <= x1 && b.cy + b.hh >= y0 && b.cy - b.hh <= y1;
+        ? circleRect(bcx, b.cy, b.r, x0, y0, x1, y1)
+        : bcx + b.hw >= x0 && bcx - b.hw <= x1 && b.cy + b.hh >= y0 && b.cy - b.hh <= y1;
       if (hit && b.hb.damage > bestDmg) {
         bestDmg = b.hb.damage;
         best = b;
@@ -340,7 +352,7 @@ export function probeHit(info: MoveInfo, relX: number, relY: number, tw: number,
       scratch.frame = mf;
       scratch.box = best;
       if (best.sr > 0) {
-        const dx = tx - best.sx;
+        const dx = tx - (best.sx - clip);
         const dy = ty + th * 0.5 - best.sy;
         scratch.sweet = dx * dx + dy * dy <= best.sr * best.sr;
       }
@@ -400,4 +412,25 @@ export function animalInfo(animal: AnimalId): AnimalInfo {
 /** Data-level kill percent of a move on a victim of `weight` (Infinity = never kills on its own). */
 export function killPctOf(info: MoveInfo, weight: number): number {
   return bodyKillPercent(info.body, weight);
+}
+
+// ── platform probing (v1.6 breakables) ───────────────────────────────────────
+
+/**
+ * Would a DAMAGING hitbox of `info` overlap the axis-aligned rect `[rx0, rx1] × [ry0, ry1]` (attacker-local coordinates: x forward,
+ * y up from the feet) at some active frame, if the move starts now? This is the sim's breakable-platform count test (the caller passes
+ * the platform rect already expanded by `PHYS.platHitPad`). Returns the first move frame of the overlap, or −1.
+ */
+export function probeRect(info: MoveInfo, rx0: number, rx1: number, ry0: number, ry1: number, fromFrame = 0): number {
+  for (let mf = Math.max(info.first, fromFrame); mf < info.last; mf++) {
+    const row = info.frames[mf - info.first];
+    for (const b of row) {
+      if (!(b.hb.damage > 0)) continue;
+      const hit = b.circle
+        ? circleRect(b.cx, b.cy, b.r, rx0, ry0, rx1, ry1)
+        : b.cx + b.hw >= rx0 && b.cx - b.hw <= rx1 && b.cy + b.hh >= ry0 && b.cy - b.hh <= ry1;
+      if (hit) return mf;
+    }
+  }
+  return -1;
 }

@@ -206,8 +206,9 @@ export class FighterFx {
       }
     } else this.accDust = 0;
 
-    // ── percent: steam at ≥ 100, embers at ≥ 150 ──
-    if (p >= 100) {
+    // ── percent: steam at ≥ 100, embers at ≥ 150 (nothing rises from a fighter that is underground: its rig is hidden) ──
+    const buried = cur.underground === true;
+    if (p >= 100 && !buried) {
       const sev = Math.min(1, (p - 100) / 150);
       this.accSteam += dt * (3 + sev * 9) * v.scale;
       while (this.accSteam >= 1) {
@@ -215,7 +216,7 @@ export class FighterFx {
         v.steam(cx, y + this.h * (0.75 + 0.25 * v.rng.next()), sev);
       }
     } else this.accSteam = 0;
-    if (p >= 150) {
+    if (p >= 150 && !buried) {
       const sev = Math.min(1, (p - 150) / 150);
       this.accEmber += dt * (6 + sev * 12) * v.scale;
       while (this.accEmber >= 1) {

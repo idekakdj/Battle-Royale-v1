@@ -43,6 +43,7 @@ function notes(b: MoveBody): string {
   if (new Set(b.hitboxes.map((h) => (h.x < 0 ? 'back' : 'front'))).size > 1) n.push('two-sided');
   if (b.armor) n.push(`armor f${b.armor.from}-${b.armor.to}`);
   if (b.invuln) n.push(`invulnerable f${b.invuln.from}-${b.invuln.to}`);
+  if (b.burrow) n.push(`underground f${b.burrow.from}-${b.burrow.to}`);
   for (const m of b.motion ?? []) {
     const fr = m.to - m.from;
     const dx = ((m.vx ?? 0) * fr) / 60;
@@ -50,7 +51,7 @@ function notes(b: MoveBody): string {
     const parts: string[] = [];
     if (dx) parts.push(`${f1(dx)} m fwd`);
     if (dy) parts.push(`${f1(dy)} m ${dy > 0 ? 'up' : 'down'}`);
-    if (parts.length) n.push(`moves ${parts.join(', ')} (f${m.from}-${m.to})`);
+    if (parts.length) n.push(`moves ${parts.join(', ')} (f${m.from}-${m.to})${m.stopAtEdge ? ', stops at the platform edge' : ''}`);
   }
   if (b.hitboxes.some((h) => h.path)) n.push('swept hitbox');
   return n.join('; ') || '-';
@@ -78,7 +79,8 @@ function airRows(a: AnimalId): string[] {
       const h = mainBox(ar);
       diff.push(`own hitbox: ${f1(h.damage)} dmg, ${h.baseKb} + ${h.kbGrowth}, angle ${h.angle}${h.effect && h.effect !== 'none' ? `, ${h.effect}` : ''}`);
     }
-    if (ar.motion !== g.motion) diff.push('own motion');
+    if (ar.motion !== g.motion) diff.push(g.motion && !ar.motion ? 'no motion' : 'own motion');
+    if (g.burrow && !ar.burrow) diff.push('no underground window');
     out.push(`| ${id} | ${totalFrames(ar)} | ${ar.landingLag} | ${ar.autoCancel ? `f${ar.autoCancel.from}-${ar.autoCancel.to}` : '-'} | ${diff.join('; ') || 'same as ground'} |`);
   }
   return out;
@@ -101,6 +103,7 @@ export function renderMovesDoc(): string {
   L.push('* KB column = `baseKb + kbGrowth` of the main hitbox: launch speed (m/s) = `(base + growth x percent/100) x (100 / weight)`. Angle: 0 = forward, 90 = up, 270 = down (mirrored by facing). Damage = total one victim can take from one activation (sweetspot value in brackets).');
   L.push('* lightN is a string: the table shows each link; pressing Light inside the previous link\'s cancel window continues it (links after the first are `onHitOnly`).');
   L.push('* Every move has an aerial form (see the "Aerials" tables): landing lag when landing before the move ends, and an auto-cancel window of late frames. Spikes (`spike` effect) exist only on the air Heavy Down of lion, gorilla, crocodile, hippo, rhino, eagle and giraffe.');
+  L.push('* `underground f{a}-{b}` (v1.6, mole Burrow Strike, ground form only): the fighter is untouchable in that window (hits bypass it: no hit, no hitlag), hitboxes pass through it, the rig is hidden under a dirt mound; `stops at the platform edge` = the tunnel never carries it off the platform it stands on (it surfaces at the edge instead), and it surfaces standing still.');
   L.push('* Heavy Up is the recovery: it travels (`moves ... up` in the notes) and can be used once per airtime; on the ground it is a leaping launcher.');
   L.push('');
   L.push('## Roster at a glance');

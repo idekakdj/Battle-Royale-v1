@@ -141,6 +141,20 @@ export const PHYS = {
   ledgeHandFrac: 0.95,
   /** Highest upward speed that can still grab (m/s). */
   ledgeGrabMaxVy: 0.5,
+  /**
+   * v1.6 LEDGE AUTO-GRAB ASSIST (all animals). The original grab box above is strict, so an airborne fighter that is UNDER or BESIDE a
+   * ledge also grabs it automatically when its hand point is inside this larger zone and it is moving toward / holding toward the
+   * stage — even while still RISING (jumping up from underneath). `Out` = how far the body edge nearest the corner may be outside the
+   * platform end, `Down` / `Up` = hand point below / above the corner height; the inner side is `ledgeBoxIn`. `MinVx` = the
+   * horizontal speed toward the stage (m/s) that counts as "moving toward it" (holding the stick toward the stage beyond
+   * `turnThreshold` counts too). `RegrabCd` = frames after releasing a ledge during which the ASSIST (not the original box) cannot
+   * re-grab (anti-stall on top of `ledgeRegrabCd`, the per-grab invulnerability decay and the max hang time).
+   */
+  ledgeAssistOut: 2.0,
+  ledgeAssistDown: 2.4,
+  ledgeAssistUp: 0.3,
+  ledgeAssistMinVx: 0.5,
+  ledgeAssistRegrabCd: 75,
   /** Hang invulnerability: base frames, minus `Penalty` per grab inside `Window` frames, floor 0. */
   ledgeInvuln: 40,
   ledgeInvulnPenalty: 8,
@@ -170,6 +184,34 @@ export const PHYS = {
 
   // ── hurtbox ─────────────────────────────────────────────────────────────
   crouchHeightMult: 0.6,
+
+  // ── v1.6 dynamic stages (Clockwork Heights, Crumbling Amphitheatre; docs/CL-MAPS-PLAN.md) ──
+  /**
+   * Breakable platforms: an attacker's damaging hitbox counts as a hit on a breakable platform when it overlaps the platform rect expanded
+   * by `platHitPad` (m); one count per attacker per move activation and per platform, and at least `platHitCooldown` frames between counts
+   * from the same attacker on the same platform (armor / absorbed / whiffed-on-fighters attacks count as well — it is attack based).
+   */
+  platHitPad: 0.15,
+  platHitCooldown: 20,
+  /**
+   * Ledge EXPOSURE rule: a ledge can only be grabbed while its corner is not covered by another ACTIVE platform at the same height
+   * (|Δy| ≤ `ledgeCoverDy`) whose span, widened by `ledgeCoverTol`, contains the corner x (the inner ledges of the unbreakable floors sit flush
+   * against breakable tiles).
+   */
+  ledgeCoverDy: 0.05,
+  ledgeCoverTol: 0.05,
+  /**
+   * Design limits the stage tests enforce on every `path` platform over its whole loop (m/s, m): the Clockwork core peaks below
+   * `dynCoreMaxSpeed`, every other moving platform below `dynMaxSpeed`; at any frame at least two satellites are within jump reach of the core
+   * top (`dynReachUp` above it, `dynReachSide` sideways of its span); satellites keep `dynSatGap` clear of each other and `dynCoreClear` of the
+   * core body.
+   */
+  dynMaxSpeed: 3.5,
+  dynCoreMaxSpeed: 2.5,
+  dynReachUp: 4.6,
+  dynReachSide: 5,
+  dynSatGap: 0.6,
+  dynCoreClear: 0.3,
 } as const satisfies Record<string, number>;
 
 export type PhysKey = keyof typeof PHYS;

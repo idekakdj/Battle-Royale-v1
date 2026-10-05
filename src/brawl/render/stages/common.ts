@@ -8,8 +8,9 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../../core/math';
-import type { PlatformState, StageDef } from '../../types';
+import type { BrawlEvent, PlatformState, StageDef } from '../../types';
 import type { QualityTier } from '../../../render/quality';
+import type { Vfx } from '../vfx/Vfx';
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,28 @@ export interface StageSetup {
   shadow: number;
 }
 
+/**
+ * v1.6: the scene lights a stage may re-tint every frame (the Amphitheatre's night -> dawn flip). The view owns the light objects and
+ * the post grade; a stage that never changes them simply omits `updateLights`.
+ */
+export interface StageLights {
+  hemi: THREE.HemisphereLight;
+  key: THREE.DirectionalLight;
+  rim: THREE.DirectionalLight;
+  fog: THREE.Fog | null;
+  /** Tone-mapping exposure and post grade (the view pushes them to the pipeline when they change). */
+  exposure: number;
+  gradeTint: [number, number, number];
+  gradeVignette: number;
+  gradeSat: number;
+}
+
+/** What a stage may use to add one-off effects for sim events (v1.6): the pooled VFX hub and a camera rumble. */
+export interface StageFxCtx {
+  vfx: Vfx;
+  rumble(amount: number): void;
+}
+
 export interface StageVisual {
   readonly group: THREE.Group;
   readonly setup: StageSetup;
@@ -37,6 +60,18 @@ export interface StageVisual {
   dispose(): void;
   /** Debug/test: draw-call estimate of the static scenery (meshes + points). */
   countDrawables(): number;
+  /**
+   * v1.6 (optional): cosmetic one-off effects for the frame's sim events (`platformHit` / `platformBreak` / `stageFinal`). Never the source
+   * of persistent state: what exists / how cracked / which form is always re-derived from `update(platforms)`.
+   */
+  onEvents?(events: readonly BrawlEvent[], ctx: StageFxCtx): void;
+  /** v1.6 (optional): re-tint the scene lights / grade after `update` (called every frame when present). Return true when anything changed. */
+  updateLights?(l: StageLights): boolean;
+  /**
+   * v1.6 (optional): the stage's persistent dynamic state for the F3 overlay / tests (derived from the platform snapshot, never from
+   * events): e.g. `finalK` = how far the Amphitheatre is into its final-form look (0..1).
+   */
+  dynamicState?(): Readonly<Record<string, number>>;
 }
 
 // ── Resource bookkeeping ─────────────────────────────────────────────────────
@@ -392,7 +427,30 @@ export class SkyDome {
   setClouds(on: boolean): void {
     (this.mat.uniforms.uClouds as THREE.IUniform<number>).value = on ? 1 : 0;
   }
+  /** v1.6: blend between two parameter sets (`k` 0 = a, 1 = b): the Amphitheatre's night -> dawn sky. Allocation-free. */
+  mix(a: SkyParams, b: SkyParams, k: number): void {
+    const u = this.mat.uniforms;
+    const lerpC = (name: string, ca: number, cb: number): void => {
+      const c = (u[name] as THREE.IUniform<THREE.Color>).value;
+      c.set(ca).lerp(_mixC.set(cb), k);
+    };
+    lerpC('uTop', a.top, b.top);
+    lerpC('uMid', a.mid, b.mid);
+    lerpC('uHorizon', a.horizon, b.horizon);
+    lerpC('uBottom', a.bottom, b.bottom);
+    lerpC('uSunColor', a.sunColor, b.sunColor);
+    lerpC('uCloudLit', a.cloudLit, b.cloudLit);
+    lerpC('uCloudShade', a.cloudShade, b.cloudShade);
+    const sd = (u.uSunDir as THREE.IUniform<THREE.Vector3>).value;
+    sd.set(a.sunDir[0] + (b.sunDir[0] - a.sunDir[0]) * k, a.sunDir[1] + (b.sunDir[1] - a.sunDir[1]) * k, a.sunDir[2] + (b.sunDir[2] - a.sunDir[2]) * k).normalize();
+    (u.uSunSize as THREE.IUniform<number>).value = a.sunSize + (b.sunSize - a.sunSize) * k;
+    (u.uGlow as THREE.IUniform<number>).value = a.glow + (b.glow - a.glow) * k;
+    (u.uClouds as THREE.IUniform<number>).value = a.clouds + (b.clouds - a.clouds) * k;
+    (u.uHorizonY as THREE.IUniform<number>).value = a.horizonY + (b.horizonY - a.horizonY) * k;
+  }
 }
+
+const _mixC = new THREE.Color();
 
 // ── GPU-animated ambient motes (embers / pollen / dust) ──────────────────────
 
@@ -448,6 +506,7 @@ const MOTE_FRAG = /* glsl */ `
 uniform vec3 uColA;
 uniform vec3 uColB;
 uniform float uBoost;
+uniform float uFade;
 varying float vAlpha;
 varying float vMix;
 void main() {
@@ -456,7 +515,7 @@ void main() {
   float a = (1.0 - smoothstep(0.0, 1.0, r));
   a *= a;
   vec3 col = mix(uColA, uColB, vMix) * uBoost;
-  gl_FragColor = vec4(col, a * vAlpha);
+  gl_FragColor = vec4(col, a * vAlpha * uFade);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -494,6 +553,7 @@ export class Motes {
           uColA: { value: new THREE.Color(p.colorA) },
           uColB: { value: new THREE.Color(p.colorB) },
           uBoost: { value: p.boost },
+          uFade: { value: 1 },
         },
         vertexShader: MOTE_VERT,
         fragmentShader: MOTE_FRAG,
@@ -508,6 +568,15 @@ export class Motes {
   }
   update(time: number): void {
     (this.mat.uniforms.uTime as THREE.IUniform<number>).value = time;
+  }
+  /** v1.6: global alpha (0..1) and a colour re-tint (`k` 0 = the construction colours, 1 = `a` / `b`). */
+  setFade(f: number): void {
+    (this.mat.uniforms.uFade as THREE.IUniform<number>).value = f;
+    this.points.visible = f > 0.01;
+  }
+  setColors(a: number, b: number): void {
+    (this.mat.uniforms.uColA as THREE.IUniform<THREE.Color>).value.set(a);
+    (this.mat.uniforms.uColB as THREE.IUniform<THREE.Color>).value.set(b);
   }
   /** Fraction of the motes drawn (tier scaling). */
   setDensity(f: number): void {

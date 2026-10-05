@@ -206,7 +206,96 @@ export class Vfx {
     this.alpha.spawn(s);
   }
 
+  /** Dirt clod: a small hard-edged lump of soil that is thrown and falls (alpha pool; solid for most of its life, then fades). */
+  clod(x: number, y: number, vx: number, vy: number, size: number, life: number, hex: number, grav = 20, z = 0.62): void {
+    const s = this.S.reset();
+    s.kind = K.clod;
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    s.vx = vx;
+    s.vy = vy;
+    s.rot = this.rng.next() * 6.28;
+    s.vrot = this.rng.signed() * 9;
+    s.sx0 = s.sy0 = size;
+    s.sx1 = s.sy1 = size * 0.8;
+    s.life = life;
+    s.param = this.rng.next();
+    s.rgb(hex, 1);
+    s.a0 = 2.4; // > 1: stays fully opaque for the first ~60 % of its life, then fades out
+    s.a1 = 0;
+    s.drag = 0.35;
+    s.grav = grav;
+    s.fadeIn = 0;
+    s.ease = 1;
+    this.alpha.spawn(s);
+  }
+
   // ── high-level emitters ────────────────────────────────────────────────────
+
+  /**
+   * Mole burrow, DIG-IN (the body sinks into the floor): a ground ripple, a few soil / dust puffs and clods kicked up and out around the
+   * hole at (x, y); `dir` = the way the mole faces (the tunnel heads that way).
+   */
+  burrowDig(x: number, y: number, dir: number): void {
+    this.ring(x, y + 0.04, 0.12, 0.95, 0.26, 0xe0cfa8, 0.9, 0.2, 0.26, 0.75);
+    const p = this.n(7);
+    for (let i = 0; i < p; i++) {
+      const sd = i % 2 === 0 ? 1 : -1;
+      this.puff(x + sd * this.rng.range(0.0, 0.35), y + 0.1, sd * this.rng.range(0.8, 3.2) + dir * 0.6, this.rng.range(0.7, 2.4), 0.26, this.rng.range(0.7, 1.15), this.rng.range(0.35, 0.55), i % 3 === 0 ? 0xcdb890 : 0x8a6c4a, 0.62);
+    }
+    const c = this.n(7);
+    for (let i = 0; i < c; i++) {
+      const sd = this.rng.signed();
+      this.clod(x + sd * 0.25, y + 0.12, sd * this.rng.range(1.2, 3.6) + dir * 0.8, this.rng.range(3.2, 6.8), this.rng.range(0.1, 0.2), this.rng.range(0.4, 0.6), i % 2 === 0 ? 0x6a4b30 : 0x8a6a45);
+    }
+  }
+
+  /** Mole burrow, TUNNEL: soil kicked up from the travelling mound at (x, y) (called every few frames; the ridge itself is a mesh). */
+  burrowTrail(x: number, y: number, dir: number): void {
+    const c = this.n(1.4);
+    for (let i = 0; i < c; i++) {
+      this.clod(x - dir * this.rng.range(0.0, 0.4), y + 0.3, this.rng.signed() * 1.6 - dir * this.rng.range(0.5, 2.2), this.rng.range(2.6, 5.4), this.rng.range(0.08, 0.17), this.rng.range(0.32, 0.5), this.rng.next() < 0.5 ? 0x6a4b30 : 0x8a6a45);
+    }
+    if (this.rng.next() < 0.7 * Math.min(1, this.scale + 0.2)) {
+      this.puff(x - dir * this.rng.range(0.3, 0.8), y + 0.1, -dir * this.rng.range(0.5, 1.8), this.rng.range(0.4, 1.4), 0.25, this.rng.range(0.6, 0.95), this.rng.range(0.3, 0.5), 0xcdb890, 0.45, 0, -0.2); // (behind the mound mesh so the heap stays crisp)
+    }
+  }
+
+  /**
+   * Mole burrow, ERUPTION (the first active frame): the heap bursts — a dirt fan thrown up and forward, an expanding ground ring, dust
+   * rolling out along the floor and a few pale streaks straight up (the launch). `big` scales it (1 = the move's own size).
+   */
+  burrowErupt(x: number, y: number, dir: number, big = 1): void {
+    this.ring(x, y + 0.04, 0.3, 2.3 * big, 0.3, 0xf2e2c0, 1.0, 0.18, 0.22, 0.7);
+    this.ring(x, y + 0.55, 0.25, 1.4 * big, 0.2, 0xffe6c0, 1.1, 0.07, 0.8, 0.35);
+    const c = this.n(15 * big);
+    for (let i = 0; i < c; i++) {
+      const a = (90 + this.rng.signed() * 36 + dir * 10) * DEG;
+      const v = this.rng.range(5, 11.5);
+      this.clod(x + this.rng.signed() * 0.35, y + 0.15, Math.cos(a) * v, Math.sin(a) * v, this.rng.range(0.1, 0.26), this.rng.range(0.5, 0.85), i % 3 === 0 ? 0x4a3321 : i % 3 === 1 ? 0x6a4b30 : 0x8a6a45, 22);
+    }
+    const p = this.n(7 * big);
+    for (let i = 0; i < p; i++) {
+      const sd = i % 2 === 0 ? 1 : -1;
+      const up = i < p * 0.45;
+      this.puff(x + sd * this.rng.range(0.1, 0.5), y + (up ? 0.4 : 0.12), sd * this.rng.range(1.5, up ? 3.5 : 6.5), up ? this.rng.range(2, 4.5) : this.rng.range(0.2, 0.9), 0.4, this.rng.range(0.9, 1.4) * big, this.rng.range(0.35, 0.55), i % 2 === 0 ? 0xd9c7a2 : 0x8a6c4a, 0.55, 0, -0.25); // (behind the rig: the mole stays readable in the cloud)
+    }
+    const st = this.n(3);
+    for (let i = 0; i < st; i++) {
+      this.streak(x + dir * 0.3 + (i - 1) * 0.3, y + 0.25, Math.PI / 2 + this.rng.signed() * 0.12, this.rng.range(7, 11), 0.6 * big, 0.3, 0.08, 0.16, 0xf0d8a8, 1.3, 0.6, 4);
+    }
+  }
+
+  /** The eruption connected: a spray of soil from the contact point (the normal hit sparks are spawned by `hit`). */
+  dirtSpray(x: number, y: number, kbSpeed: number): void {
+    const c = this.n(5 + Math.min(6, kbSpeed * 0.12));
+    for (let i = 0; i < c; i++) {
+      const a = (90 + this.rng.signed() * 55) * DEG;
+      const v = this.rng.range(3, 9);
+      this.clod(x, y, Math.cos(a) * v, Math.sin(a) * v, this.rng.range(0.08, 0.18), this.rng.range(0.35, 0.6), i % 2 === 0 ? 0x6a4b30 : 0x8a6a45, 18);
+    }
+  }
 
   /** Impact: star flash + core glow + radial burst lines + a push along the launch angle. `damage` sizes it; sweetspot = golden/bigger. */
   hit(x: number, y: number, angleDeg: number, damage: number, sweet: boolean, kbSpeed: number, tint: number): void {

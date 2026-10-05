@@ -89,7 +89,7 @@ describe('stage visuals', () => {
       }
       v.dispose();
     }
-    expect(Object.keys(STAGES).length).toBe(2);
+    expect(Object.keys(STAGES).length).toBe(STAGE_IDS.length);
   });
 });
 

@@ -1,7 +1,7 @@
 /**
  * Champions League — setup screen (plan §8): fighter grid (all ten) with a live rotating preview, the animal's
- * tagline and five mini stat bars (Weight / Speed / Reach / Recovery / Power from the move data), two stage cards
- * with layout thumbnails drawn from the real stage geometry, opponents 1–3, bot level 1–4, stocks 1–5, time
+ * tagline and five mini stat bars (Weight / Speed / Reach / Recovery / Power from the move data), four stage cards
+ * (a 4-across row, v1.6) with layout thumbnails drawn from the real stage geometry and badges for the moving / breakable maps, opponents 1–3, bot level 1–4, stocks 1–5, time
  * (none / 3 / 5 / 8 min), START + BACK. Remembers the last choice (`gk-brawl`). Fully keyboard-navigable:
  * ←/→ move inside a group (and select), ↑/↓ move between rows / groups, Enter activates, Esc goes back.
  *
@@ -33,7 +33,7 @@ import {
   type BrawlStocks,
   type BrawlTimeMin,
 } from './setup';
-import { stageThumbSvg } from './stageThumb';
+import { stageBadgesHtml, stageCards, stageThumbSvg } from './stageThumb';
 import { uiRatings, type UiRatings } from './ratingsUi';
 import { MOVES_LEGEND, buildMovesView, type MoveEntry, type MovesView } from './movesView';
 
@@ -129,13 +129,14 @@ export class BrawlSetup implements Screen {
     // Stages
     const stages = el('div', { class: 'gk-bs__stages', attrs: { role: 'radiogroup', 'aria-label': 'Stage' } });
     const stageItems: HTMLButtonElement[] = [];
-    for (const id of STAGE_IDS) {
+    for (const card of stageCards(STAGE_IDS, STAGES)) {
+      const id = card.id;
       const def = STAGES[id];
       const b = el('button', { class: 'gk-bs__stage', type: 'button', dataset: { stage: id }, attrs: { role: 'radio', 'aria-checked': 'false', tabindex: '-1' } });
       b.innerHTML =
         `<span class="gk-bs__thumb">${stageThumbSvg(def)}</span>` +
-        `<span class="gk-bs__stage-text"><span class="gk-bs__stage-name gk-display">${def.name}</span>` +
-        `<span class="gk-bs__stage-blurb">${def.blurb}</span></span>`;
+        `<span class="gk-bs__stage-text"><span class="gk-bs__stage-name gk-display">${card.name}</span>` +
+        `${stageBadgesHtml(def)}<span class="gk-bs__stage-blurb">${card.blurb}</span></span>`;
       b.addEventListener('click', () => this.pickStage(id));
       this.stageBtns.set(id, b);
       stageItems.push(b);

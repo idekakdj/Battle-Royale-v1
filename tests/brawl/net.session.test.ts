@@ -361,7 +361,12 @@ describe('events', () => {
       case 'dodge':
         return `${e.fighterId}|${e.kind}`;
       case 'matchEnd':
+      case 'stageFinal':
         return '';
+      case 'platformHit':
+        return `${e.platformId}|${e.attackerId}`;
+      case 'platformBreak':
+        return e.platformId;
       default:
         return `${e.fighterId}`;
     }

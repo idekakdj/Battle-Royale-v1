@@ -7,15 +7,17 @@
  */
 
 import * as THREE from 'three';
-import { getMoveset, getStage } from '../data';
+import { getMoveBody, getMoveset, getStage } from '../data';
 import type { BrawlEvent, BrawlMatchConfig, BrawlSnapshot, BrawlViewApi, PlatformState, StageDef } from '../types';
 import { getQualityTier, tierProfile, type QualityTier } from '../../render/quality';
 import { BrawlCamera, makeCamTarget, type CamTarget } from './BrawlCamera';
 import { BrawlPipeline, type PipelineStats } from './pipeline';
+import { BurrowFx, animalHasBurrow } from './burrowFx';
 import { DebugBoxes } from './debugBoxes';
 import { FighterFx, accentOf } from './fighterFx';
 import { createBrawlRig, type BrawlRig } from './pose';
-import { buildStageVisual, type StageVisual } from './stages';
+import { buildStageVisual, type StageFxCtx, type StageLights, type StageVisual } from './stages';
+import { isActive } from './stages/dynamic';
 import { ResourceBag, softDiscTexture } from './stages/common';
 import { Vfx } from './vfx/Vfx';
 
@@ -48,11 +50,15 @@ export interface BrawlView extends BrawlViewApi {
   readonly scene: THREE.Scene;
   stats(): BrawlViewStats;
   getDebugBoxes(): boolean;
+  /** v1.6: the stage's persistent dynamic state (final-form progress …) for the overlay / tests. */
+  stageState(): Readonly<Record<string, number>>;
 }
 
 interface FighterView {
   rig: BrawlRig;
   fx: FighterFx;
+  /** v1.6: dirt mound + burrow VFX (only for animals with a burrow move). */
+  burrow: BurrowFx | null;
   shadow: THREE.Mesh;
   shadowMat: THREE.MeshBasicMaterial;
   target: CamTarget;
@@ -88,6 +94,9 @@ class BrawlViewImpl implements BrawlView {
   private readonly rim: THREE.DirectionalLight;
   private readonly platBuf: PlatformState[] = [];
   private readonly targets: CamTarget[] = [];
+  /** v1.6: the lights a dynamic stage may re-tint (dawn flip) and the context its event effects use. */
+  private readonly lights: StageLights;
+  private readonly fxCtx: StageFxCtx;
   private tier: QualityTier;
   private time = 0;
   private slow = 0;
@@ -127,9 +136,20 @@ class BrawlViewImpl implements BrawlView {
     this.scene.add(this.hemi, this.key, this.rim);
     this.pipeline.renderer.toneMappingExposure = su.exposure;
     this.pipeline.setGrade(su.grade.tint, su.grade.vignette, su.grade.sat);
+    this.lights = {
+      hemi: this.hemi,
+      key: this.key,
+      rim: this.rim,
+      fog: this.scene.fog as THREE.Fog,
+      exposure: su.exposure,
+      gradeTint: [su.grade.tint[0], su.grade.tint[1], su.grade.tint[2]],
+      gradeVignette: su.grade.vignette,
+      gradeSat: su.grade.sat,
+    };
 
     // VFX
     this.vfx = new Vfx();
+    this.fxCtx = { vfx: this.vfx, rumble: (a: number): void => this.cam.rumble(a) };
     this.vfx.scale = tierProfile(this.tier).fxScale;
     this.scene.add(this.vfx.root);
 
@@ -144,6 +164,7 @@ class BrawlViewImpl implements BrawlView {
       const rig = createBrawlRig(r.animal);
       this.scene.add(rig.root);
       const fx = new FighterFx(rig, r.animal, this.vfx, this.scene, stats.width, stats.height);
+      const burrow = animalHasBurrow(r.animal) ? new BurrowFx(this.scene, this.vfx, stats.width) : null;
       fx.padX = this.stage.respawn.x;
       fx.padY = this.stage.respawn.y;
       const shadowMat = this.bag.mat(
@@ -173,6 +194,7 @@ class BrawlViewImpl implements BrawlView {
       this.fighters.push({
         rig,
         fx,
+        burrow,
         shadow,
         shadowMat,
         target,
@@ -249,17 +271,35 @@ class BrawlViewImpl implements BrawlView {
       tg.y = py;
       tg.vx = cf.vel.x;
       tg.vy = cf.vel.y;
-      this.updateShadow(fv, cf.alive && cf.action !== 'ko', px, py);
+      // (no contact shadow under a burrowed fighter: the rig is hidden and the mound stands in for it)
+      this.updateShadow(fv, cf.alive && cf.action !== 'ko' && !fv.rig.hiddenUnderground, px, py);
     }
 
     // Events (before the per-fighter FX so flashes land on the right frame)
     this.handleEvents(events, cur);
+    if (this.stageVis.onEvents !== undefined && events.length > 0) this.stageVis.onEvents(events, this.fxCtx);
 
     for (let i = 0; i < n; i++) {
       const cf = cur.fighters[i];
       if (cf === undefined) continue;
       const fv = this.fighters[i];
       fv.fx.update(cf, fv.target.x, fv.target.y, fdt, this.time);
+      if (fv.burrow !== null) {
+        // the platform span under a burrowing fighter (interpolated, so moving platforms carry the heap)
+        let b0 = -Infinity;
+        let b1 = Infinity;
+        if (cf.platformId !== null) {
+          const pl = this.platBuf;
+          for (let k = 0; k < pl.length; k++) {
+            if (pl[k].id === cf.platformId && isActive(pl[k])) {
+              b0 = pl[k].x0;
+              b1 = pl[k].x1;
+              break;
+            }
+          }
+        }
+        if (fv.burrow.update(cf, a, fv.target.x, fv.target.y, fdt, this.time, b0, b1)) this.cam.rumble(0.13);
+      }
       this.swooshTrail(fv, cf, fv.target.x, fv.target.y);
     }
 
@@ -273,6 +313,10 @@ class BrawlViewImpl implements BrawlView {
 
     // Stage + VFX
     this.stageVis.update(this.platBuf, fdt, this.time, this.cam.camera);
+    if (this.stageVis.updateLights !== undefined && this.stageVis.updateLights(this.lights)) {
+      this.pipeline.renderer.toneMappingExposure = this.lights.exposure;
+      this.pipeline.setGrade(this.lights.gradeTint, this.lights.gradeVignette, this.lights.gradeSat);
+    }
     this.vfx.update(fdt);
     this.updateOverlay(cur, rdt);
     this.debug.update(cur);
@@ -296,6 +340,10 @@ class BrawlViewImpl implements BrawlView {
     return this.debug.enabled;
   }
 
+  stageState(): Readonly<Record<string, number>> {
+    return this.stageVis.dynamicState !== undefined ? this.stageVis.dynamicState() : {};
+  }
+
   project(x: number, y: number): { x: number; y: number; onScreen: boolean } {
     const out = { x: 0, y: 0, onScreen: false };
     this.cam.project(x, y, this.pipeline.width, this.pipeline.height, out);
@@ -313,6 +361,7 @@ class BrawlViewImpl implements BrawlView {
     if (typeof window !== 'undefined') window.removeEventListener('resize', this.onResize);
     for (const fv of this.fighters) {
       fv.fx.dispose();
+      if (fv.burrow !== null) fv.burrow.dispose();
       // The skinned rigs keep a bone texture per skeleton on the GPU: release it too.
       fv.rig.root.traverse((o) => {
         const sm = o as THREE.SkinnedMesh;
@@ -342,7 +391,7 @@ class BrawlViewImpl implements BrawlView {
 
   private interpPlatforms(prev: BrawlSnapshot, cur: BrawlSnapshot, a: number): void {
     const cp = cur.platforms;
-    while (this.platBuf.length < cp.length) this.platBuf.push({ id: '', x0: 0, x1: 0, y: 0 });
+    while (this.platBuf.length < cp.length) this.platBuf.push({ id: '', x0: 0, x1: 0, y: 0, active: true, hp: 0, maxHp: 0 });
     this.platBuf.length = cp.length;
     for (let i = 0; i < cp.length; i++) {
       const c = cp[i];
@@ -350,6 +399,10 @@ class BrawlViewImpl implements BrawlView {
       if (p === undefined || p.id !== c.id) p = prev.platforms.find((q) => q.id === c.id);
       const o = this.platBuf[i];
       o.id = c.id;
+      // v1.6: the dynamic state is NOT interpolated — it is read straight from the current snapshot (rollback / late-join safe)
+      o.active = c.active;
+      o.hp = c.hp;
+      o.maxHp = c.maxHp;
       if (p === undefined) {
         o.x0 = c.x0;
         o.x1 = c.x1;
@@ -372,6 +425,7 @@ class BrawlViewImpl implements BrawlView {
     const pl = this.platBuf;
     for (let i = 0; i < pl.length; i++) {
       const p = pl[i];
+      if (!isActive(p)) continue;
       if (x < p.x0 - 0.15 || x > p.x1 + 0.15) continue;
       if (p.y > y + 0.35) continue;
       if (p.y > best) best = p.y;
@@ -433,6 +487,12 @@ class BrawlViewImpl implements BrawlView {
             this.vfx.hit(e.pos.x, e.pos.y, e.angle, e.damage, e.sweetspot, e.kbSpeed, tint);
             if (tgt !== undefined) tgt.fx.onHit();
             this.cam.hit(e.kbSpeed, e.sweetspot);
+            // v1.6: the burrow eruption connecting — soil sprays from the contact point and the screen takes an extra thump.
+            const af = cur.fighters[e.attackerId];
+            if (af !== undefined && af.action === 'attack' && af.moveId === e.moveId && !af.moveAir && getMoveBody(af.animal, e.moveId, false, af.moveChain).burrow !== undefined) {
+              this.vfx.dirtSpray(e.pos.x, e.pos.y, e.kbSpeed);
+              this.cam.rumble(0.16 + Math.min(0.2, e.kbSpeed * 0.005));
+            }
           }
           break;
         }
@@ -478,7 +538,6 @@ class BrawlViewImpl implements BrawlView {
           break;
       }
     }
-    void cur;
   }
 
   private updateOverlay(cur: BrawlSnapshot, rdt: number): void {

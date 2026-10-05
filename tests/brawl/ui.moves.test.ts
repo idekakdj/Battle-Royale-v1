@@ -268,3 +268,44 @@ describe('MOVES view-model follows the data (fixture MovesetDef)', () => {
     expect(MOVES_LEGEND.dodge).toBe('L / Shift');
   });
 });
+
+describe('MOVES view-model: v1.6 Underground tag (mole Burrow Strike)', () => {
+  it('shows a dedicated Underground tag (with its tooltip) computed from `body.burrow`, only on burrow moves', () => {
+    for (const a of ANIMAL_IDS) {
+      const set = MOVESETS[a];
+      for (const e of buildMovesView(a).entries) {
+        const has = e.tags.some((t) => t.id === 'underground');
+        expect(has, `${a} ${e.slot}`).toBe(set.moves[e.slot].ground.burrow !== undefined);
+      }
+    }
+    const heavyD = buildMovesView('mole').entries.find((e) => e.slot === 'heavyD');
+    const tag = heavyD?.tags.find((t) => t.id === 'underground');
+    expect(tag?.label).toBe('Underground');
+    expect(tag?.detail).toBe('Untouchable while tunnelling; erupts upward and launches enemies');
+    expect(heavyD?.name).toBe('Burrow Strike');
+    // it is listed before the generic invulnerability pill, which no longer says "start" for a burrow
+    const ids = heavyD?.tags.map((t) => t.id) ?? [];
+    expect(ids.indexOf('underground')).toBeLessThan(ids.indexOf('invuln'));
+    expect(heavyD?.tags.find((t) => t.id === 'invuln')?.label).toBe('Invulnerable');
+    expect(heavyD?.tags.find((t) => t.id === 'travel')?.label).toBe('Tunnels');
+    expect(heavyD?.tags.find((t) => t.id === 'travel')?.detail).toMatch(/3\.3 m.*platform/);
+    expect(heavyD?.look.toLowerCase()).toContain('tunnels');
+    // the tag follows the data: remove the window and it disappears (the plain invulnerability tag remains)
+    const m = clone('mole');
+    delete m.moves.heavyD.ground.burrow;
+    const plain = buildMovesView('mole', m).entries.find((e) => e.slot === 'heavyD');
+    expect(plain?.tags.some((t) => t.id === 'underground')).toBe(false);
+    expect(plain?.tags.find((t) => t.id === 'invuln')?.label).toBe('Invulnerable start');
+  });
+
+  it('the good-to-know bullets explain the burrow instead of "cannot be hit"', () => {
+    const tips = buildMovesView('mole').tips.join(' ');
+    expect(tips).toMatch(/Burrow Strike \(↓ \+ K\) goes underground on frames 6-24/);
+    expect(tips).toMatch(/erupts upward/);
+  });
+
+  it('the AIR form is described as the drill-down and does not carry the underground tag', () => {
+    const heavyD = buildMovesView('mole').entries.find((e) => e.slot === 'heavyD');
+    expect(heavyD?.airNote).toMatch(/Drill Down/);
+  });
+});

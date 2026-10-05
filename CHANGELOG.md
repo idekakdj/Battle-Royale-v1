@@ -17,6 +17,24 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.6.0] - 2026-10-05
+
+### Added
+- **Two new Champions League maps with moving parts** (pick them on the Champions League setup screen and in online rooms):
+  - **Clockwork Heights:** a brass-and-stone clockwork under a dusk sky. The wide main platform drifts around the sky while four smaller platforms glide between three different layouts on a repeating loop, so the map is always changing but always fair.
+  - **Crumbling Amphitheatre:** it starts as an intact ruined arena with six breakable pieces (three floor tiles, two arches and a crown). Every piece takes a set number of hits from fighters' attacks, shows cracks as it weakens and shatters when it breaks, and breaking floor tiles opens pits. When the last piece falls the arena transforms into its final form: golden platforms rise, the layout changes, the torches turn blue-white and the sky cracks open to dawn.
+- **Mole: Down + Heavy is now Burrow Strike on the ground.** The mole digs underground where it can't be hit, tunnels a short way forward (and stops at the edge of a platform instead of running off it), then erupts and launches enemies straight up. In the air it still drills downward.
+- **Ledge auto-grab assist for everyone:** when you're close to a ledge and under or beside it (even while still rising), the game now grabs it for you, so recoveries are much easier.
+
+### Changed
+- **Panther:** about 13% less damage on its moves and a shorter lunge on Shadow Slash and Shadow Dash. To keep it competitive after the nerf and the new ledge help, it is a little heavier and has better air control.
+- **Crocodile:** its ground jump now goes twice as high, so it can reach the platforms and recover from over the edge.
+- **Mole:** about 10% more damage on its moves.
+- Small weight and speed adjustments for the Lion, Giraffe, Hippo, Mole and Crocodile to keep every animal's win rate balanced.
+- Bots understand the new maps: they stay on the drifting platform, avoid pits and platforms that no longer exist, and break pieces of the Amphitheatre during a fight.
+- The MOVES tab shows an "Underground" tag for the Mole's new move.
+- Online: this update changes the game rules, so everyone in an online room needs to be on version 1.6 (1.5.x players won't be able to join).
+
 ## [1.5.1] - 2026-10-04
 
 ### Changed
@@ -167,7 +185,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.4.0...v1.4.1

@@ -4,9 +4,9 @@ import type { MovesetDef } from '../../types';
 import { A, air, body, cs, hb, linkTo, moveset, mot, mv } from '../helpers';
 
 const stats = cs({
-  weight: 122,
-  walkSpeed: 3.5,
-  runSpeed: 6.9,
+  weight: 119,
+  walkSpeed: 3.3,
+  runSpeed: 6.5,
   airSpeed: 5.1,
   airAccel: 22,
   jumpVel: 12.5,

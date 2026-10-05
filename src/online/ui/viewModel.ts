@@ -5,6 +5,9 @@
 
 import { ANIMALS, ANIMAL_IDS } from '../../config/animals';
 import type { AnimalId } from '../../core/types';
+import { STAGES } from '../../brawl/data';
+import { STAGE_IDS, type StageId } from '../../brawl/types';
+import { stageCards, type StageBadge } from '../../brawl/ui/stageThumb';
 import type { OnlineMode } from '../types';
 import { ROOM_LIMITS, type RoomSlot, type RoomState, type StartBlocker } from '../room/types';
 import { joinNames, pingInfo, type PingInfo } from './helpers';
@@ -24,6 +27,18 @@ export const MODE_CONSTRAINT: Record<OnlineMode, string> = {
   championsLeague: 'Champions League: 2–4 players, humans only (no bots). Everyone needs a different fighter.',
   battleRoyale: 'Battle Royale: 2–4 players plus bots, up to 10 fighters. Every human needs a different fighter.',
 };
+
+/** One card of the Champions League stage picker in the room (every stage of `STAGE_IDS`, in order, with its badges). */
+export interface StagePickVM {
+  id: StageId;
+  name: string;
+  selected: boolean;
+  badges: StageBadge[];
+}
+
+export function stagePickerItems(selected: StageId): StagePickVM[] {
+  return stageCards(STAGE_IDS, STAGES).map((c) => ({ id: c.id, name: c.name, selected: c.id === selected, badges: c.badges }));
+}
 
 export interface PlayerCardVM {
   id: string;

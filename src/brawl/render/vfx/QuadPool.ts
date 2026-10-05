@@ -15,6 +15,7 @@ export const K = {
   laurel: 5,
   ghost: 6,
   puff: 7,
+  clod: 8,
 } as const;
 
 const VERT = /* glsl */ `
@@ -48,6 +49,8 @@ void main() {
   float prm = vK.y;
   float a = 0.0;
   float hot = 0.0;
+  float sh = 1.0;
+  float am = vC.a;
   if (k < 0.5) {            // soft disc
     float f = clamp(1.0 - r, 0.0, 1.0);
     a = f * f;
@@ -88,13 +91,19 @@ void main() {
     float e = pow(pow(q.x, 2.4) + pow(q.y, 2.4), 1.0 / 2.4);
     a = 1.0 - smoothstep(0.5, 1.0, e);
     hot = 0.0;
-  } else {                  // puff: soft flat disc with a slightly lumpy edge
+  } else if (k < 7.5) {     // puff: soft flat disc with a slightly lumpy edge
     float ang = atan(p.y, p.x);
     float lump = 1.0 + 0.12 * sin(ang * 5.0 + prm * 6.28) + 0.07 * sin(ang * 9.0 - prm * 12.0);
     a = 1.0 - smoothstep(0.35, 1.0, r * lump);
+  } else {                  // clod: hard-edged lumpy soil chunk, lit from the upper left (param = seed)
+    float ang = atan(p.y, p.x);
+    float lump = 1.0 + 0.16 * sin(ang * 3.0 + prm * 6.28) + 0.1 * sin(ang * 7.0 - prm * 9.0);
+    a = 1.0 - smoothstep(0.8, 1.0, r * lump);
+    sh = 0.62 + 0.55 * clamp(0.5 - p.x * 0.9 + p.y * 1.1, 0.0, 1.0);
+    am = min(vC.a, 1.0); // (an alpha above 1 is used to hold full opacity; normal blending must never see it)
   }
-  vec3 col = vC.rgb * (1.0 + hot * 1.2);
-  gl_FragColor = vec4(col, a * vC.a);
+  vec3 col = vC.rgb * sh * (1.0 + hot * 1.2);
+  gl_FragColor = vec4(col, a * am);
   if (gl_FragColor.a < 0.003) discard;
   #include <tonemapping_fragment>
   #include <colorspace_fragment>

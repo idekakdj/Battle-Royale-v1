@@ -91,7 +91,7 @@ void main() {
 }
 `;
 
-function buildGodRays(bag: ResourceBag, rng: () => number): { mesh: THREE.Mesh; update: (t: number) => void } {
+export function buildGodRays(bag: ResourceBag, rng: () => number): { mesh: THREE.Mesh; update: (t: number) => void; setStrength: (v: number) => void } {
   const pos: number[] = [];
   const uv: number[] = [];
   const ph: number[] = [];
@@ -134,7 +134,11 @@ function buildGodRays(bag: ResourceBag, rng: () => number): { mesh: THREE.Mesh; 
   const mesh = new THREE.Mesh(g, m);
   mesh.frustumCulled = false;
   mesh.renderOrder = -20;
-  return { mesh, update: (t: number): void => void ((m.uniforms.uTime as THREE.IUniform<number>).value = t) };
+  return {
+    mesh,
+    update: (t: number): void => void ((m.uniforms.uTime as THREE.IUniform<number>).value = t),
+    setStrength: (v: number): void => void ((m.uniforms.uStrength as THREE.IUniform<number>).value = v),
+  };
 }
 
 // ── birds ────────────────────────────────────────────────────────────────────

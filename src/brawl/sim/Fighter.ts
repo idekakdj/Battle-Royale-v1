@@ -63,6 +63,11 @@ export class Fighter {
   staleQueue: MoveId[] = [];
   /** Heavy-Up (recovery) spent this airtime. */
   recoveryUsed = false;
+  /** v1.6 breakable platforms: counter of attack activations this fighter has started (every `startAttack`, chain links included). */
+  actSerial = 0;
+  /** v1.6: per platform index, the `actSerial` of the last activation that counted as a hit on it (−1 = none) and the frame of that count. */
+  platAct: number[] = [];
+  platFrame: number[] = [];
 
   // ── input ───────────────────────────────────────────────────────────────
   inX = 0;
@@ -105,6 +110,8 @@ export class Fighter {
   dodgeDir = 0;
   ledgeIdx = -1;
   ledgeRegrab = 0;
+  /** v1.6: frames after releasing a ledge during which the auto-grab ASSIST may not re-grab (PHYS.ledgeAssistRegrabCd). */
+  assistCd = 0;
   grabFrames: number[] = [];
   climbRoll = false;
   climbFromX = 0;
@@ -164,6 +171,9 @@ export class Fighter {
     this.movePushed = io.b(this.movePushed);
     this.staleQueue = io.moveIds(this.staleQueue);
     this.recoveryUsed = io.b(this.recoveryUsed);
+    this.actSerial = io.n(this.actSerial);
+    this.platAct = io.nums(this.platAct);
+    this.platFrame = io.nums(this.platFrame);
     this.inX = io.n(this.inX);
     this.inY = io.n(this.inY);
     this.inJumpHeld = io.b(this.inJumpHeld);
@@ -197,11 +207,22 @@ export class Fighter {
     this.dodgeDir = io.n(this.dodgeDir);
     this.ledgeIdx = io.n(this.ledgeIdx);
     this.ledgeRegrab = io.n(this.ledgeRegrab);
+    this.assistCd = io.n(this.assistCd);
     this.grabFrames = io.nums(this.grabFrames);
     this.climbRoll = io.b(this.climbRoll);
     this.climbFromX = io.n(this.climbFromX);
     this.climbFromY = io.n(this.climbFromY);
     this.respawnIn = io.n(this.respawnIn);
+  }
+
+  /**
+   * v1.6: inside a ground move's `burrow` window (derived from the saved move state — no field of its own). While true the fighter
+   * is untouchable (hits bypass it), other hitboxes pass through it and the view shows a dirt mound instead of the rig.
+   */
+  isUnderground(): boolean {
+    const b = this.body;
+    if (this.action !== 'attack' || b === null || b.burrow === undefined || this.moveAir) return false;
+    return this.moveFrame >= b.burrow.from && this.moveFrame < b.burrow.to;
   }
 
   /** A fresh, independent public snapshot of this fighter. */
@@ -242,6 +263,7 @@ export class Fighter {
       airDodgeUsed: this.airDodgeUsed,
       freeFall: this.freeFall,
       ledgeCd: this.ledgeRegrab,
+      underground: this.isUnderground(),
     };
   }
 }

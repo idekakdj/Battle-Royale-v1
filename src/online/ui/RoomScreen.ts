@@ -13,8 +13,7 @@ import type { AnimalId } from '../../core/types';
 import { ANIMALS, ANIMAL_IDS } from '../../config/animals';
 import { BOT_PROFILES } from '../../config/botProfiles';
 import { STAGES } from '../../brawl/data';
-import { STAGE_IDS } from '../../brawl/types';
-import { stageThumbSvg } from '../../brawl/ui/stageThumb';
+import { stageBadgesHtml, stageThumbSvg } from '../../brawl/ui/stageThumb';
 import { el, button, clear, append } from '../../ui/dom';
 import { animalHeadSvg } from '../../ui/icons';
 import { PreviewPane } from '../../ui/PreviewPane';
@@ -24,7 +23,7 @@ import { ROOM_LIMITS, type RoomEndReason, type RoomError, type RoomState } from 
 import { describeEndReason, describeRoomError } from './errors';
 import { buildInviteLink, copyText, timeLimitLabel, type LocationLike } from './helpers';
 import type { RoomLike } from './types';
-import { buildRoomView, MODE_LABEL, settingsKey, type PlayerCardVM, type RoomVM } from './viewModel';
+import { buildRoomView, MODE_LABEL, settingsKey, stagePickerItems, type PlayerCardVM, type RoomVM } from './viewModel';
 import { confirmDialog, pingEl, segmented, spinner, ToastStack, type ConfirmHandle } from './widgets';
 
 export interface RoomScreenOptions {
@@ -329,16 +328,17 @@ export class RoomScreen implements Screen {
     if (state.mode === 'championsLeague') {
       const cl = state.settings.cl;
       const stages = el('div', { class: 'gk-bs__stages gk-on-stages', attrs: { role: 'radiogroup', 'aria-label': 'Stage' } });
-      for (const id of STAGE_IDS) {
+      for (const item of stagePickerItems(cl.stage)) {
+        const id = item.id;
         const def = STAGES[id];
         const b = el('button', {
-          class: `gk-bs__stage gk-on-stage${id === cl.stage ? ' is-selected' : ''}`,
+          class: `gk-bs__stage gk-on-stage${item.selected ? ' is-selected' : ''}`,
           type: 'button',
           dataset: { stage: id, ctl: `stage:${id}` },
-          attrs: { role: 'radio', 'aria-checked': id === cl.stage ? 'true' : 'false', tabindex: id === cl.stage ? '0' : '-1' },
+          attrs: { role: 'radio', 'aria-checked': item.selected ? 'true' : 'false', tabindex: item.selected ? '0' : '-1' },
         });
-        b.innerHTML = `<span class="gk-bs__thumb">${stageThumbSvg(def)}</span><span class="gk-bs__stage-text"><span class="gk-bs__stage-name gk-display"></span></span>`;
-        (b.querySelector('.gk-bs__stage-name') as HTMLElement).textContent = def.name;
+        b.innerHTML = `<span class="gk-bs__thumb">${stageThumbSvg(def)}</span><span class="gk-bs__stage-text"><span class="gk-bs__stage-name gk-display"></span>${stageBadgesHtml(def)}</span>`;
+        (b.querySelector('.gk-bs__stage-name') as HTMLElement).textContent = item.name;
         b.disabled = !edit;
         b.addEventListener('click', () => this.room.setSettings({ cl: { stage: id } }));
         stages.appendChild(b);

@@ -175,6 +175,16 @@ spilling off the island edges into clouds, floating ruin pieces, birds, god-rays
 
 Both stages: no hazards (pure platforming), deterministic moving platform (a pure function of frame).
 
+**v1.6 dynamic stages** (`clockworkHeights`, `crumblingAmphitheatre`; binding design + counting rules in `docs/CL-MAPS-PLAN.md`): `StageDef` platforms
+gain `path` (a looping, cosine-eased keyframe `PathSpec`; evaluated by `pathOffsetAt` in `sim/geometry.ts` and shared with the view / bots as
+`platformAt` / `pathOffset` from `data/index.ts`), `breakable: { hits }` and `finalOnly`. Clockwork Heights: a solid `core` slab that drifts around
+(riders are carried, bystanders are pushed out along the axis of minimal penetration, its ledges and the ledge-assist zone move with it) and four soft
+satellites that glide between three layouts on a shared 36 s loop. Crumbling Amphitheatre: six breakable pieces (one count per attacker per attack
+activation, ≥ 20 frames between counts per attacker and platform) — a destroyed piece stops colliding, riders fall, hangers drop, and when the last one
+falls the stage flips (`stageFinal`) to its final form (`finalOnly` platforms). A ledge is grabbable only while its corner is not covered by another active
+platform at the same height (`PHYS.ledgeCover*`). All of it (hp, destroyed / final flags, per-attacker count cooldowns) is part of
+`saveState` / `loadState` / `checksum`; the stage data enters the online data fingerprint; the release bumps the MINOR version.
+
 ## 5. Graphics & view (`src/brawl/render/**`)
 
 * `createBrawlView(canvas, config, opts)` → `BrawlViewApi` (types.ts). It builds on the existing `SceneManager`

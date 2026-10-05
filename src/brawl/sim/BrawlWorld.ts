@@ -43,8 +43,36 @@
  *    once); the queue keeps the last 6.
  *  • Ledge grab uses the hand point (0.95 × height above the feet) and the body edge nearest the
  *    corner; hang position hugs the corner; a ledge is "free" if nobody hangs/climbs on it.
+ *  • v1.6 ledge AUTO-GRAB ASSIST: besides the original box (falling, vy ≤ 0.5), a free actionable airborne fighter (not holding Down,
+ *    `ledgeRegrab` and `assistCd` elapsed) whose hand point is in the larger zone under / beside the corner
+ *    (`PHYS.ledgeAssistOut/Down/Up`) AND is moving toward / holding toward the stage grabs automatically — also while still rising.
+ *    The grab itself is the normal one (snap to the hang pose, same invulnerability decay / max hang / regrab rules).
+ *  • v1.6 BURROW: a ground move body with `burrow: {from, to}` is "underground" while `moveFrame` is inside the window
+ *    (`Fighter.isUnderground`, derived from saved state, exposed as `BrawlFighterState.underground`): hits skip the fighter
+ *    exactly like dodge invulnerability (no hit, no hitlag, no armor interaction), other hitboxes pass through it. A motion
+ *    window with `stopAtEdge` keeps a GROUNDED fighter on its platform (the feet centre stays inside [x0, x1] of the platform it
+ *    stands on, moving platforms included; the travel stops there with vx = 0), and when the burrow window ends the fighter
+ *    surfaces standing still (vx = 0, no slide), so it can never be carried off a ledge.
  *    Ledge jump = full `jumpVel` and does not consume an air jump; the grab refills air jumps.
  *    Climb has 12 frames of invulnerability; roll-up is invulnerable throughout.
+ *  • v1.6 DYNAMIC STAGES (docs/CL-MAPS-PLAN.md):
+ *      - PATH MOTION: a platform's position is a pure function of the frame (`geometry.platformAtFrame`: defined position + `moving` offset +
+ *        cosine-eased `path` offset). Grounded riders are carried by the platform's displacement of the frame (never launched by its
+ *        velocity) — also during the countdown, in hitlag and after `skipCountdown()`.
+ *      - SOLID MOVING PLATFORMS: after the platforms moved, every non-rider fighter overlapping a platform that MOVED this frame is pushed out
+ *        along the axis of minimal penetration (up / sideways; down only for airborne fighters — a grounded fighter is never pushed through its
+ *        floor), its velocity component into the platform zeroed; if that pushes it into another solid ("squeezed") it is lifted onto that
+ *        solid's surface instead. Static solids never trigger the pass, so existing stages behave exactly as before. Ledges / hang positions /
+ *        the ledge-assist zone are computed from the current corner, so they move with the platform.
+ *      - BREAKABLES: an attacker's damaging hitbox that overlaps a breakable platform's rect (expanded by PHYS.platHitPad) counts ONE hit per
+ *        attack activation (`Fighter.actSerial`) and per platform, with ≥ PHYS.platHitCooldown frames between counts of one attacker on one
+ *        platform (so a multi-hit box or a light string counts once; armor / absorbed / whiffed attacks count too — it is attack based). Counts
+ *        are applied after the fighter hits of the frame, in attacker order: `platformHit` (hpLeft / maxHp), and at 0 `platformBreak` — the
+ *        platform stops colliding that frame, riders start falling (normal air physics), hanging / climbing fighters drop, jump-squats are
+ *        cancelled. When the LAST breakable is destroyed `stageFinal` is emitted once and every `finalOnly` platform becomes active (fighters
+ *        embedded in a newly active solid are pushed out like above).
+ *      - LEDGE EXPOSURE: a ledge is grabbable only while its platform is active and its corner is not covered by another active platform at the
+ *        same height (PHYS.ledgeCover*); a fighter hanging from a platform that breaks drops.
  *  • Air drag: ×0.98/frame with no stick input, and also while above airSpeed in the stick's own
  *    direction (after a launch); there is no other cap on launch speeds (they only decay by this drag
  *    and, in hitstun, by ×0.985/frame). Opposing the launch brakes at airAccel.
@@ -86,6 +114,7 @@ import type {
   MoveBody,
   MoveId,
   PlatformDef,
+  PlatformState,
   StageDef,
 } from '../types';
 import { PHYS } from '../config';
@@ -124,6 +153,13 @@ interface PendingHit {
   sweet: boolean;
 }
 
+interface PendingPlatHit {
+  j: number;
+  attackerId: number;
+  x: number;
+  y: number;
+}
+
 const LIGHT_IDS: Record<string, MoveId> = { N: 'lightN', S: 'lightS', D: 'lightD', U: 'lightU' };
 const HEAVY_IDS: Record<string, MoveId> = { N: 'heavyN', S: 'heavyS', D: 'heavyD', U: 'heavyU' };
 
@@ -159,6 +195,10 @@ export class BrawlWorld implements BrawlWorldApi {
   private readonly ledges: LedgeRT[] = [];
   /** Fighter id hanging/climbing on each ledge, −1 = free. */
   private readonly ledgeOwner: number[] = [];
+  /** v1.6: indices of the breakable platforms, and a destroyed-everything flag (the stage is in its FINAL form). */
+  private readonly breakIdx: number[] = [];
+  private finalForm = false;
+  private readonly platPending: PendingPlatHit[] = [];
   private readonly fighters: Fighter[] = [];
   private readonly timeLimitFrames: number;
 
@@ -183,6 +223,7 @@ export class BrawlWorld implements BrawlWorldApi {
     for (let i = 0; i < this.defs.length; i++) {
       const d = this.defs[i];
       platformAtFrame(d, 0, this.plat[i]);
+      if (d.breakable) this.breakIdx.push(i);
       if (d.kind === 'solid') {
         if (d.ledgeLeft) {
           this.ledges.push({ plat: i, side: -1 });
@@ -200,6 +241,8 @@ export class BrawlWorld implements BrawlWorldApi {
     for (let i = 0; i < n; i++) {
       const r = config.roster[i];
       const f = new Fighter(i, r.animal, r.isPlayer, source.getMoveset(r.animal), stocks);
+      f.platAct = new Array<number>(this.defs.length).fill(-1);
+      f.platFrame = new Array<number>(this.defs.length).fill(-100000);
       const sp = this.stage.spawns[i % this.stage.spawns.length];
       f.pos.x = sp.x;
       f.pos.y = sp.y;
@@ -228,9 +271,13 @@ export class BrawlWorld implements BrawlWorldApi {
     this.frameNo++;
     this.updatePlatforms();
     if (this.frameNo <= PHYS.countdownFrames) {
-      for (const f of this.fighters) this.clearPending(f);
+      for (const f of this.fighters) {
+        this.clearPending(f);
+        this.carryRider(f);
+      }
       return;
     }
+    this.pushOutOfMovedSolids();
     for (const f of this.fighters) this.latchInput(f);
     for (const f of this.fighters) this.updateFighter(f);
     this.resolveHits();
@@ -247,7 +294,7 @@ export class BrawlWorld implements BrawlWorldApi {
       countdown: this.frameNo < PHYS.countdownFrames ? (PHYS.countdownFrames - this.frameNo) * PHYS.dt : 0,
       timeLeft: limit > 0 ? Math.max(0, limit - Math.max(0, time)) : null,
       fighters: this.fighters.map((f) => f.toState(f.platIdx >= 0 ? this.defs[f.platIdx].id : null)),
-      platforms: this.plat.map((p) => ({ id: p.id, x0: p.x0, x1: p.x1, y: p.y })),
+      platforms: this.plat.map((p, i) => this.platformState(p, i)),
       hitboxes: this.hitViews.map((h) => ({ ...h })),
       matchOver: this.over,
       winnerId: this.over ? this.winner : -1,
@@ -362,6 +409,7 @@ export class BrawlWorld implements BrawlWorldApi {
     this.over = io.b(this.over);
     this.winner = io.n(this.winner);
     this.rng.setState(io.n(this.rng.getState()));
+    this.finalForm = io.b(this.finalForm);
     for (let i = 0; i < this.ledgeOwner.length; i++) this.ledgeOwner[i] = io.n(this.ledgeOwner[i]);
     for (let i = 0; i < this.plat.length; i++) {
       const p = this.plat[i];
@@ -370,6 +418,8 @@ export class BrawlWorld implements BrawlWorldApi {
       p.y = io.n(p.y);
       p.dx = io.n(p.dx);
       p.dy = io.n(p.dy);
+      p.active = io.b(p.active);
+      p.hp = io.n(p.hp);
     }
     for (let i = 0; i < this.fighters.length; i++) this.fighters[i].sync(io);
   }
@@ -381,6 +431,7 @@ export class BrawlWorld implements BrawlWorldApi {
     if (this.frameNo < PHYS.countdownFrames) {
       this.frameNo = PHYS.countdownFrames;
       this.updatePlatforms();
+      for (const f of this.fighters) this.carryRider(f);
     }
   }
 
@@ -430,12 +481,31 @@ export class BrawlWorld implements BrawlWorldApi {
     if (f) f.facing = facing;
   }
 
+  /**
+   * Test / tooling helper: apply `count` counted hits by `attackerId` to breakable platform `platformId` through the normal pipeline
+   * (`platformHit` / `platformBreak` / `stageFinal` events, falling riders, final form). Returns false for an unknown or non-breakable id.
+   */
+  debugHitPlatform(platformId: string, attackerId = 0, count = 1): boolean {
+    const j = this.defs.findIndex((d) => d.id === platformId && d.breakable !== undefined);
+    if (j < 0) return false;
+    for (let n = 0; n < count; n++) {
+      const p = this.plat[j];
+      if (!p.active || p.hp <= 0) break;
+      this.platPending.length = 0;
+      this.platPending.push({ j, attackerId, x: (p.x0 + p.x1) * 0.5, y: p.y });
+      this.applyPlatformHits();
+    }
+    this.platPending.length = 0;
+    return true;
+  }
+
   // ── setup helpers ────────────────────────────────────────────────────────
 
   /** If a platform surface is under the fighter's feet, stand on it (else it falls). */
   private settle(f: Fighter): void {
     for (let j = 0; j < this.plat.length; j++) {
       const p = this.plat[j];
+      if (!p.active) continue;
       if (Math.abs(p.y - f.pos.y) < 0.05 && supportedBy(f.pos.x, f.stats.width, p.x0, p.x1)) {
         f.pos.y = p.y;
         f.grounded = true;
@@ -458,6 +528,121 @@ export class BrawlWorld implements BrawlWorldApi {
       platformAtFrame(this.defs[i], this.frameNo, p);
       p.dx = p.x0 - px;
       p.dy = p.y - py;
+    }
+  }
+
+  /** Public state of platform `i`: breakable / final-only platforms also report `active`, `hp`, `maxHp`. */
+  private platformState(p: PlatRT, i: number): PlatformState {
+    const d = this.defs[i];
+    const out: PlatformState = { id: p.id, x0: p.x0, x1: p.x1, y: p.y };
+    if (d.breakable || d.finalOnly) out.active = p.active;
+    if (d.breakable) {
+      out.hp = p.hp;
+      out.maxHp = p.maxHp;
+    }
+    return out;
+  }
+
+  /** A grounded fighter follows its platform's displacement of this frame (used where `integrate` does not run: countdown, hitlag). */
+  private carryRider(f: Fighter): void {
+    if (!f.alive || !f.grounded || f.platIdx < 0) return;
+    const p = this.plat[f.platIdx];
+    if (!p.active || (p.dx === 0 && p.dy === 0)) return;
+    f.pos.x += p.dx;
+    f.pos.y = p.y;
+  }
+
+  /** True while `f` is locked to a ledge (hang / climb) — its position is rebuilt from the platform corner every frame. */
+  private onLedge(f: Fighter): boolean {
+    return f.ledgeIdx >= 0 && (f.action === 'ledgeHang' || f.action === 'ledgeClimb');
+  }
+
+  /**
+   * Fighters overlapping a SOLID platform that moved this frame are pushed out (see the header). Riders of the platform are skipped (they are
+   * carried by `integrate`), as are fighters locked to a ledge, hovering at the respawn point and dead ones.
+   */
+  private pushOutOfMovedSolids(): void {
+    for (let j = 0; j < this.plat.length; j++) {
+      const p = this.plat[j];
+      if (!p.solid || !p.active || (p.dx === 0 && p.dy === 0)) continue;
+      for (let i = 0; i < this.fighters.length; i++) this.pushOut(this.fighters[i], j, true);
+    }
+  }
+
+  /**
+   * Push fighter `f` out of solid platform `j` along the axis of minimal penetration (no-op when they do not overlap). `induced` = only
+   * resolve an overlap that the platform's own move of this frame created: a fighter that was already inside the platform's previous rect
+   * got there by its own motion (e.g. a wide body clipping a corner while it falls) and is left to the gentle push-out of `moveX`.
+   */
+  private pushOut(f: Fighter, j: number, induced: boolean): void {
+    if (!f.alive || f.action === 'respawn' || this.onLedge(f)) return;
+    if (f.grounded && f.platIdx === j) return;
+    const p = this.plat[j];
+    const eps = PHYS.eps;
+    const hw = f.stats.width * 0.5;
+    const h = f.stats.height;
+    const bottom = p.y - p.thickness;
+    const fx0 = f.pos.x - hw;
+    const fx1 = f.pos.x + hw;
+    const fy0 = f.pos.y;
+    const fy1 = fy0 + h;
+    if (!(fx1 > p.x0 + eps && fx0 < p.x1 - eps && fy1 > bottom + eps && fy0 < p.y - eps)) return;
+    if (induced && fx1 > p.x0 - p.dx + eps && fx0 < p.x1 - p.dx - eps && fy1 > bottom - p.dy + eps && fy0 < p.y - p.dy - eps) return;
+    // a grounded fighter keeps its own floor: it can only be pushed sideways (never lifted off it or pressed through it); an airborne
+    // one is only lifted onto the platform if it could stand there (otherwise it would fall straight back through the corner)
+    const up = f.grounded || !supportedBy(f.pos.x, f.stats.width, p.x0, p.x1) ? Infinity : p.y - fy0;
+    const right = p.x1 - fx0;
+    const left = fx1 - p.x0;
+    const down = f.grounded ? Infinity : fy1 - bottom;
+    let best = up;
+    let dir = 0; // 0 up, 1 right, 2 left, 3 down
+    if (right < best) {
+      best = right;
+      dir = 1;
+    }
+    if (left < best) {
+      best = left;
+      dir = 2;
+    }
+    if (down < best) {
+      best = down;
+      dir = 3;
+    }
+    if (dir === 0) {
+      f.pos.y = p.y;
+    } else if (dir === 1) {
+      f.pos.x = p.x1 + hw;
+      if (f.vel.x < 0) f.vel.x = 0;
+    } else if (dir === 2) {
+      f.pos.x = p.x0 - hw;
+      if (f.vel.x > 0) f.vel.x = 0;
+    } else {
+      f.pos.y = bottom - h;
+      if (f.vel.y > 0) f.vel.y = 0;
+    }
+    this.resolveSqueeze(f, j);
+  }
+
+  /** After a push: if the fighter now overlaps ANOTHER solid (squeezed between two), lift it onto that solid's surface — deterministic, finite. */
+  private resolveSqueeze(f: Fighter, from: number): void {
+    const eps = PHYS.eps;
+    const hw = f.stats.width * 0.5;
+    const h = f.stats.height;
+    for (let pass = 0; pass < this.plat.length; pass++) {
+      let moved = false;
+      for (let k = 0; k < this.plat.length; k++) {
+        if (k === from) continue;
+        const q = this.plat[k];
+        if (!q.solid || !q.active) continue;
+        if (f.pos.x + hw > q.x0 + eps && f.pos.x - hw < q.x1 - eps && f.pos.y + h > q.y - q.thickness + eps && f.pos.y < q.y - eps) {
+          // lifted onto q's surface: airborne with its feet exactly on the top (the next move lands it), never "grounded" at a stale height
+          f.pos.y = q.y;
+          if (f.vel.y > 0) f.vel.y = 0;
+          if (f.grounded) this.leaveGround(f);
+          moved = true;
+        }
+      }
+      if (!moved) return;
     }
   }
 
@@ -525,12 +710,14 @@ export class BrawlWorld implements BrawlWorldApi {
     }
     if (f.hitlag > 0) {
       f.hitlag--;
+      this.carryRider(f);
       return;
     }
     f.actionFrame++;
     if (f.invuln > 0) f.invuln--;
     if (f.dodgeCd > 0) f.dodgeCd--;
     if (f.ledgeRegrab > 0) f.ledgeRegrab--;
+    if (f.assistCd > 0) f.assistCd--;
     if (f.dropTimer > 0) f.dropTimer--;
     if (f.grounded) f.groundedFrames++;
     switch (f.action) {
@@ -755,11 +942,14 @@ export class BrawlWorld implements BrawlWorldApi {
     let x = f.pos.x + dxm;
     for (let j = 0; j < this.plat.length; j++) {
       const p = this.plat[j];
-      if (!p.solid) continue;
+      if (!p.solid || !p.active) continue;
       if (!(y0 < p.y - eps && y1 > p.y - p.thickness + eps)) continue;
       const wasOverlap = f.pos.x + hw > p.x0 + eps && f.pos.x - hw < p.x1 - eps;
       const nowOverlap = x + hw > p.x0 && x - hw < p.x1;
       if (!nowOverlap) continue;
+      // v1.6: a fighter that does not move horizontally cannot have run INTO the side (it only touches it, within rounding): never
+      // "block" it by flipping it to the far side — with moving platforms that happened every time a pushed fighter rested against one
+      if (!wasOverlap && dxm === 0) continue;
       if (!wasOverlap) {
         if (dxm > 0) x = p.x0 - hw;
         else x = p.x1 + hw;
@@ -785,6 +975,7 @@ export class BrawlWorld implements BrawlWorldApi {
     for (let j = 0; j < this.plat.length; j++) {
       if (j === f.platIdx) continue;
       const q = this.plat[j];
+      if (!q.active) continue;
       if (Math.abs(q.y - f.pos.y) < 0.05 && supportedBy(f.pos.x, w, q.x0, q.x1)) {
         f.platIdx = j;
         f.pos.y = q.y;
@@ -807,6 +998,7 @@ export class BrawlWorld implements BrawlWorldApi {
     let landY = -Infinity;
     for (let j = 0; j < this.plat.length; j++) {
       const p = this.plat[j];
+      if (!p.active) continue;
       if (!p.solid && j === f.dropPlat && f.dropTimer > 0) continue;
       if (!supportedBy(x, st.width, p.x0, p.x1)) continue;
       if (oldY - (p.y - p.dy) >= -eps && ny - p.y <= eps && p.y > landY) {
@@ -827,7 +1019,7 @@ export class BrawlWorld implements BrawlWorldApi {
       const hw = st.width * 0.5;
       for (let j = 0; j < this.plat.length; j++) {
         const p = this.plat[j];
-        if (!p.solid) continue;
+        if (!p.solid || !p.active) continue;
         if (!(x + hw > p.x0 && x - hw < p.x1)) continue;
         const bottom = p.y - p.thickness;
         if (oldY + st.height <= bottom + eps && ny + st.height > bottom) {
@@ -1049,6 +1241,7 @@ export class BrawlWorld implements BrawlWorldApi {
     f.armorLeft = body.armor ? body.armor.hits : 0;
     f.moveConnected = false;
     f.movePushed = chain > 0;
+    f.actSerial++;
     let maxGroup = 0;
     for (let i = 0; i < body.hitboxes.length; i++) {
       const g = body.hitboxes[i].group ?? i;
@@ -1118,9 +1311,11 @@ export class BrawlWorld implements BrawlWorldApi {
     let gm = 1;
     let setX = false;
     let setY = false;
+    let edge = false;
     if (body.motion) {
       for (const m of body.motion) {
         if (mf < m.from || mf >= m.to) continue;
+        if (m.stopAtEdge) edge = true;
         const vx = m.vx !== undefined ? m.vx * f.facing : 0;
         const vy = m.vy ?? 0;
         if (m.set) {
@@ -1143,10 +1338,31 @@ export class BrawlWorld implements BrawlWorldApi {
     }
     if (f.grounded) {
       if (!setX) f.vel.x *= PHYS.attackGroundFriction;
+      // surfacing from a burrow: stand still (no slide past the spot where the tunnel ended)
+      if (body.burrow !== undefined && !f.moveAir && mf === body.burrow.to) f.vel.x = 0;
     } else if (!setX) {
       this.airHorizontal(f, PHYS.airAttackDrift, false);
     }
+    // `stopAtEdge`: never leave the platform stood on — plan this frame's step and stop at the end of the platform
+    let edgePlat = -1;
+    let edgeStop = false;
+    if (edge && f.grounded && f.platIdx >= 0) {
+      const p = this.plat[f.platIdx];
+      const base = f.pos.x + p.dx;
+      const want = base + f.vel.x * PHYS.dt;
+      const lim = clampNum(want, p.x0, p.x1);
+      if (lim !== want) {
+        f.vel.x = (lim - base) / PHYS.dt;
+        edgeStop = true;
+      }
+      edgePlat = f.platIdx;
+    }
     this.integrate(f, gm, setY ? Infinity : f.stats.fallSpeed);
+    if (edgePlat >= 0 && f.grounded && f.platIdx === edgePlat) {
+      const p = this.plat[edgePlat];
+      f.pos.x = clampNum(f.pos.x, p.x0, p.x1);
+      if (edgeStop) f.vel.x = 0;
+    }
   }
 
   // ── ledges ───────────────────────────────────────────────────────────────
@@ -1163,28 +1379,64 @@ export class BrawlWorld implements BrawlWorldApi {
       this.ledgeOwner[f.ledgeIdx] = -1;
       f.ledgeIdx = -1;
       f.ledgeRegrab = PHYS.ledgeRegrabCd;
+      f.assistCd = PHYS.ledgeAssistRegrabCd;
     }
     if (!f.grounded) f.platIdx = -1;
   }
 
+  /**
+   * v1.6: can ledge `li` be grabbed right now? Its platform must be active and its corner exposed — not covered by another ACTIVE platform
+   * at the same height (|Δy| ≤ PHYS.ledgeCoverDy) whose span, widened by PHYS.ledgeCoverTol, contains the corner x. On the original two stages
+   * (no two platforms share a height) this is always true.
+   */
+  private ledgeOpen(li: number): boolean {
+    const L = this.ledges[li];
+    const p = this.plat[L.plat];
+    if (!p.active) return false;
+    const cx = L.side < 0 ? p.x0 : p.x1;
+    for (let j = 0; j < this.plat.length; j++) {
+      if (j === L.plat) continue;
+      const q = this.plat[j];
+      if (!q.active) continue;
+      if (Math.abs(q.y - p.y) <= PHYS.ledgeCoverDy && cx >= q.x0 - PHYS.ledgeCoverTol && cx <= q.x1 + PHYS.ledgeCoverTol) return false;
+    }
+    return true;
+  }
+
   private tryLedgeGrab(f: Fighter): void {
     if (this.ledges.length === 0 || f.ledgeRegrab > 0) return;
-    if (f.vel.y > PHYS.ledgeGrabMaxVy || f.inY < -PHYS.downThreshold) return;
+    if (f.inY < -PHYS.downThreshold) return;
     const st = f.stats;
     const hw = st.width * 0.5;
     const hy = f.pos.y + st.height * PHYS.ledgeHandFrac;
+    const falling = f.vel.y <= PHYS.ledgeGrabMaxVy;
+    const assist = f.assistCd <= 0;
     for (let li = 0; li < this.ledges.length; li++) {
       if (this.ledgeOwner[li] !== -1) continue;
       const L = this.ledges[li];
       const p = this.plat[L.plat];
+      if (!p.active) continue;
       const cx = L.side < 0 ? p.x0 : p.x1;
       const near = f.pos.x - L.side * hw;
-      const lo = L.side < 0 ? cx - PHYS.ledgeBoxOut : cx - PHYS.ledgeBoxIn;
-      const hi = L.side < 0 ? cx + PHYS.ledgeBoxIn : cx + PHYS.ledgeBoxOut;
-      if (near < lo || near > hi) continue;
-      if (hy < p.y - PHYS.ledgeBoxDown || hy > p.y + PHYS.ledgeBoxUp) continue;
-      this.grabLedge(f, li, L);
-      return;
+      // original grab box (needs a non-rising fighter)
+      if (falling) {
+        const lo = L.side < 0 ? cx - PHYS.ledgeBoxOut : cx - PHYS.ledgeBoxIn;
+        const hi = L.side < 0 ? cx + PHYS.ledgeBoxIn : cx + PHYS.ledgeBoxOut;
+        if (near >= lo && near <= hi && hy >= p.y - PHYS.ledgeBoxDown && hy <= p.y + PHYS.ledgeBoxUp && this.ledgeOpen(li)) {
+          this.grabLedge(f, li, L);
+          return;
+        }
+      }
+      if (!assist) continue;
+      // v1.6 assist zone: outside the platform end (`out` > 0) up to ledgeAssistOut, the hand from ledgeAssistDown below to ledgeAssistUp above the corner
+      const out = L.side * (near - cx);
+      if (out < -PHYS.ledgeBoxIn || out > PHYS.ledgeAssistOut) continue;
+      if (hy < p.y - PHYS.ledgeAssistDown || hy > p.y + PHYS.ledgeAssistUp) continue;
+      const toward = -L.side; // direction of the stage from this ledge
+      if ((f.vel.x * toward > PHYS.ledgeAssistMinVx || f.inX * toward > PHYS.turnThreshold) && this.ledgeOpen(li)) {
+        this.grabLedge(f, li, L);
+        return;
+      }
     }
   }
 
@@ -1227,6 +1479,10 @@ export class BrawlWorld implements BrawlWorldApi {
     const L = this.ledges[f.ledgeIdx];
     if (!L) {
       this.setStable(f, 'fall');
+      return;
+    }
+    if (!this.plat[L.plat].active) {
+      this.dropFromLedge(f);
       return;
     }
     const hp = { x: 0, y: 0 };
@@ -1273,8 +1529,11 @@ export class BrawlWorld implements BrawlWorldApi {
 
   private startClimb(f: Fighter, roll: boolean): void {
     f.climbRoll = roll;
-    f.climbFromX = f.pos.x;
-    f.climbFromY = f.pos.y;
+    // v1.6: stored RELATIVE to the platform corner / top, so the climb follows a moving platform (identical to the absolute start on a static one)
+    const L = this.ledges[f.ledgeIdx];
+    const lp = this.plat[L.plat];
+    f.climbFromX = f.pos.x - (L.side < 0 ? lp.x0 : lp.x1);
+    f.climbFromY = f.pos.y - lp.y;
     const frames = roll ? PHYS.ledgeRollFrames : PHYS.ledgeClimbFrames;
     this.setAction(f, 'ledgeClimb', frames);
     const inv = roll ? frames : PHYS.ledgeClimbInvuln;
@@ -1285,6 +1544,10 @@ export class BrawlWorld implements BrawlWorldApi {
     const L = this.ledges[f.ledgeIdx];
     if (!L) {
       this.setStable(f, 'fall');
+      return;
+    }
+    if (!this.plat[L.plat].active) {
+      this.dropFromLedge(f);
       return;
     }
     const p = this.plat[L.plat];
@@ -1299,8 +1562,10 @@ export class BrawlWorld implements BrawlWorldApi {
     const ty = Math.min(1, t / split);
     const tx = t <= split ? 0 : (t - split) / (1 - split);
     const easeY = ty * ty * (3 - 2 * ty);
-    f.pos.y = f.climbFromY + (p.y - f.climbFromY) * easeY;
-    f.pos.x = f.climbFromX + (dest - f.climbFromX) * tx;
+    const fromX = cx + f.climbFromX;
+    const fromY = p.y + f.climbFromY;
+    f.pos.y = fromY + (p.y - fromY) * easeY;
+    f.pos.x = fromX + (dest - fromX) * tx;
     f.vel.x = 0;
     f.vel.y = 0;
     if (f.actionFrame >= f.actionFrames) {
@@ -1343,6 +1608,7 @@ export class BrawlWorld implements BrawlWorldApi {
     f.recoveryUsed = false;
     f.pendingTumble = false;
     f.ledgeRegrab = 0;
+    f.assistCd = 0;
     f.body = null;
     f.moveId = null;
     f.moveChain = 0;
@@ -1421,7 +1687,8 @@ export class BrawlWorld implements BrawlWorldApi {
       const w = v.body.invuln;
       if (v.moveFrame >= w.from && v.moveFrame < w.to) return true;
     }
-    return false;
+    // v1.6: underground inside a burrow window — hits bypass the fighter
+    return v.isUnderground();
   }
 
   private armorActive(v: Fighter): boolean {
@@ -1459,6 +1726,7 @@ export class BrawlWorld implements BrawlWorldApi {
   private resolveHits(): void {
     this.hitViews = [];
     this.pending.length = 0;
+    this.platPending.length = 0;
     const off = { x: 0, y: 0 };
     const nF = this.fighters.length;
     for (const a of this.fighters) {
@@ -1484,7 +1752,9 @@ export class BrawlWorld implements BrawlWorldApi {
           h: hb.shape === 'rect' ? hb.h : 0,
         });
       }
-      if (this.boxes.length === 0 || a.hitlag > 0) continue;
+      if (this.boxes.length === 0) continue;
+      if (this.breakIdx.length > 0) this.collectPlatformHits(a);
+      if (a.hitlag > 0) continue;
       for (const v of this.fighters) {
         if (v === a || !v.alive || this.isInvulnerable(v)) continue;
         const hw = v.stats.width * 0.5;
@@ -1527,6 +1797,101 @@ export class BrawlWorld implements BrawlWorldApi {
       }
     }
     for (let i = 0; i < this.pending.length; i++) this.applyHit(this.pending[i]);
+    if (this.platPending.length > 0) this.applyPlatformHits();
+  }
+
+  /**
+   * v1.6: count this attacker's active hitboxes against the breakable platforms (see the header). Counting is attack based: it needs no
+   * victim, ignores hitlag / armor / invulnerability, and is limited to one count per activation and platform and to one per
+   * PHYS.platHitCooldown frames per attacker and platform.
+   */
+  private collectPlatformHits(a: Fighter): void {
+    const pad = PHYS.platHitPad;
+    for (let n = 0; n < this.breakIdx.length; n++) {
+      const j = this.breakIdx[n];
+      const p = this.plat[j];
+      if (!p.active || p.hp <= 0) continue;
+      if (a.platAct[j] === a.actSerial) continue;
+      if (this.frameNo - a.platFrame[j] < PHYS.platHitCooldown) continue;
+      const rx0 = p.x0 - pad;
+      const rx1 = p.x1 + pad;
+      const ry0 = p.y - p.thickness - pad;
+      const ry1 = p.y + pad;
+      for (let k = 0; k < this.boxes.length; k++) {
+        const bx = this.boxes[k];
+        const hb = bx.hb;
+        if (!(hb.damage > 0)) continue;
+        const hit =
+          hb.shape === 'circle' ? circleRect(bx.cx, bx.cy, hb.r, rx0, ry0, rx1, ry1) : rectRect(bx.cx, bx.cy, hb.w, hb.h, rx0, ry0, rx1, ry1);
+        if (!hit) continue;
+        a.platAct[j] = a.actSerial;
+        a.platFrame[j] = this.frameNo;
+        this.platPending.push({ j, attackerId: a.id, x: clampNum(bx.cx, p.x0, p.x1), y: clampNum(bx.cy, p.y - p.thickness, p.y) });
+        break;
+      }
+    }
+  }
+
+  /** Apply the frame's counted platform hits in attacker order; a platform that reaches 0 breaks, the last one flips the stage to its final form. */
+  private applyPlatformHits(): void {
+    let broke = false;
+    for (let i = 0; i < this.platPending.length; i++) {
+      const ph = this.platPending[i];
+      const p = this.plat[ph.j];
+      if (!p.active || p.hp <= 0) continue; // already destroyed earlier this frame
+      p.hp--;
+      this.emit({ type: 'platformHit', platformId: p.id, attackerId: ph.attackerId, hpLeft: p.hp, maxHp: p.maxHp, pos: { x: ph.x, y: ph.y } });
+      if (p.hp <= 0) {
+        this.breakPlatform(ph.j);
+        broke = true;
+      }
+    }
+    if (broke && !this.finalForm) {
+      for (let n = 0; n < this.breakIdx.length; n++) if (this.plat[this.breakIdx[n]].active) return;
+      this.enterFinalForm();
+    }
+  }
+
+  /** A breakable platform is destroyed: it stops colliding NOW; whoever stood on / hung from it falls. */
+  private breakPlatform(j: number): void {
+    const p = this.plat[j];
+    p.active = false;
+    p.hp = 0;
+    this.emit({
+      type: 'platformBreak',
+      platformId: p.id,
+      pos: { x: (p.x0 + p.x1) * 0.5, y: p.y - p.thickness * 0.5 },
+      x0: p.x0,
+      x1: p.x1,
+      y: p.y,
+    });
+    for (let i = 0; i < this.fighters.length; i++) {
+      const f = this.fighters[i];
+      if (!f.alive) continue;
+      if (f.ledgeIdx >= 0 && this.ledges[f.ledgeIdx].plat === j) {
+        this.dropFromLedge(f);
+        continue;
+      }
+      if (f.grounded && f.platIdx === j) {
+        this.leaveGround(f);
+        f.vel.y = 0;
+        if (f.action === 'jumpSquat') this.setStable(f, 'fall');
+      }
+    }
+  }
+
+  /** Every breakable is gone: the `finalOnly` platforms appear (fighters embedded in a new solid are pushed out of it). */
+  private enterFinalForm(): void {
+    this.finalForm = true;
+    for (let j = 0; j < this.plat.length; j++) {
+      if (this.defs[j].finalOnly) this.plat[j].active = true;
+    }
+    this.emit({ type: 'stageFinal' });
+    for (let j = 0; j < this.plat.length; j++) {
+      const p = this.plat[j];
+      if (!this.defs[j].finalOnly || !p.solid) continue;
+      for (let i = 0; i < this.fighters.length; i++) this.pushOut(this.fighters[i], j, false);
+    }
   }
 
   private sweetInside(a: Fighter, bx: ActiveBox, v: Fighter): boolean {

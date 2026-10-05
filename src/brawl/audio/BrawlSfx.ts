@@ -45,6 +45,9 @@ const GAP: Record<string, number> = {
   ko: 0.3,
   respawn: 0.4,
   tick: 0.2,
+  crack: 0.09,
+  crash: 0.22,
+  final: 2.0,
 };
 /** At most this many sounds per rolling window (guards a pile-up in a 4-way brawl). */
 const WINDOW_S = 0.1;
@@ -193,6 +196,46 @@ export class BrawlSfx {
     [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
       this.tone(v, t0, { type: 'sine', f0: f, peak: 0.12, att: 0.006, hold: 0.02, rel: 0.34, delay: i * 0.07 }, fin);
       this.tone(v, t0, { type: 'triangle', f0: f * 2, peak: 0.03, att: 0.006, hold: 0.01, rel: 0.2, delay: i * 0.07 }, fin);
+    });
+    this.finish(v, fin);
+  }
+
+  // ── v1.6 dynamic stages ────────────────────────────────────────────────────
+
+  /** A counted hit on a breakable piece: a dry stone crack over a dull thud (throttled; the hit sound itself still plays). */
+  stoneCrack(pan: number): void {
+    if (!this.allow('crack')) return;
+    const { v, t0, fin } = this.begin(pan, 0.7);
+    this.noise(v, t0, { filter: 'bandpass', f0: 2200, f1: 700, sweep: 0.07, q: 1.1, peak: 0.3, att: 0.001, hold: 0.004, rel: 0.07 }, fin);
+    this.noise(v, t0, { filter: 'highpass', f0: 3600, peak: 0.12, att: 0.001, hold: 0.002, rel: 0.03 }, fin);
+    this.tone(v, t0, { type: 'sine', f0: 170, f1: 70, glide: 0.08, peak: 0.26, att: 0.003, hold: 0.008, rel: 0.1 }, fin);
+    this.finish(v, fin);
+  }
+
+  /** A piece is destroyed: a heavy crash with a rumble tail and a few falling-rubble clatters. */
+  stoneCrash(pan: number): void {
+    if (!this.allow('crash')) return;
+    const { v, t0, fin } = this.begin(pan * 0.7, 0.75);
+    this.noise(v, t0, { filter: 'lowpass', f0: 3200, f1: 130, sweep: 0.6, q: 0.6, peak: 0.55, att: 0.002, hold: 0.04, rel: 0.55 }, fin);
+    this.tone(v, t0, { type: 'sine', f0: 88, f1: 30, glide: 0.5, peak: 0.6, att: 0.004, hold: 0.05, rel: 0.5 }, fin);
+    this.noise(v, t0, { filter: 'bandpass', f0: 1500, q: 0.8, peak: 0.28, att: 0.001, hold: 0.006, rel: 0.12 }, fin);
+    const clatter = [0.09, 0.17, 0.26, 0.34, 0.47];
+    clatter.forEach((d, i) => {
+      this.noise(v, t0, { filter: 'bandpass', f0: 1100 + i * 380, q: 1.3, peak: 0.12 - i * 0.012, att: 0.001, hold: 0.003, rel: 0.05, delay: d }, fin);
+    });
+    this.finish(v, fin);
+  }
+
+  /** The arena transforms: a deep rumble swelling under a rising golden chime. */
+  stageFinal(): void {
+    if (!this.allow('final')) return;
+    const { v, t0, fin } = this.begin(0, 0.8);
+    this.tone(v, t0, { type: 'sine', f0: 52, f1: 26, glide: 1.6, peak: 0.7, att: 0.05, hold: 0.4, rel: 1.3 }, fin);
+    this.noise(v, t0, { filter: 'lowpass', f0: 700, f1: 160, sweep: 1.7, q: 0.6, peak: 0.34, att: 0.04, hold: 0.3, rel: 1.2 }, fin);
+    this.noise(v, t0, { filter: 'bandpass', f0: 3000, q: 0.8, peak: 0.2, att: 0.002, hold: 0.01, rel: 0.2 }, fin);
+    [440, 659.25, 880, 1108.7, 1318.5].forEach((f, i) => {
+      this.tone(v, t0, { type: 'sine', f0: f, peak: 0.13, att: 0.01, hold: 0.04, rel: 0.9, delay: 0.3 + i * 0.13 }, fin);
+      this.tone(v, t0, { type: 'triangle', f0: f * 2, peak: 0.035, att: 0.01, hold: 0.02, rel: 0.6, delay: 0.3 + i * 0.13 }, fin);
     });
     this.finish(v, fin);
   }

@@ -78,11 +78,12 @@ export function A(look: string, o: Anim = {}): Anim {
 }
 
 /** Motion shorthand: `set: true` by default (velocity is set each frame of the window). */
-export function mot(from: number, to: number, o: { vx?: number; vy?: number; g?: number; add?: boolean } = {}): MoveMotion {
+export function mot(from: number, to: number, o: { vx?: number; vy?: number; g?: number; add?: boolean; edge?: boolean } = {}): MoveMotion {
   const m: MoveMotion = { from, to, set: !o.add };
   if (o.vx !== undefined) m.vx = o.vx;
   if (o.vy !== undefined) m.vy = o.vy;
   if (o.g !== undefined) m.gravity = o.g;
+  if (o.edge) m.stopAtEdge = true;
   return m;
 }
 
@@ -90,6 +91,8 @@ export interface BodyExtra {
   motion?: MoveMotion[];
   armor?: MoveBody['armor'];
   invuln?: MoveBody['invuln'];
+  /** v1.6: underground window (ground form only). */
+  burrow?: MoveBody['burrow'];
   cancels?: MoveBody['cancels'];
   turn?: boolean;
 }
@@ -138,6 +141,7 @@ export function body(name: string, archetype: ArchetypeId, anim: Anim, t: [numbe
   if (x.motion) b.motion = x.motion;
   if (x.armor) b.armor = x.armor;
   if (x.invuln) b.invuln = x.invuln;
+  if (x.burrow) b.burrow = x.burrow;
   if (x.cancels) b.cancels = x.cancels;
   if (x.turn) b.turnOnStart = true;
   return b;
@@ -162,6 +166,8 @@ export interface AirOpts {
   motion?: MoveMotion[];
   armor?: MoveBody['armor'];
   invuln?: MoveBody['invuln'];
+  /** v1.6: ground-form fields the air form must NOT inherit (explicitly set to undefined in the partial). */
+  clear?: ('motion' | 'invuln' | 'burrow' | 'armor')[];
 }
 
 /** Air form: partial overrides of `ground` (always carries `landingLag` + `autoCancel`). */
@@ -195,6 +201,7 @@ export function air(g: MoveBody, o: AirOpts): Partial<MoveBody> {
   if (o.motion) p.motion = o.motion;
   if (o.armor) p.armor = o.armor;
   if (o.invuln) p.invuln = o.invuln;
+  if (o.clear) for (const k of o.clear) p[k] = undefined;
   return p;
 }
 

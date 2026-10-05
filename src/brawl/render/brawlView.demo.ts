@@ -3,7 +3,8 @@
  *
  *   ?demo=brawl-view&stage=skyAqueduct&n=4&a=lion,eagle,gorilla,panther&q=high&pct=80&stocks=3&seed=7&ai=1&p=0
  *
- *   stage    brokenColosseum | skyAqueduct         n      2..4 fighters        a   animal ids (csv)
+
+ *   stage    brokenColosseum | skyAqueduct | clockworkHeights | crumblingAmphitheatre   n      2..4 fighters        a   animal ids (csv)
  *   q        low | medium | high (forces the tier)  pct   starting percent       ai  1 = dummy bots drive everyone
  *   p        1 = fighter 0 is yours (A/D move · W jump · S down · J light · K heavy · L dodge)
  *   Keys: F3 debug boxes · Q cycle quality · U force-KO fighter 1 · P +30 % to all · Space pause · R restart · [ ] slow-mo
@@ -17,7 +18,7 @@ import { mulberry32 } from '../../core/math';
 import type { AnimalId } from '../../core/types';
 import { setQualitySetting, getQualitySetting, type QualitySetting } from '../../render/quality';
 import { BrawlWorld } from '../sim/BrawlWorld';
-import { idleIntent, type BrawlEvent, type BrawlIntent, type BrawlMatchConfig, type BrawlSnapshot, type StageId } from '../types';
+import { STAGE_IDS, idleIntent, type BrawlEvent, type BrawlIntent, type BrawlMatchConfig, type BrawlSnapshot, type StageId } from '../types';
 import { createBrawlView, type BrawlView } from './BrawlView';
 
 const DT = 1 / 60;
@@ -35,6 +36,12 @@ interface DemoApi {
   timeScale: number;
   restart(): void;
   cur(): BrawlSnapshot;
+  /** v1.6: apply `count` counted hits to a breakable platform through the sim (events + cosmetics flow normally). */
+  hitPlatform(id: string, count?: number): boolean;
+  /** v1.6: break every breakable (-> the stage's final form). */
+  breakAll(): void;
+  /** Advance the world `frames` fixed steps without rendering (clockwork layouts: 36 s = 2160 frames). */
+  advance(frames: number): void;
 }
 
 function parseAnimals(csv: string | null, n: number): AnimalId[] {
@@ -52,7 +59,8 @@ function parseAnimals(csv: string | null, n: number): AnimalId[] {
 
 registerDemo('brawl-view', (root) => {
   const params = new URLSearchParams(window.location.search);
-  const stage: StageId = params.get('stage') === 'skyAqueduct' ? 'skyAqueduct' : 'brokenColosseum';
+  const stageParam = params.get('stage') as StageId | null;
+  const stage: StageId = stageParam !== null && STAGE_IDS.includes(stageParam) ? stageParam : 'brokenColosseum';
   const n = Math.max(2, Math.min(4, Number(params.get('n') ?? 4) || 4));
   const animals = parseAnimals(params.get('a'), n);
   const seed = Number(params.get('seed') ?? 7) || 7;
@@ -241,6 +249,23 @@ registerDemo('brawl-view', (root) => {
     const b = world.stage.blast;
     const pos = side === 'left' ? [b.left - 1, 6, -4, 4] : side === 'right' ? [b.right - 0.3, 6, 40, 6] : side === 'top' ? [0, b.top - 0.5, 0, 40] : [0, b.bottom + 0.5, 0, -40];
     world.debugPlace(id, pos[0], pos[1], pos[2], pos[3]);
+  };
+  api.hitPlatform = (id, count = 1): boolean => {
+    const ok = world.debugHitPlatform(id, 0, count);
+    for (const e of world.drainEvents()) events.push(e);
+    prev = cur;
+    cur = world.snapshot();
+    return ok;
+  };
+  api.breakAll = (): void => {
+    for (const p of world.stage.platforms) if (p.breakable !== undefined) api.hitPlatform(p.id, p.breakable.hits);
+  };
+  api.advance = (frames): void => {
+    for (let i = 0; i < frames; i++) {
+      world.step();
+      world.drainEvents();
+    }
+    prev = cur = world.snapshot();
   };
   api.restart = (): void => {
     view.dispose();

@@ -13,22 +13,23 @@ Budgets and invariants are enforced by `tests/brawl/moveBudget.test.ts`.
 * KB column = `baseKb + kbGrowth` of the main hitbox: launch speed (m/s) = `(base + growth x percent/100) x (100 / weight)`. Angle: 0 = forward, 90 = up, 270 = down (mirrored by facing). Damage = total one victim can take from one activation (sweetspot value in brackets).
 * lightN is a string: the table shows each link; pressing Light inside the previous link's cancel window continues it (links after the first are `onHitOnly`).
 * Every move has an aerial form (see the "Aerials" tables): landing lag when landing before the move ends, and an auto-cancel window of late frames. Spikes (`spike` effect) exist only on the air Heavy Down of lion, gorilla, crocodile, hippo, rhino, eagle and giraffe.
+* `underground f{a}-{b}` (v1.6, mole Burrow Strike, ground form only): the fighter is untouchable in that window (hits bypass it: no hit, no hitlag), hitboxes pass through it, the rig is hidden under a dirt mound; `stops at the platform edge` = the tunnel never carries it off the platform it stands on (it surfaces at the edge instead), and it surfaces standing still.
 * Heavy Up is the recovery: it travels (`moves ... up` in the notes) and can be used once per airtime; on the ground it is a leaping launcher.
 
 ## Roster at a glance
 
 | Animal | Identity | Weight | Run | Recovery score* | Best kill % (w100) | Power index |
 |---|---|---|---|---|---|---|
-| Lion | All-rounder brawler: balanced reach, speed and a dependable leap recovery. | 98 | 8.6 | 7.7 | 103.5 | 0.496 |
+| Lion | All-rounder brawler: balanced reach, speed and a dependable leap recovery. | 104 | 8.6 | 7.7 | 103.5 | 0.496 |
 | Gorilla | Heavy bruiser: slow, armored and brutally strong, but a short climb back to the stage. | 107 | 8.1 | 5.3 | 128 | 0.479 |
-| Crocodile | Low trapper: long reach along the floor, a crushing lunge, and a death roll that drags victims in. | 132 | 8 | 4.6 | 84.5 | 0.508 |
-| Hippo | Wall of meat: armored giant bites and a quaking belly flop, but slow and with the weakest recovery. | 122 | 6.9 | 3.1 | 92 | 0.496 |
+| Crocodile | Low trapper: long reach along the floor, a crushing lunge, and a death roll that drags victims in. | 129 | 8 | 4.6 | 84.5 | 0.508 |
+| Hippo | Wall of meat: armored giant bites and a quaking belly flop, but slow and with the weakest recovery. | 119 | 6.5 | 3.1 | 92 | 0.496 |
 | Rhino | Momentum charger: an armored battering-ram rush with kill power, but a poor way back. | 130 | 7.9 | 4.9 | 96 | 0.493 |
 | Eagle | Air skirmisher: fast, floaty with four jumps and a glide; unmatched recovery but light and low on kill power. | 76 | 9.4 | 12.2 | 135 | 0.490 |
-| Panther | Assassin: blazing combos, a dash that slips through enemies and a vanishing blink-leap recovery. | 78 | 9.2 | 8 | 126 | 0.481 |
+| Panther | Assassin: blazing combos, a dash that slips through enemies and a vanishing blink-leap recovery. | 84 | 9.2 | 8 | 128 | 0.417 |
 | Python | Long-reach controller: pokes and whips from afar, pulls you in and stuns you, with a slow but strong lunge. | 97 | 7.3 | 6.4 | 98 | 0.488 |
-| Giraffe | Tall zoner: huge neck reach with tip sweetspots and vertical control, but struggles against low targets. | 95 | 7.2 | 8 | 96.5 | 0.481 |
-| Mole | Tiny trickster: hard to hit, quick digging combos, a burrow that buries and a drilling recovery. | 82 | 9.1 | 8.4 | 121 | 0.522 |
+| Giraffe | Tall zoner: huge neck reach with tip sweetspots and vertical control, but struggles against low targets. | 100 | 7.2 | 8 | 96.5 | 0.481 |
+| Mole | Tiny trickster: hard to hit, quick digging combos, a burrow that tunnels under attacks and erupts upward, and a drilling recovery. | 79 | 9.1 | 8.4 | 121 | 0.573 |
 
 \* height gained + half the horizontal drift of Heavy Up (m), computed by `simulateRecovery`. Kill % is the data-level estimate of `killPercent` (no DI / air control); the balance script measures the real thing.
 
@@ -36,7 +37,7 @@ Budgets and invariants are enforced by `tests/brawl/moveBudget.test.ts`.
 
 *All-rounder brawler: balanced reach, speed and a dependable leap recovery.*
 
-Weight 98, walk 4.6, run 8.6, air 7.3 (accel 33), jump 14.5 / air jump 13, 2 jumps, gravity x1, fall 18 / fast 26, hurtbox 1.1 x 1.5 m, dodge 14/26 frames.
+Weight 104, walk 4.6, run 8.6, air 7.3 (accel 33), jump 14.5 / air jump 13, 2 jumps, gravity x1, fall 18 / fast 26, hurtbox 1.1 x 1.5 m, dodge 14/26 frames.
 
 | Slot | Name | Archetype | S/A/R | Dmg | KB | Angle | Notes | What it looks like |
 |---|---|---|---|---|---|---|---|---|
@@ -103,7 +104,7 @@ Longest hitbox reach: 2.7 m.
 
 *Low trapper: long reach along the floor, a crushing lunge, and a death roll that drags victims in.*
 
-Weight 132, walk 4.1, run 8, air 5.5 (accel 24.2), jump 12.5 / air jump 11.5, 2 jumps, gravity x1.15, fall 21 / fast 28, hurtbox 1.7 x 0.9 m, dodge 14/28 frames.
+Weight 129, walk 4.1, run 8, air 5.5 (accel 24.2), jump 17.6777 / air jump 11.5, 2 jumps, gravity x1.15, fall 21 / fast 28, hurtbox 1.7 x 0.9 m, dodge 14/28 frames.
 
 | Slot | Name | Archetype | S/A/R | Dmg | KB | Angle | Notes | What it looks like |
 |---|---|---|---|---|---|---|---|---|
@@ -136,7 +137,7 @@ Longest hitbox reach: 2.8 m.
 
 *Wall of meat: armored giant bites and a quaking belly flop, but slow and with the weakest recovery.*
 
-Weight 122, walk 3.5, run 6.9, air 5.1 (accel 22), jump 12.5 / air jump 11, 2 jumps, gravity x1.2, fall 22 / fast 29, hurtbox 1.8 x 1.5 m, dodge 14/28 frames.
+Weight 119, walk 3.3, run 6.5, air 5.1 (accel 22), jump 12.5 / air jump 11, 2 jumps, gravity x1.2, fall 22 / fast 29, hurtbox 1.8 x 1.5 m, dodge 14/28 frames.
 
 | Slot | Name | Archetype | S/A/R | Dmg | KB | Angle | Notes | What it looks like |
 |---|---|---|---|---|---|---|---|---|
@@ -236,20 +237,20 @@ Longest hitbox reach: 2.6 m.
 
 *Assassin: blazing combos, a dash that slips through enemies and a vanishing blink-leap recovery.*
 
-Weight 78, walk 5, run 9.2, air 7.7 (accel 35.2), jump 15 / air jump 13.5, 2 jumps, gravity x0.95, fall 18 / fast 27, hurtbox 1.1 x 1.35 m, dodge 14/24 frames.
+Weight 84, walk 5, run 9.2, air 8 (accel 44), jump 15 / air jump 13.5, 2 jumps, gravity x0.95, fall 18 / fast 27, hurtbox 1.1 x 1.35 m, dodge 14/24 frames.
 
 | Slot | Name | Archetype | S/A/R | Dmg | KB | Angle | Notes | What it looks like |
 |---|---|---|---|---|---|---|---|---|
 | lightN 1 | Claw | swipe | 4/2/8 (14) | 3 | 5 + 4 | 62 | - | claw (R); reach 1.5, height 0.95; Quick right-paw claw slash |
 | lightN 2 | Claw 2 | backhand | 4/2/8 (14) | 3 | 5 + 4 | 62 | - | claw (L); reach 1.5, height 0.95; Left-paw claw slash back across |
-| lightN 3 | Claw Rake | rake | 5/2/10 (17) | 3 | 7 + 10 | 50 | swept hitbox | claw (both); reach 1.6, height 0.9; Double-clawed downward rake that finishes the string |
-| lightS — Light Side | Shadow Slash | lunge | 6/3/12 (21) | 6 | 6 + 8 | 35 | moves 0.4 m fwd (f3-8) | claw (R); reach 1.8, height 0.9; Darts forward in a low lunge with a single claw slash |
-| lightD — Light Down | Low Slash | rake | 5/3/11 (19) | 5 | 5 + 6 | 60 | - | claw (R); reach 1.65, height 0.3; Drops low and slashes at the shins |
-| lightU — Light Up | Rising Claw | uppercut | 6/3/12 (21) | 6 | 6 + 8 | 88 | swept hitbox | claw (R); reach 1.3, height 1.9; Claws sweep upward in a rising arc |
-| heavyN — Heavy Neutral | Pounce Spin | spinAttack | 16/4/24 (44) | 10 | 10.8 + 22 | 40 | two-sided | claw (both); reach 1.9, height 0.95; A pouncing spin on the spot, claws out on both sides |
-| heavyS — Heavy Side | Shadow Dash | charge | 18/3/26 (47) | 15 | 10.8 + 24 | 42 | two-sided; invulnerable f4-13; moves 2.5 m fwd (f8-18) | claw (both); reach 2.1, height 0.9; Fades into a smoky blur and dashes straight through the target, then rakes as it reappears |
-| heavyD — Heavy Down | Dive Claw | rake | 13/4/21 (38) | 12 | 10 + 20 | 75 | - | claw (both); reach 2, height 0.4; Crouches and slashes both claws out low and wide; in the air a diagonal downward dive claw |
-| heavyU — Heavy Up (recovery) | Shadow Leap | leapUp | 6/12/26 (44) | 7 | 9.5 + 17 | 80 | invulnerable f0-8; moves 1.5 m fwd, 3.1 m up (f4-16); swept hitbox | claw (both); reach 1.5, height 2.2; Vanishes in smoke and leaps up and forward, reappearing with a claw swipe at the top |
+| lightN 3 | Claw Rake | rake | 5/2/10 (17) | 2 | 7 + 10 | 50 | swept hitbox | claw (both); reach 1.6, height 0.9; Double-clawed downward rake that finishes the string |
+| lightS — Light Side | Shadow Slash | lunge | 6/3/12 (21) | 5 | 6 + 8 | 35 | moves 0.4 m fwd (f3-8) | claw (R); reach 1.6, height 0.9; Darts forward in a short low lunge with a single claw slash |
+| lightD — Light Down | Low Slash | rake | 5/3/11 (19) | 4.5 | 5 + 6 | 60 | - | claw (R); reach 1.65, height 0.3; Drops low and slashes at the shins |
+| lightU — Light Up | Rising Claw | uppercut | 6/3/12 (21) | 5 | 6 + 8 | 88 | swept hitbox | claw (R); reach 1.3, height 1.9; Claws sweep upward in a rising arc |
+| heavyN — Heavy Neutral | Pounce Spin | spinAttack | 16/4/24 (44) | 9 | 10.8 + 22 | 40 | two-sided | claw (both); reach 1.9, height 0.95; A pouncing spin on the spot, claws out on both sides |
+| heavyS — Heavy Side | Shadow Dash | charge | 18/3/26 (47) | 13 | 10.8 + 24 | 42 | two-sided; invulnerable f4-13; moves 2.1 m fwd (f8-18) | claw (both); reach 1.9, height 0.9; Fades into a smoky blur and dashes straight through the target, then rakes as it reappears |
+| heavyD — Heavy Down | Dive Claw | rake | 13/4/21 (38) | 10.5 | 10 + 20 | 75 | - | claw (both); reach 2, height 0.4; Crouches and slashes both claws out low and wide; in the air a diagonal downward dive claw |
+| heavyU — Heavy Up (recovery) | Shadow Leap | leapUp | 6/12/26 (44) | 6 | 9.5 + 17 | 80 | invulnerable f0-8; moves 1.5 m fwd, 3.1 m up (f4-16); swept hitbox | claw (both); reach 1.5, height 2.2; Vanishes in smoke and leaps up and forward, reappearing with a claw swipe at the top |
 
 Aerials:
 
@@ -261,10 +262,10 @@ Aerials:
 | lightU | 21 | 6 | f13-21 | same as ground |
 | heavyN | 44 | 16 | f36-44 | same as ground |
 | heavyS | 47 | 20 | f39-47 | same as ground |
-| heavyD | 38 | 18 | f30-38 | renamed "Dive Claw (air)"; own hitbox: 12 dmg, 10 + 20, angle 300 |
+| heavyD | 38 | 18 | f30-38 | renamed "Dive Claw (air)"; own hitbox: 10.5 dmg, 10 + 20, angle 300 |
 | heavyU | 44 | 16 | f36-44 | same as ground |
 
-Longest hitbox reach: 2.1 m.
+Longest hitbox reach: 2 m.
 
 ## Python
 
@@ -303,7 +304,7 @@ Longest hitbox reach: 3.1 m.
 
 *Tall zoner: huge neck reach with tip sweetspots and vertical control, but struggles against low targets.*
 
-Weight 95, walk 3.95, run 7.2, air 6.6 (accel 29.7), jump 14 / air jump 12.5, 2 jumps, gravity x1, fall 18.5 / fast 26, hurtbox 1 x 2.3 m, dodge 14/26 frames.
+Weight 100, walk 3.95, run 7.2, air 6.6 (accel 29.7), jump 14 / air jump 12.5, 2 jumps, gravity x1, fall 18.5 / fast 26, hurtbox 1 x 2.3 m, dodge 14/26 frames.
 
 | Slot | Name | Archetype | S/A/R | Dmg | KB | Angle | Notes | What it looks like |
 |---|---|---|---|---|---|---|---|---|
@@ -334,22 +335,22 @@ Longest hitbox reach: 3.4 m.
 
 ## Mole
 
-*Tiny trickster: hard to hit, quick digging combos, a burrow that buries and a drilling recovery.*
+*Tiny trickster: hard to hit, quick digging combos, a burrow that tunnels under attacks and erupts upward, and a drilling recovery.*
 
-Weight 82, walk 4.85, run 9.1, air 7 (accel 31.9), jump 14.5 / air jump 12.5, 2 jumps, gravity x0.95, fall 17 / fast 25, hurtbox 0.68 x 0.68 m, dodge 14/24 frames.
+Weight 79, walk 4.85, run 9.1, air 7 (accel 31.9), jump 14.5 / air jump 12.5, 2 jumps, gravity x0.95, fall 17 / fast 25, hurtbox 0.68 x 0.68 m, dodge 14/24 frames.
 
 | Slot | Name | Archetype | S/A/R | Dmg | KB | Angle | Notes | What it looks like |
 |---|---|---|---|---|---|---|---|---|
 | lightN 1 | Claw Dig | swipe | 4/2/8 (14) | 4 | 5 + 4 | 62 | - | claw (R); reach 0.95, height 0.4; Right digging claw scoops forward |
 | lightN 2 | Claw Dig 2 | backhand | 4/2/8 (14) | 4 | 5 + 4 | 62 | - | claw (L); reach 0.95, height 0.4; Left digging claw scoops back |
-| lightN 3 | Claw Dig 3 | rake | 5/2/10 (17) | 4 | 7 + 9 | 50 | swept hitbox | claw (both); reach 1.05, height 0.4; Both claws dig down through the target |
-| lightS — Light Side | Dirt Fling | swipe | 6/3/13 (22) | 8 | 5 + 6 | 30 | flinch | claw (both); reach 1.1, height 0.4; Both paws fling a short cone of dirt into the target's face |
-| lightD — Light Down | Low Dig | rake | 5/3/11 (19) | 7 | 5 + 6 | 68 | - | claw (both); reach 1.05, height 0.15; Claws scrape low along the ground and kick up the ankles |
-| lightU — Light Up | Earth Pop | uppercut | 6/3/12 (21) | 8 | 6 + 8 | 88 | swept hitbox | claw (both); reach 0.9, height 1.3; Claws scoop upward in a small uppercut, popping the target up |
-| heavyN — Heavy Neutral | Drill Spin | spinAttack | 12/6/22 (40) | 13 | 10.8 + 23 | 55 | multi-hit | claw (both); reach 0.9, height 0.4; Spins like a drill on the spot, claws buzzing around the body; the last turn flings victims |
+| lightN 3 | Claw Dig 3 | rake | 5/2/10 (17) | 5 | 7 + 9 | 50 | swept hitbox | claw (both); reach 1.05, height 0.4; Both claws dig down through the target |
+| lightS — Light Side | Dirt Fling | swipe | 6/3/13 (22) | 9 | 5 + 6 | 30 | flinch | claw (both); reach 1.1, height 0.4; Both paws fling a short cone of dirt into the target's face |
+| lightD — Light Down | Low Dig | rake | 5/3/11 (19) | 8 | 5 + 6 | 68 | - | claw (both); reach 1.05, height 0.15; Claws scrape low along the ground and kick up the ankles |
+| lightU — Light Up | Earth Pop | uppercut | 6/3/12 (21) | 9 | 6 + 8 | 88 | swept hitbox | claw (both); reach 0.9, height 1.3; Claws scoop upward in a small uppercut, popping the target up |
+| heavyN — Heavy Neutral | Drill Spin | spinAttack | 12/6/22 (40) | 14 | 10.8 + 23 | 55 | multi-hit | claw (both); reach 0.9, height 0.4; Spins like a drill on the spot, claws buzzing around the body; the last turn flings victims |
 | heavyS — Heavy Side | Tunnel Lunge | charge | 14/4/25 (43) | 14 | 11 + 24 | 40 | moves 1.4 m fwd (f12-22) | claw (front); reach 1.2, height 0.4; Tucks into a drill and rockets forward like a boring machine |
-| heavyD — Heavy Down | Burrow Strike | burrow | 13/4/25 (42) | 12 | 6 + 10 | 90 | bury | claw (front); reach 1.45, height 0.2; Dives into the ground out of sight, then erupts upward in front, burying the target; in the air it is a drill-down |
-| heavyU — Heavy Up (recovery) | Drill Ascent | leapUp | 8/16/24 (48) | 10 | 9.5 + 17 | 85 | multi-hit; moves 0.7 m fwd, 4.5 m up (f6-22) | claw (up); reach 0.5, height 1.4; Spins into a vertical drill and bores up through the air |
+| heavyD — Heavy Down | Burrow Strike | burrow | 24/4/20 (48) | 12 | 11 + 16 | 88 | invulnerable f6-24; underground f6-24; moves 3.3 m fwd (f6-24), stops at the platform edge | claw (front); reach 1.45, height 0.9; Digs under the floor, tunnels a short way, and erupts upward under the target |
+| heavyU — Heavy Up (recovery) | Drill Ascent | leapUp | 8/16/24 (48) | 11 | 9.5 + 17 | 85 | multi-hit; moves 0.7 m fwd, 4.5 m up (f6-22) | claw (up); reach 0.5, height 1.4; Spins into a vertical drill and bores up through the air |
 
 Aerials:
 
@@ -361,7 +362,7 @@ Aerials:
 | lightU | 21 | 6 | f13-21 | same as ground |
 | heavyN | 40 | 15 | f32-40 | same as ground |
 | heavyS | 43 | 18 | f35-43 | same as ground |
-| heavyD | 42 | 18 | f34-42 | renamed "Drill Down"; own hitbox: 12 dmg, 10 + 20, angle 285 |
+| heavyD | 42 | 18 | f34-42 | renamed "Drill Down"; own hitbox: 13 dmg, 10 + 20, angle 285; no motion; no underground window |
 | heavyU | 48 | 14 | f40-48 | same as ground |
 
 Longest hitbox reach: 1.5 m.

@@ -21,8 +21,8 @@ export interface V2 {
 /** +1 = facing +X (right), −1 = facing −X (left). */
 export type Facing = -1 | 1;
 
-export type StageId = 'brokenColosseum' | 'skyAqueduct';
-export const STAGE_IDS: readonly StageId[] = ['brokenColosseum', 'skyAqueduct'];
+export type StageId = 'brokenColosseum' | 'skyAqueduct' | 'clockworkHeights' | 'crumblingAmphitheatre';
+export const STAGE_IDS: readonly StageId[] = ['brokenColosseum', 'skyAqueduct', 'clockworkHeights', 'crumblingAmphitheatre'];
 
 // ── Input ────────────────────────────────────────────────────────────────────
 
@@ -60,6 +60,18 @@ export interface MovingSpec {
   phase: number;
 }
 
+/**
+ * v1.6: keyframed LOOPING motion. The platform's position at frame f is its defined position plus the offset interpolated
+ * (cosine-eased) between `keys` at cycle position `((f/60)/periodS + phase) mod 1`. `keys[0].t` must be 0, `t` strictly increasing
+ * in [0,1); the last key eases back to the first (closed loop). A pure function of the frame (rollback-safe). Adds to `moving`.
+ */
+export interface PathSpec {
+  periodS: number;
+  /** Phase offset in cycles (0..1). */
+  phase: number;
+  keys: { t: number; x: number; y: number }[];
+}
+
 export interface PlatformDef {
   id: string;
   /** solid: blocks from all sides; soft: pass through from below / drop through with Down. */
@@ -71,6 +83,15 @@ export interface PlatformDef {
   /** Visual/collision thickness below the top surface (solid only collides on all sides). */
   thickness: number;
   moving?: MovingSpec;
+  /** v1.6: looping keyframed motion (several platforms can share a `periodS` to re-form layouts together). */
+  path?: PathSpec;
+  /**
+   * v1.6: destroyed after `hits` damaging attack activations overlap it (one count per attacker per move activation, with a short
+   * per-attacker cooldown). A destroyed platform has no collision, grabbable ledges vanish, fighters on it fall.
+   */
+  breakable?: { hits: number };
+  /** v1.6: exists ONLY in the stage's FINAL form (reached when every `breakable` platform is destroyed); inactive (no collision, hidden or ghosted) before. */
+  finalOnly?: boolean;
   /** Grabbable ledge at the left / right end (solid platforms). */
   ledgeLeft?: boolean;
   ledgeRight?: boolean;
@@ -179,6 +200,8 @@ export interface BrawlFighterState {
   airDodgeUsed?: boolean;
   freeFall?: boolean;
   ledgeCd?: number;
+  /** v1.6: true while the fighter is inside a move's `burrow` window (underground: untouchable; the view hides the rig and shows a dirt mound). */
+  underground?: boolean;
 }
 
 export interface HitboxView {
@@ -199,6 +222,13 @@ export interface PlatformState {
   x1: number;
   /** Current (possibly moving) top-surface Y. */
   y: number;
+  /**
+   * v1.6 dynamic stages. `active` = currently exists / collides (false for a destroyed breakable and for a `finalOnly` platform
+   * before the final form; undefined = true). `hp`/`maxHp` only for breakables (hits remaining / total). Draw cracks from them.
+   */
+  active?: boolean;
+  hp?: number;
+  maxHp?: number;
 }
 
 export interface BrawlSnapshot {
@@ -242,6 +272,12 @@ export type BrawlEvent =
   | { type: 'ledgeGrab'; fighterId: number; pos: V2 }
   | { type: 'ko'; fighterId: number; killerId: number; side: 'left' | 'right' | 'top' | 'bottom'; pos: V2; stocksLeft: number }
   | { type: 'respawn'; fighterId: number; pos: V2 }
+  /** v1.6: a breakable platform took a counted hit (`hpLeft` hits remain). */
+  | { type: 'platformHit'; platformId: string; attackerId: number; hpLeft: number; maxHp: number; pos: V2 }
+  /** v1.6: a breakable platform was destroyed (`x0..x1` = its span at the moment it broke). */
+  | { type: 'platformBreak'; platformId: string; pos: V2; x0: number; x1: number; y: number }
+  /** v1.6: every breakable is gone — the stage switched to its final form (`finalOnly` platforms are now active). */
+  | { type: 'stageFinal' }
   | { type: 'matchEnd'; winnerId: number };
 
 // ── Match config ─────────────────────────────────────────────────────────────
@@ -349,6 +385,11 @@ export interface MoveMotion {
   set?: boolean;
   /** Gravity multiplier during the window (0 = float). */
   gravity?: number;
+  /**
+   * v1.6: while this window runs the fighter never leaves the platform it stands on — the travel stops (vx = 0, position
+   * clamped) at the platform edge even if the planned distance is longer (burrow dashes must not carry the mole off a ledge).
+   */
+  stopAtEdge?: boolean;
 }
 
 export interface MoveBody {
@@ -372,6 +413,12 @@ export interface MoveBody {
    * the Panther's Shadow Dash (startup) and Shadow Leap (rising vanish) only.
    */
   invuln?: { from: number; to: number };
+  /**
+   * v1.6: underground window (move-relative frames [from, to)). While it runs the fighter is invulnerable (hits "bypass" it),
+   * `BrawlFighterState.underground` is true, and `motion` entries with `stopAtEdge` keep it on its platform. The view hides the
+   * rig and draws a travelling dirt mound; the pose layer sinks/emerges the body at the window boundaries. Ground form only.
+   */
+  burrow?: { from: number; to: number };
   /** Cancel windows into other moves. */
   cancels?: { into: MoveId[]; from: number; to: number; onHitOnly: boolean }[];
   /** Whether holding left/right at the start turns the fighter around. */

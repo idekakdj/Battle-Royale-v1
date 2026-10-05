@@ -4,12 +4,13 @@ import type { MovesetDef } from '../../types';
 import { A, air, body, cs, hb, linkTo, moveset, mot, mv } from '../helpers';
 
 const stats = cs({
-  weight: 132,
+  weight: 129,
   walkSpeed: 4.1,
   runSpeed: 8.0,
   airSpeed: 5.5,
   airAccel: 24.2,
-  jumpVel: 12.5,
+  // v1.6: base (ground) jump HEIGHT doubled: apex = v^2 / (2 g gravityMult), so v = 12.5 * sqrt(2). The air jump is unchanged.
+  jumpVel: 17.6777,
   airJumpVel: 11.5,
   maxJumps: 2,
   gravityMult: 1.15,

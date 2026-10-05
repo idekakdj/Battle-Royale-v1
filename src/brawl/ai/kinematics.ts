@@ -103,6 +103,7 @@ export function flight(
     const ny = y + vy * DT;
     if (vy < 0) {
       for (const p of stage.plats) {
+        if (!p.active) continue;
         if (y >= p.y - EPS && ny <= p.y + EPS && supportedBy(nx, width, p.x0, p.x1)) {
           landed = true;
           break;
@@ -111,7 +112,7 @@ export function flight(
       if (landed) break;
     }
     for (const p of stage.plats) {
-      if (!p.solid) continue;
+      if (!p.solid || !p.active) continue;
       if (nx > p.x0 && nx < p.x1 && ny < p.y && ny > p.y - p.thickness) {
         landed = true;
         break;
@@ -197,6 +198,16 @@ export interface RecEnv {
  * landing sweep, ledge grab box) closely enough to decide WHEN to spend jumps and Heavy-Up.
  */
 export function simRecovery(env: RecEnv, s0: RecState, pol: RecPolicy, maxFrames = 200): RecResult {
+  const stage = env.stage;
+  // v1.6: platforms that drift along a deterministic loop are looked up where they will be on every simulated frame
+  const look = stage.dyn && stage.drifts;
+  if (look) stage.prepareHorizon(stage.frame < 0 ? 0 : stage.frame, maxFrames + 2);
+  const r = simRecoveryInner(env, s0, pol, maxFrames, look);
+  if (look) stage.endHorizon();
+  return r;
+}
+
+function simRecoveryInner(env: RecEnv, s0: RecState, pol: RecPolicy, maxFrames: number, look: boolean): RecResult {
   const { stage, stats, rec } = env;
   const hw = stats.width * 0.5;
   const h = stats.height;
@@ -220,6 +231,7 @@ export function simRecovery(env: RecEnv, s0: RecState, pol: RecPolicy, maxFrames
   recOut.ledge = -1;
   recOut.plat = -1;
   for (let f = 0; f < maxFrames; f++) {
+    if (look) stage.setHorizon(f);
     if (ledgeCd > 0) ledgeCd--;
     let inX = steerTo(x, vx, pol.tx, stats.airSpeed);
     if (Math.abs(pol.tx - x) > 0.6) facing = pol.tx > x ? 1 : -1;
@@ -300,7 +312,7 @@ export function simRecovery(env: RecEnv, s0: RecState, pol: RecPolicy, maxFrames
     const oldY = y;
     let nx = x + vx * DT;
     for (const p of stage.plats) {
-      if (!p.solid) continue;
+      if (!p.solid || !p.active) continue;
       if (!(oldY < p.y - EPS && oldY + h > p.y - p.thickness + EPS)) continue;
       const was = x + hw > p.x0 + EPS && x - hw < p.x1 - EPS;
       const now = nx + hw > p.x0 && nx - hw < p.x1;
@@ -317,7 +329,7 @@ export function simRecovery(env: RecEnv, s0: RecState, pol: RecPolicy, maxFrames
     let landY = -Infinity;
     for (let i = 0; i < stage.plats.length; i++) {
       const p = stage.plats[i];
-      if (!supportedBy(x, stats.width, p.x0, p.x1)) continue;
+      if (!p.active || !supportedBy(x, stats.width, p.x0, p.x1)) continue;
       if (oldY - p.y >= -EPS && ny - p.y <= EPS && p.y > landY) {
         landIdx = i;
         landY = p.y;
@@ -337,7 +349,7 @@ export function simRecovery(env: RecEnv, s0: RecState, pol: RecPolicy, maxFrames
     }
     if (vy > 0) {
       for (const p of stage.plats) {
-        if (!p.solid) continue;
+        if (!p.solid || !p.active) continue;
         if (!(x + hw > p.x0 && x - hw < p.x1)) continue;
         const bottom = p.y - p.thickness;
         if (oldY + h <= bottom + EPS && ny + h > bottom) {
@@ -356,9 +368,10 @@ export function simRecovery(env: RecEnv, s0: RecState, pol: RecPolicy, maxFrames
         if (!env.freeLedge(li)) continue;
         const L = stage.ledges[li];
         const p = stage.plats[L.plat];
+        const cx = look ? (L.side < 0 ? p.x0 : p.x1) : L.x;
         const near = x - L.side * hw;
-        const lo = L.side < 0 ? L.x - LEDGE_OUT : L.x - LEDGE_IN;
-        const hi = L.side < 0 ? L.x + LEDGE_IN : L.x + LEDGE_OUT;
+        const lo = L.side < 0 ? cx - LEDGE_OUT : cx - LEDGE_IN;
+        const hi = L.side < 0 ? cx + LEDGE_IN : cx + LEDGE_OUT;
         if (near < lo || near > hi) continue;
         if (hy < p.y - LEDGE_DOWN || hy > p.y + LEDGE_UP) continue;
         recOut.ok = true;

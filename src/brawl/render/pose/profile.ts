@@ -16,6 +16,7 @@ import type { ArchetypeId, MoveBody } from '../../types';
 import { DOF, DOF_N, type DofName, type DofPartial, type DofVec } from './dof';
 import type { Joint } from '../../../render/animals/Animator';
 import type { StateCtx } from './states';
+import type { Ease } from './timeline';
 
 /** A profile's per-state DOF overlay: a constant, or a pure function of the state context (WP-A3). */
 export type StateExtra = DofPartial | ((c: StateCtx) => DofPartial);
@@ -89,6 +90,18 @@ export interface ArchSpec {
   windup?: false | { coil?: DofPartial; gain?: number; noArcs?: boolean };
   /** WP-P (additive): follow-through knobs — extra overshoot gain and the dwell (fraction of the recovery the overshoot is held; default weight-derived). */
   commit?: number;
+  /**
+   * WP-B2 (additive): an AUTHORED pre-strike key script (the mole's burrow dive: dig-in f0-5, hidden tunnel pose, rise) that REPLACES the
+   * generic anticipation / load / `pre` keys and the wind-up layer. Keys sit at move frames before the strike; `v` is a DOF partial (facing
+   * +1, near striker) or a function of the solved strike pose. `A` is then only the pose the overshoot extrapolates away from (pass the last
+   * script pose). The arrival at the strike key eases with `strikeEase` / `strikePow` (default `inout`).
+   */
+  script?: { f: number; v: DofPartial | ((B: DofVec) => DofPartial); ease?: Ease; pow?: number }[];
+  strikeEase?: Ease;
+  strikePow?: number;
+  /** WP-B2 (additive): easing of the final settle (overshoot → rest); default `inout`. `out` = the pose drops back fast, then eases in. */
+  settleEase?: Ease;
+  settlePow?: number;
 }
 
 export interface ArchCtx {

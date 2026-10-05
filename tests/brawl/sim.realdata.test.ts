@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { mulberry32 } from '../../src/core/math';
 import type { AnimalId } from '../../src/core/types';
-import type { BrawlEvent, BrawlIntent, BrawlSnapshot, MoveId } from '../../src/brawl/types';
+import type { BrawlEvent, BrawlIntent, BrawlSnapshot, MoveId, PlatformDef } from '../../src/brawl/types';
 import { MOVE_IDS, STAGE_IDS } from '../../src/brawl/types';
 import { BrawlWorld } from '../../src/brawl/sim/BrawlWorld';
 import { MOVESETS, STAGES, getMoveBody } from '../../src/brawl/data/index';
@@ -99,7 +99,11 @@ describe('sim x shipped data: light-neutral strings are true combos from 0 %', (
 });
 
 describe('sim x shipped data: full-match fuzz', () => {
-  function checkNoNaN(s: BrawlSnapshot, solids: { x0: number; x1: number; y: number; thickness: number }[], sizes: { w: number; h: number }[]): void {
+  function checkNoNaN(s: BrawlSnapshot, defs: PlatformDef[], sizes: { w: number; h: number }[]): void {
+    // v1.6: solids are read from the snapshot (moving platforms; destroyed / not-yet-active ones do not collide)
+    const solids = s.platforms
+      .map((p, i) => ({ ...p, thickness: defs[i].thickness, solid: defs[i].kind === 'solid' }))
+      .filter((p) => p.solid && p.active !== false);
     for (const f of s.fighters) {
       const sz = sizes[f.id];
       if (f.alive && f.action !== 'respawn') {
@@ -122,7 +126,7 @@ describe('sim x shipped data: full-match fuzz', () => {
       const rng = mulberry32(2024);
       const roster: AnimalId[] = [0, 1, 2, 3].map(() => ALL[Math.floor(rng() * ALL.length)]);
       const w = live(roster, { stage, stocks: 999, timeLimitS: 0 }, 17);
-      const solids = STAGES[stage].platforms.filter((p) => p.kind === 'solid');
+      const defs = STAGES[stage].platforms;
       const sizes = roster.map((a) => ({ w: MOVESETS[a].stats.width, h: MOVESETS[a].stats.height }));
       const st = [0, 0, 0, 0].map(() => ({ x: 0, y: 0, held: false }));
       let hits = 0;
@@ -136,7 +140,7 @@ describe('sim x shipped data: full-match fuzz', () => {
           w.setIntent(id, { moveX: p.x, moveY: p.y, jump: rng() < 0.04, jumpHeld: p.held, light: rng() < 0.07, heavy: rng() < 0.04, dodge: rng() < 0.02 });
         }
         w.step();
-        checkNoNaN(w.snapshot(), solids, sizes);
+        checkNoNaN(w.snapshot(), defs, sizes);
         for (const e of w.drainEvents() as BrawlEvent[]) {
           if (e.type === 'hit') hits++;
           else if (e.type === 'ko') kos++;
@@ -171,7 +175,10 @@ describe('sim x shipped data: full-match fuzz', () => {
       const snap = w.snapshot();
       snap.fighters.forEach((f, i) => {
         expect(f.grounded, `spawn ${i} on ${id}`).toBe(true);
-        expect(f.pos.x).toBe(s.spawns[i].x);
+        // riders of a moving platform were carried along during the (skipped) countdown
+        const di = snap.platforms.findIndex((p) => p.id === f.platformId);
+        const carried = snap.platforms[di].x0 - s.platforms[di].x0;
+        expect(f.pos.x).toBeCloseTo(s.spawns[i].x + carried, 9);
       });
       expect(s.platforms.filter((p) => p.ledgeLeft || p.ledgeRight).length).toBeGreaterThan(0);
     }

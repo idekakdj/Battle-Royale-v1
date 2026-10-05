@@ -73,4 +73,4 @@ export function getMoveBody(animal: AnimalId, moveId: MoveId, air: boolean, chai
 }
 
 export * from './analysis';
-export { movingOffset, platformAt } from './stages';
+export { movingOffset, pathOffset, platformAt } from './stages';
