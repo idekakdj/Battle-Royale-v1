@@ -114,7 +114,7 @@ function trackReticle(sim: Sim, f: Fighter, rt: AbilityRuntime, st: Dfa, dt: num
   st.emitT -= dt;
   if (st.emitT <= 0) {
     st.emitT += K.trackEmitS;
-    emitUltimateStage(sim, f, rt, 0, { x: st.rx, y: groundHeightAt(st.rx, st.rz), z: st.rz });
+    emitUltimateStage(sim, f, rt, 0, { x: st.rx, y: groundHeightAt(st.rx, st.rz, sim.arena), z: st.rz });
   }
 }
 
@@ -146,7 +146,7 @@ export const eagleUltimate: UltimateImpl = {
     f.ccImmuneChannel = true;
     f.state.airborne = true;
     const u = clamp01((rt.t + dt) / K.ascentS);
-    const alt = groundHeightAt(f.state.pos.x, f.state.pos.z) + K.holdAlt;
+    const alt = groundHeightAt(f.state.pos.x, f.state.pos.z, f.arena) + K.holdAlt;
     const y = st.y0 + (alt - st.y0) * smooth(u);
     // Corkscrew: one steady helix around a centre offset from the launch point.
     const phi = st.hA0 + Math.PI * 2 * K.helixTurns * u;
@@ -167,7 +167,7 @@ export const eagleUltimate: UltimateImpl = {
     }
     st.ang = Math.atan2(f.state.pos.x - st.rx, f.state.pos.z - st.rz);
     rt.t = 0;
-    emitUltimateStage(sim, f, rt, 0, { x: st.rx, y: groundHeightAt(st.rx, st.rz), z: st.rz });
+    emitUltimateStage(sim, f, rt, 0, { x: st.rx, y: groundHeightAt(st.rx, st.rz, sim.arena), z: st.rz });
     st.emitT = K.trackEmitS;
   },
 
@@ -186,7 +186,7 @@ export const eagleUltimate: UltimateImpl = {
           rt.t = 0;
           rt.px = st.rx;
           rt.pz = st.rz;
-          emitUltimateStage(sim, f, rt, 1, { x: st.rx, y: groundHeightAt(st.rx, st.rz), z: st.rz });
+          emitUltimateStage(sim, f, rt, 1, { x: st.rx, y: groundHeightAt(st.rx, st.rz, sim.arena), z: st.rz });
         }
       } else if (rt.t >= K.commitS) {
         // Launch the stoop from wherever the circling hold has brought us.
@@ -198,7 +198,7 @@ export const eagleUltimate: UltimateImpl = {
       const px = st.rx + K.orbitRadius * Math.sin(st.ang);
       const pz = st.rz + K.orbitRadius * Math.cos(st.ang);
       const s = f.state;
-      const alt = groundHeightAt(px, pz) + K.holdAlt + Math.sin(sim.time * 2.2) * 0.35;
+      const alt = groundHeightAt(px, pz, sim.arena) + K.holdAlt + Math.sin(sim.time * 2.2) * 0.35;
       // Critically-damped-ish follow, capped so a distant start does not teleport.
       const k = 1 - Math.exp(-dt / HOLD_FOLLOW_S);
       let mx = (px - s.pos.x) * k;
@@ -215,7 +215,7 @@ export const eagleUltimate: UltimateImpl = {
         // Aim the stoop now that the launch point is known.
         const tx = st.rx;
         const tz = st.rz;
-        const ty = groundHeightAt(tx, tz);
+        const ty = groundHeightAt(tx, tz, sim.arena);
         const ddx = tx - s.pos.x;
         const ddy = ty - s.pos.y;
         const ddz = tz - s.pos.z;
@@ -266,7 +266,7 @@ function land(sim: Sim, f: Fighter, rt: AbilityRuntime, st: Dfa): void {
   s.pos.z = st.rz;
   resolveObstacles(sim, f, false);
   clampToWall(f);
-  s.pos.y = groundHeightAt(s.pos.x, s.pos.z);
+  s.pos.y = groundHeightAt(s.pos.x, s.pos.z, sim.arena);
   s.vel.x = 0;
   s.vel.y = 0;
   s.vel.z = 0;

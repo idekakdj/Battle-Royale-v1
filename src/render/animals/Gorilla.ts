@@ -17,6 +17,7 @@ import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { GORILLA_HURL } from '../../config/ultimates/gorilla';
 import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, easeOutCubic, IMPACT } from './Animator';
+import { SWIM_BOB_W } from './swim';
 import { GC, GORILLA_CH, SLAB_FULL_AT, SLAB_GONE_AT, SLAB_SHOW_AT, sampleGorillaUlt } from './ultPose/gorilla';
 import { makeMat, part, pivot, sphGeo, openCyl, capGeo, eye, noTone, noOutline, paint, mixColor, shade, col } from './parts';
 
@@ -312,6 +313,25 @@ export class GorillaRig extends BaseRig {
     this.foreR.rx = v[GC.fRRx];
     this.legL.rx = v[GC.lLRx];
     this.legR.rx = v[GC.lRRx];
+  }
+
+  /** Wading (v1.8): upright-ish, arms held out and sweeping the water for balance, slow high steps, chest out. */
+  protected override poseSwim(_speed: number, t: number, mv: number): void {
+    const ph = this.swimPhase;
+    const a = 0.45 + 0.55 * mv;
+    this.armL.rx = -0.25 + Math.sin(ph) * 0.8 * a;
+    this.armR.rx = -0.25 + Math.sin(ph + Math.PI) * 0.8 * a;
+    this.armL.rz = -(0.5 + 0.12 * Math.sin(ph * 2));
+    this.armR.rz = 0.5 + 0.12 * Math.sin(ph * 2 + 1);
+    this.foreL.rx = -0.45 - 0.25 * Math.max(0, Math.sin(ph + 0.8));
+    this.foreR.rx = -0.45 - 0.25 * Math.max(0, Math.sin(ph + Math.PI + 0.8));
+    this.legL.rx = -0.1 + Math.sin(ph + Math.PI) * 0.55 * a;
+    this.legR.rx = -0.1 + Math.sin(ph) * 0.55 * a;
+    this.body.py = Math.sin(t * SWIM_BOB_W) * this.swim.bob + Math.abs(Math.sin(ph)) * 0.03 * mv;
+    this.body.rx = -0.12 - 0.04 * mv;
+    this.body.rz = Math.sin(ph) * 0.07 * a;
+    this.head.rx = -0.14;
+    this.head.ry = Math.sin(t * 0.8) * 0.25;
   }
 
   protected poseBlock(t: number): void {

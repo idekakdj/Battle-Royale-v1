@@ -14,6 +14,7 @@ import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, bell, easeInCubic, easeOutCubic, impactPulse, ramp, smooth01 } from './Animator';
+import { SWIM_BOB_W } from './swim';
 import { angleDelta } from '../../core/math';
 import {
   makeMat,
@@ -325,6 +326,18 @@ export class RhinoRig extends BaseRig {
     }
     this.body.py += Math.abs(Math.sin(g)) * 0.05 * k;
     if (this.tail) this.tail.rx = -0.4 * k;
+  }
+
+  /** Plodding (v1.8): heavy high steps along the bottom, the head low but clear of the water, a bounce with each step. */
+  protected override poseSwim(speed: number, t: number, mv: number): void {
+    super.poseSwim(speed, t, mv);
+    const ph = this.swimPhase;
+    const a = 0.45 + 0.55 * mv;
+    this.body.py += Math.abs(Math.sin(ph)) * 0.035 * a;
+    this.body.rz = Math.sin(ph) * 0.05 * a;
+    this.head.rx = 0.12 + Math.sin(t * SWIM_BOB_W + 0.5) * 0.03;
+    this.head.ry = Math.sin(t * 0.5) * 0.16;
+    if (this.tail) this.tail.ry = Math.sin(ph * 0.5 + 0.6) * 0.4;
   }
 
   protected poseBlock(t: number): void {

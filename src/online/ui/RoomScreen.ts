@@ -13,17 +13,19 @@ import type { AnimalId } from '../../core/types';
 import { ANIMALS, ANIMAL_IDS } from '../../config/animals';
 import { BOT_PROFILES } from '../../config/botProfiles';
 import { STAGES } from '../../brawl/data';
+import { arenaThumbSvg } from '../../ui/mapThumb';
+import { getArena } from '../../config/arenas';
 import { stageBadgesHtml, stageThumbSvg } from '../../brawl/ui/stageThumb';
 import { el, button, clear, append } from '../../ui/dom';
 import { animalHeadSvg } from '../../ui/icons';
 import { PreviewPane } from '../../ui/PreviewPane';
-import { ONLINE_NAME_MAX, parseOnlineName, saveOnlineAnimal, saveOnlineName } from '../../ui/storage';
+import { ONLINE_NAME_MAX, parseOnlineName, saveArena, saveOnlineAnimal, saveOnlineName } from '../../ui/storage';
 import type { OnlineMode } from '../types';
 import { ROOM_LIMITS, type RoomEndReason, type RoomError, type RoomState } from '../room/types';
 import { describeEndReason, describeRoomError } from './errors';
 import { buildInviteLink, copyText, timeLimitLabel, type LocationLike } from './helpers';
 import type { RoomLike } from './types';
-import { buildRoomView, MODE_LABEL, settingsKey, stagePickerItems, type PlayerCardVM, type RoomVM } from './viewModel';
+import { buildRoomView, MODE_LABEL, mapPickerItems, settingsKey, stagePickerItems, type PlayerCardVM, type RoomVM } from './viewModel';
 import { confirmDialog, pingEl, segmented, spinner, ToastStack, type ConfirmHandle } from './widgets';
 
 export interface RoomScreenOptions {
@@ -358,12 +360,34 @@ export class RoomScreen implements Screen {
         onPick: (k) => this.room.setSettings({ br: { botLevel: Number(k) as 1 | 2 | 3 | 4 } }),
       });
       const fill = segmented({ id: 'fill', label: 'Fill with bots', items: [{ key: 'on', label: 'On' }, { key: 'off', label: 'Off' }], value: br.fillBots ? 'on' : 'off', disabled: !edit, onPick: (k) => this.room.setSettings({ br: { fillBots: k === 'on' } }) });
+      // v1.8: the host's map pick — two small cards like the Champions League stage picker, visible to everyone (host-only editable).
+      const maps = el('div', { class: 'gk-bs__stages gk-on-stages gk-on-maps', attrs: { role: 'radiogroup', 'aria-label': 'Map' } });
+      for (const item of mapPickerItems(br.arena)) {
+        const id = item.id;
+        const b = el('button', {
+          class: `gk-bs__stage gk-on-stage gk-on-map${item.selected ? ' is-selected' : ''}`,
+          type: 'button',
+          title: item.blurb,
+          dataset: { arena: id, ctl: `arena:${id}` },
+          attrs: { role: 'radio', 'aria-checked': item.selected ? 'true' : 'false', tabindex: item.selected ? '0' : '-1' },
+        });
+        b.innerHTML = `<span class="gk-bs__thumb">${arenaThumbSvg(getArena(id), 'gk-bs__thumb-svg')}</span><span class="gk-bs__stage-text"><span class="gk-bs__stage-name gk-display"></span><span class="gk-bs__stage-blurb"></span></span>`;
+        (b.querySelector('.gk-bs__stage-name') as HTMLElement).textContent = item.name;
+        (b.querySelector('.gk-bs__stage-blurb') as HTMLElement).textContent = item.blurb;
+        b.disabled = !edit;
+        b.addEventListener('click', () => {
+          this.room.setSettings({ br: { arena: id } });
+          saveArena(id); // the host's last map is also the offline default
+        });
+        maps.appendChild(b);
+      }
       const full = vm.counts.humans + vm.counts.bots >= ROOM_LIMITS.maxFighters;
       const add = button('+ Add bot', 'gk-bs__back gk-display gk-on-btn gk-on-btn--small', () => this.room.addBot(), { dataset: { ctl: 'addbot' } });
       add.disabled = !edit || full;
       const rem = button('− Remove bot', 'gk-bs__back gk-display gk-on-btn gk-on-btn--small', () => this.room.removeBot(), { dataset: { ctl: 'rembot' } });
       rem.disabled = !edit || vm.counts.bots === 0;
       rules.append(
+        row('Map', maps),
         el('div', { class: 'gk-on-rules__pair' }, [row('Bot level', level.root), row('Fill the arena with bots', fill.root)]),
         row('Bots', el('div', { class: 'gk-on-botctl' }, [add, rem, el('span', { class: 'gk-on-muted', text: `${vm.counts.total} of ${ROOM_LIMITS.maxFighters} fighters at start` })])),
       );

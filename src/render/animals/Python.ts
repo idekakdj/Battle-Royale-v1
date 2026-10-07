@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, ramp, smooth01, easeInOutCubic, IMPACT } from './Animator';
+import { SWIM_BOB_W } from './swim';
 import { PythonUltPose } from './ultPose/python';
 import {
   makeMat,
@@ -241,6 +242,34 @@ export class PythonRig extends BaseRig {
       tailTip: this.tailTip,
       tongue: this.tongue,
     });
+  }
+
+  /** S-undulation (v1.8): a lateral wave runs through the coil and the neck chain, the head held up, the tail tip lashing. */
+  protected override poseSwim(_speed: number, t: number, mv: number): void {
+    const ph = this.swimPhase;
+    const a = 0.55 + 0.45 * mv;
+    this.body.ry = Math.sin(ph) * 0.12 * a;
+    this.body.px = Math.sin(ph + 0.6) * 0.08 * a;
+    this.body.py = Math.sin(t * SWIM_BOB_W) * this.swim.bob;
+    this.coil.rz = Math.sin(ph) * 0.07 * a;
+    this.coil.s = 1 + Math.sin(t * 1.4) * 0.012;
+    // The neck leans far forward (the head ~0.8 m over the water, not a periscope); the rest curve + the S-wave do the rest.
+    this.neckJ[0].rx = 0.95 + Math.sin(t * 0.5) * 0.05 + 0.1 * mv;
+    for (let i = 1; i < 4; i++) this.neckJ[i].rx = -NECK_REST[i] * 0.2;
+    this.head.rx = -0.2;
+    for (let i = 0; i < 4; i++) this.neckJ[i].ry = Math.sin(ph - i * 0.9) * 0.38 * a;
+    this.head.ry = Math.sin(ph - 3.6) * 0.2 * a;
+    this.tailTip.ry = Math.sin(ph + 1.2) * 0.8 * a;
+    const flick = smooth01(Math.sin(t * 2.1) * 6 - 5);
+    this.tongue.s = 0.001 + flick * (1 + Math.sin(t * 26) * 0.3);
+  }
+
+  /** The S-wave keeps rolling through the body while the neck strikes (v1.8). */
+  protected override poseSwimAttack(_n: 1 | 2 | 3, _u: number, _uw: number): void {
+    const ph = this.swimPhase;
+    this.body.ry += Math.sin(ph) * 0.07;
+    this.coil.rz += Math.sin(ph) * 0.04;
+    this.tailTip.ry += Math.sin(ph + 1.2) * 0.5;
   }
 
   protected poseBlock(t: number): void {

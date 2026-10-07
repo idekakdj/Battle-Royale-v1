@@ -46,7 +46,7 @@ export const MODE_INFO: Readonly<Record<GameMode, ModeInfo>> = {
   battleRoyale: {
     id: 'battleRoyale',
     name: 'Battle Royale',
-    blurb: '10 gladiators, one winner. Fight through the colosseum against bots on four difficulty levels.',
+    blurb: '10 gladiators, one winner. Fight through the colosseum or the jungle against bots on four difficulty levels.',
     tags: ['Free-for-all', '3D arena', 'Ultimates'],
   },
   championsLeague: {

@@ -235,6 +235,20 @@ export class PantherRig extends BaseRig {
     this.tail2.ry = v[PC.tail2Ry];
   }
 
+  /** Dog-paddle (v1.8): a sleek, low swimmer — neck stretched forward, nose just clear of the water, tail streaming. */
+  protected override poseSwim(speed: number, t: number, mv: number): void {
+    super.poseSwim(speed, t, mv);
+    const ph = this.swimPhase;
+    this.neck.rx = -0.02 - 0.04 * mv + Math.sin(ph) * 0.03;
+    this.jaw.rx = 0.02;
+    if (this.tail) {
+      this.tail.rx = -0.6;
+      this.tail.ry = Math.sin(ph * 0.5 + 0.6) * 0.3;
+    }
+    this.tail2.rx = -0.3;
+    this.tail2.ry = Math.sin(ph * 0.5 + 1.5) * 0.45;
+  }
+
   protected poseBlock(t: number): void {
     // Coiled low guard, one paw raised to parry (perfect-block flavor).
     this.body.py = -0.16;

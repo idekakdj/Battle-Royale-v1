@@ -82,7 +82,7 @@ function approach(sim: Sim, f: Fighter, st: Timber, tAbs: number, dt: number): v
     resolveObstacles(sim, f, false);
     clampToWall(f);
   }
-  s.pos.y = groundHeightAt(s.pos.x, s.pos.z);
+  s.pos.y = groundHeightAt(s.pos.x, s.pos.z, sim.arena);
   const inv = dt > 1e-6 ? 1 / dt : 0;
   s.vel.x = (s.pos.x - ox) * inv;
   s.vel.y = 0;
@@ -117,7 +117,7 @@ export const giraffeUltimate: UltimateImpl = {
       st.emitT -= dt;
       if (st.emitT <= 0) {
         st.emitT += K.trackEmitS;
-        emitUltimateStage(sim, f, rt, 0, { x: st.rx, y: groundHeightAt(st.rx, st.rz), z: st.rz });
+        emitUltimateStage(sim, f, rt, 0, { x: st.rx, y: groundHeightAt(st.rx, st.rz, sim.arena), z: st.rz });
       }
       if (tNow >= K.trackS) {
         // COMMIT: freeze the circle; from here the giraffe cannot be interrupted.
@@ -125,7 +125,7 @@ export const giraffeUltimate: UltimateImpl = {
         rt.px = st.rx;
         rt.pz = st.rz;
         f.ccImmuneChannel = true;
-        emitUltimateStage(sim, f, rt, 1, { x: st.rx, y: groundHeightAt(st.rx, st.rz), z: st.rz });
+        emitUltimateStage(sim, f, rt, 1, { x: st.rx, y: groundHeightAt(st.rx, st.rz, sim.arena), z: st.rz });
       }
     }
     approach(sim, f, st, tNow, dt);
@@ -167,7 +167,7 @@ function land(sim: Sim, f: Fighter, rt: AbilityRuntime, st: Timber): void {
 
   const cx = st.rx;
   const cz = st.rz;
-  const cy = groundHeightAt(cx, cz);
+  const cy = groundHeightAt(cx, cz, sim.arena);
   const once = new Set<number>();
   let any = false;
   for (let i = 0; i < sim.fighters.length; i++) {

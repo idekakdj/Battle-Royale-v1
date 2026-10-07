@@ -609,7 +609,7 @@ export class OnlineRoom {
       localSlot: slots.findIndex((s) => s.peerId === this.localPeerId),
       hostPeerId: this.localPeerId,
     };
-    if (this.mode === 'battleRoyale') start.br = { difficulty: this.settings.br.botLevel };
+    if (this.mode === 'battleRoyale') start.br = { difficulty: this.settings.br.botLevel, arena: this.settings.br.arena };
     else
       start.cl = {
         stage: this.settings.cl.stage,

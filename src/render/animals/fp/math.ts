@@ -3,7 +3,7 @@
  * in tests/render/fp.test.ts. The CameraRig / BaseRig call these each frame.
  */
 
-import { PILLARS, WALL_RADIUS } from '../../../config/arena';
+import { getRenderArena } from '../../arenaContext';
 import type { FpEye } from './types';
 
 const DEG = Math.PI / 180;
@@ -110,15 +110,19 @@ export function clampLength3(v: { x: number; y: number; z: number }, max: number
  * of the body centre.
  */
 export function clampEyeToArena(rootX: number, rootZ: number, off: { x: number; z: number }, pad = 0.22): void {
+  // v1.8: the wall and the round blockers (pillars / tree trunks) come from the current arena (colosseum = the same numbers).
+  const arena = getRenderArena();
+  const wallR = arena.wallRadius;
+  const circles = arena.circles;
   for (let iter = 0; iter < 6; iter++) {
     const ex = rootX + off.x;
     const ez = rootZ + off.z;
     let bad = false;
     const r = Math.hypot(ex, ez);
-    if (r > WALL_RADIUS - pad) bad = true;
+    if (r > wallR - pad) bad = true;
     if (!bad) {
-      for (let i = 0; i < PILLARS.length; i++) {
-        const p = PILLARS[i];
+      for (let i = 0; i < circles.length; i++) {
+        const p = circles[i];
         const dx = ex - p.x;
         const dz = ez - p.z;
         const rr = p.radius + pad;

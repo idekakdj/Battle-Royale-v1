@@ -20,7 +20,6 @@
  */
 
 import { clamp, dirToYaw, rotateToward } from '../../core/math';
-import { WALL_RADIUS } from '../../config/arena';
 import { PYTHON, PYTHON_STAGE } from '../../config/ultimates/python';
 import { dealDamage } from '../CombatSystem';
 import { altitudeOf, isGroundTargetable } from '../hitbox';
@@ -119,7 +118,7 @@ export const pythonUltimate: UltimateImpl = {
       s.len = len;
       const ex = originX(f, rt) + rt.dirX * len;
       const ez = originZ(f, rt) + rt.dirZ * len;
-      emitUltimateStage(sim, f, rt, PYTHON_STAGE.COMMIT, { x: ex, y: groundHeightAt(ex, ez), z: ez });
+      emitUltimateStage(sim, f, rt, PYTHON_STAGE.COMMIT, { x: ex, y: groundHeightAt(ex, ez, sim.arena), z: ez });
     }
   },
 
@@ -138,7 +137,7 @@ export const pythonUltimate: UltimateImpl = {
     setDur(f, s.len / PYTHON.tetherSpeed + 0.4);
     const ex = originX(f, rt) + rt.dirX * s.len;
     const ez = originZ(f, rt) + rt.dirZ * s.len;
-    emitUltimateStage(sim, f, rt, PYTHON_STAGE.LASH, { x: ex, y: groundHeightAt(ex, ez), z: ez });
+    emitUltimateStage(sim, f, rt, PYTHON_STAGE.LASH, { x: ex, y: groundHeightAt(ex, ez, sim.arena), z: ez });
   },
 
   activeTick(sim, f, rt, dt) {
@@ -173,7 +172,7 @@ export const pythonUltimate: UltimateImpl = {
 
 /** Is the tether blocked at (x,z)? Pillars, tall crates, tall walls, the arena wall. */
 function tetherBlocked(sim: Sim, x: number, z: number): boolean {
-  if (Math.hypot(x, z) > WALL_RADIUS - 0.3) return true;
+  if (Math.hypot(x, z) > sim.arena.wallRadius - 0.3) return true;
   const obs = sim.staticObstacles;
   for (let i = 0; i < obs.length; i++) {
     const ob = obs[i];
@@ -240,7 +239,7 @@ function lashTick(sim: Sim, f: Fighter, rt: AbilityRuntime, s: PyState, dt: numb
     s.sub = Sub.Retract;
     s.timer = 0;
     setDur(f, PYTHON.retractT + (rt.spec.recovery ?? 0.85));
-    emitUltimateStage(sim, f, rt, PYTHON_STAGE.WHIFF, { x: bx, y: groundHeightAt(bx, bz), z: bz });
+    emitUltimateStage(sim, f, rt, PYTHON_STAGE.WHIFF, { x: bx, y: groundHeightAt(bx, bz, sim.arena), z: bz });
   }
 }
 
@@ -322,7 +321,7 @@ function yankTick(sim: Sim, f: Fighter, rt: AbilityRuntime, s: PyState, dt: numb
   const pz = t.state.pos.z;
   t.state.pos.x = s.sx + (s.hx - s.sx) * e;
   t.state.pos.z = s.sz + (s.hz - s.sz) * e;
-  t.state.pos.y = groundHeightAt(t.state.pos.x, t.state.pos.z);
+  t.state.pos.y = groundHeightAt(t.state.pos.x, t.state.pos.z, sim.arena);
   resolveObstacles(sim, t, false);
   clampToWall(t);
   t.state.vel.x = (t.state.pos.x - px) / Math.max(dt, 1e-6);
@@ -363,7 +362,7 @@ function bindTick(sim: Sim, f: Fighter, rt: AbilityRuntime, s: PyState, dt: numb
   }
 
   // Held in the coils: slightly lifted, facing the python, going nowhere.
-  t.state.pos.y = groundHeightAt(t.state.pos.x, t.state.pos.z) + 0.2 * ease(s.bindT / 0.3);
+  t.state.pos.y = groundHeightAt(t.state.pos.x, t.state.pos.z, sim.arena) + 0.2 * ease(s.bindT / 0.3);
   t.state.yaw = rotateToward(t.state.yaw, dirToYaw(-rt.dirX, -rt.dirZ), 10 * dt);
   t.staggerTimer = Math.max(t.staggerTimer, 0.25);
   t.movementOwned = true;
@@ -388,7 +387,7 @@ function releaseVictim(sim: Sim, f: Fighter, rt: AbilityRuntime): void {
   if (t !== undefined) {
     if (t.state.grabbedById === f.id) t.state.grabbedById = -1;
     t.movementOwned = false;
-    t.state.pos.y = groundHeightAt(t.state.pos.x, t.state.pos.z);
+    t.state.pos.y = groundHeightAt(t.state.pos.x, t.state.pos.z, sim.arena);
     if (t.state.alive && t.state.action === 'grabbed') t.state.action = 'idle';
   }
   rt.targetId = -1;

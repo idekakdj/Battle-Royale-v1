@@ -9,7 +9,7 @@ import { ClientSimDriver } from '../../src/online/br/clientDriver';
 import { LoopbackNetwork, type NetConditions } from '../../src/online/transport/loopback';
 import type { OnlineSlotInfo, OnlineStart } from '../../src/online/types';
 import { ANIMAL_IDS } from '../../src/config/animals';
-import type { AnimalId, Difficulty, FighterIntent, GameEvent, WorldSnapshot } from '../../src/core/types';
+import type { AnimalId, ArenaId, Difficulty, FighterIntent, GameEvent, WorldSnapshot } from '../../src/core/types';
 import { TICK_MS, chaserScript, makeMachine, type Machine } from './brNetHarness';
 import { DT, rng } from './brTestUtil';
 
@@ -24,6 +24,8 @@ export interface DriverSessionOptions {
   netSeed?: number;
   seed?: number;
   difficulty?: Difficulty;
+  /** v1.8: the map carried in `OnlineStart.br.arena` (default: absent = colosseum). */
+  arena?: ArenaId;
   gateTimeoutS?: number;
   /** Per-client intent script (default: a chasing, mashing player). Return null to send nothing special (neutral). */
   script?: (who: number, tick: number, truth: WorldSnapshot, slot: number, r: () => number) => FighterIntent;
@@ -73,7 +75,7 @@ export function makeStart(opts: DriverSessionOptions, localSlot: number, peerOf:
       kind: hi >= 0 ? 'human' : 'bot',
     });
   }
-  return { mode: 'battleRoyale', seed: opts.seed ?? 4242, slots, localSlot, hostPeerId: 'host', br: { difficulty: opts.difficulty ?? 4 } };
+  return { mode: 'battleRoyale', seed: opts.seed ?? 4242, slots, localSlot, hostPeerId: 'host', br: { difficulty: opts.difficulty ?? 4, ...(opts.arena !== undefined ? { arena: opts.arena } : {}) } };
 }
 
 export async function makeDriverSession(opts: DriverSessionOptions = {}): Promise<DriverSession> {

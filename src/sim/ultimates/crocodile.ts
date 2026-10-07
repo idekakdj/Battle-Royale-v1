@@ -118,7 +118,7 @@ export const crocodileUltimate: UltimateImpl = {
       s.lungeLen = len;
       emitUltimateStage(sim, f, rt, CROC_STAGE.COMMIT, {
         x: f.state.pos.x + rt.dirX * len,
-        y: groundHeightAt(f.state.pos.x + rt.dirX * len, f.state.pos.z + rt.dirZ * len),
+        y: groundHeightAt(f.state.pos.x + rt.dirX * len, f.state.pos.z + rt.dirZ * len, sim.arena),
         z: f.state.pos.z + rt.dirZ * len,
       });
     }
@@ -363,7 +363,7 @@ function slaveVictim(f: Fighter, rt: AbilityRuntime, s: CrocState, t: Fighter, b
   const rz = s.relZ + (jawZ - s.relZ) * blend + oz;
   t.state.pos.x = f.state.pos.x + rx;
   t.state.pos.z = f.state.pos.z + rz;
-  const gy = groundHeightAt(t.state.pos.x, t.state.pos.z);
+  const gy = groundHeightAt(t.state.pos.x, t.state.pos.z, t.arena);
   const baseLift = s.relY * (1 - blend) + lift;
   t.state.pos.y = gy + Math.max(0, baseLift + oy);
   t.state.yaw = rotateToward(t.state.yaw, dirToYaw(-rt.dirX, -rt.dirZ), 9 * dt);
@@ -374,7 +374,7 @@ function toss(sim: Sim, f: Fighter, rt: AbilityRuntime, s: CrocState, t: Fighter
   const spec = rt.spec;
   releaseVictim(sim, f, rt);
   // Drop to the ground first so the knockback slides along it.
-  t.state.pos.y = groundHeightAt(t.state.pos.x, t.state.pos.z);
+  t.state.pos.y = groundHeightAt(t.state.pos.x, t.state.pos.z, sim.arena);
   t.staggerTimer = 0; // the toss hit is not amplified by the hold stun
   dealDamage(sim, f, t, CROC.tossDamage, { blockable: false, heavy: true, reaction: 'none', isBasic: false, allowBackstab: false });
   if (t.state.alive) {
@@ -393,7 +393,7 @@ function releaseVictim(sim: Sim, f: Fighter, rt: AbilityRuntime): void {
   if (t !== undefined) {
     if (t.state.grabbedById === f.id) t.state.grabbedById = -1;
     t.movementOwned = false;
-    t.state.pos.y = groundHeightAt(t.state.pos.x, t.state.pos.z);
+    t.state.pos.y = groundHeightAt(t.state.pos.x, t.state.pos.z, sim.arena);
     if (t.state.alive && t.state.action === 'grabbed') t.state.action = 'idle';
   }
   rt.targetId = -1;

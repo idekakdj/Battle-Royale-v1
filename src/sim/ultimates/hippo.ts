@@ -110,7 +110,7 @@ export const hippoUltimate: UltimateImpl = {
       slowLingerS: K.slowLingerS,
       groundedAlt: K.groundedAlt,
     });
-    emitUltimateStage(sim, f, rt, 1, { x: s.ax + s.dx * 1.6, y: groundHeightAt(s.ax, s.az), z: s.az + s.dz * 1.6 });
+    emitUltimateStage(sim, f, rt, 1, { x: s.ax + s.dx * 1.6, y: groundHeightAt(s.ax, s.az, sim.arena), z: s.az + s.dz * 1.6 });
   },
 
   activeTick(sim, f, rt, dt) {

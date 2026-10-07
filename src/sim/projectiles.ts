@@ -23,7 +23,6 @@ import type { ProjectileState, Vec3 } from '../core/types';
 import type { Fighter, Sim } from './Fighter';
 import { isTargetable } from './hitbox';
 import { groundHeightAt } from './MovementSystem';
-import { WALL_RADIUS, WALL_HEIGHT, STANDS_OUTER } from '../config/arena';
 
 export type ProjectileKind = ProjectileState['kind'];
 
@@ -176,7 +175,7 @@ export class ProjectileSystem {
       p.vy -= p.gravity * h;
       if (this.collide(sim, p)) return;
     }
-    if (p.life <= 0 || p.x * p.x + p.z * p.z > STANDS_OUTER * STANDS_OUTER) this.finish(sim, p, 'expired', -1);
+    if (p.life <= 0 || p.x * p.x + p.z * p.z > sim.arena.standsOuter * sim.arena.standsOuter) this.finish(sim, p, 'expired', -1);
   }
 
   /** Test one position against the world; on contact finishes the projectile and returns true. */
@@ -241,14 +240,14 @@ export class ProjectileSystem {
 
     // 4. Arena wall.
     const d = Math.sqrt(p.x * p.x + p.z * p.z);
-    if (d + r >= WALL_RADIUS && p.y - r <= WALL_HEIGHT) {
+    if (d + r >= sim.arena.wallRadius && p.y - r <= sim.arena.wallHeight) {
       this.finish(sim, p, 'wall', -1);
       return true;
     }
 
     // 5. Ground.
-    if (p.y - r <= groundHeightAt(p.x, p.z)) {
-      p.y = groundHeightAt(p.x, p.z);
+    if (p.y - r <= groundHeightAt(p.x, p.z, sim.arena)) {
+      p.y = groundHeightAt(p.x, p.z, sim.arena);
       this.finish(sim, p, 'ground', -1);
       return true;
     }

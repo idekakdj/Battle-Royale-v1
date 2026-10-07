@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, easeInCubic, easeOutCubic, IMPACT } from './Animator';
+import { SWIM_BOB_W } from './swim';
 import { MOLE_VORTEX } from '../../config/ultimates/mole';
 import {
   makeMat,
@@ -328,6 +329,26 @@ export class MoleRig extends BaseRig {
     this.snout.rx = Math.sin(this.timePhase * 22) * 0.08 * (1 - k);
     this.legs[2].rx = 0.3 * (1 - strike) * buried;
     this.legs[3].rx = 0.3 * (1 - strike) * buried;
+  }
+
+  /** Tiny frantic paddle (v1.8): the claws row, the snout held up like a snorkel, only the head and back clear of the water. */
+  protected override poseSwim(_speed: number, t: number, mv: number): void {
+    const ph = this.swimPhase;
+    const a = 0.5 + 0.5 * mv;
+    this.armL.rx = -0.1 + Math.sin(ph) * 0.9 * a;
+    this.armR.rx = -0.1 + Math.sin(ph + Math.PI) * 0.9 * a;
+    this.armL.rz = -0.25;
+    this.armR.rz = 0.25;
+    this.legs[2].rx = Math.sin(ph + Math.PI) * 0.6 * a;
+    this.legs[3].rx = Math.sin(ph) * 0.6 * a;
+    this.body.py = Math.sin(t * SWIM_BOB_W) * this.swim.bob + Math.sin(ph * 2) * 0.01 * mv;
+    this.body.rx = -0.1 - this.swim.pitch * 0.35 * mv;
+    this.body.rz = Math.sin(ph) * 0.05 * a;
+    this.head.rx = -0.1;
+    this.head.ry = Math.sin(t * 0.7) * 0.2;
+    this.snout.rx = -0.08 + Math.sin(t * 7) * 0.06;
+    this.snout.ry = Math.sin(t * 4.3) * 0.06;
+    if (this.tail) this.tail.ry = Math.sin(ph * 0.5) * 0.5;
   }
 
   protected poseBlock(t: number): void {

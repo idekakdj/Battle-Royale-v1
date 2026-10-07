@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, ramp, smooth01, IMPACT } from './Animator';
+import { SWIM_BOB_W } from './swim';
 import { CrocUltPose } from './ultPose/crocodile';
 import {
   makeMat,
@@ -254,6 +255,33 @@ export class CrocodileRig extends BaseRig {
       tail2: this.tail2,
       tail3: this.tail3,
     });
+  }
+
+  /** Tail-sculling (v1.8): legs tucked flat against the flanks, a travelling wave down the tail, jaws forward and level. */
+  protected override poseSwim(_speed: number, t: number, mv: number): void {
+    const ph = this.swimPhase;
+    const a = 0.5 + 0.5 * mv;
+    for (let i = 0; i < 4; i++) {
+      this.legs[i].rx = 1.25 + Math.sin(ph * 2 + i) * 0.12 * a; // + = swept BACK along the flank
+      this.legs[i].rz = (i % 2 === 0 ? 1 : -1) * 0.3;
+    }
+    this.tail1.ry = Math.sin(ph) * 0.42 * a;
+    this.tail2.ry = Math.sin(ph - 0.9) * 0.6 * a;
+    this.tail3.ry = Math.sin(ph - 1.8) * 0.8 * a;
+    this.body.ry = Math.sin(ph + Math.PI - 0.3) * 0.07 * mv;
+    this.body.py = Math.sin(t * SWIM_BOB_W) * this.swim.bob;
+    this.body.rx = -this.swim.pitch * mv;
+    this.body.rz = Math.sin(ph + 1.2) * 0.03 * a;
+    this.head.rx = -0.06;
+    this.head.ry = -this.body.ry * 0.8;
+    this.jaw.rx = 0.02;
+  }
+
+  /** The tail keeps sculling under the snap (v1.8), so the lunge reads as pushed off the water by the tail. */
+  protected override poseSwimAttack(_n: 1 | 2 | 3, _u: number, _uw: number): void {
+    const ph = this.swimPhase;
+    this.tail2.ry += Math.sin(ph - 0.9) * 0.3;
+    this.tail3.ry += Math.sin(ph - 1.8) * 0.45;
   }
 
   protected poseBlock(t: number): void {

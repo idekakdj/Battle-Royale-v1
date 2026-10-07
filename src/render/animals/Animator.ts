@@ -29,6 +29,21 @@ import { makePalette, type Palette, makeMat, mesh, coneGeo, sphGeo, mixColor } f
 import { bakeRig } from './bake';
 import { getQualityVersion, tierProfile } from '../quality';
 import { getFxSink, type SlamKind } from '../fxBus';
+import { waterSpeedMultiplier } from '../../config/terrain';
+import {
+  SWIM_BLEND_AIR_S,
+  SWIM_BOB_W,
+  SWIM_BLEND_S,
+  SWIM_EYE_FRACTION,
+  SWIM_IMPACT_U,
+  SWIM_TUNE,
+  WAKE_PERIOD_S,
+  attackWarp,
+  followBump,
+  poolSinkScale,
+  swimSplash,
+  type SwimTune,
+} from './swim';
 import type { FpClip, FpEyeSample, FpLimb, FpPoseCtx, FpProfile } from './fp/types';
 import { clampLength3, eyeWorldOffset, runBob, runSway } from './fp/math';
 import { FpClipControl } from './fp/clip';
@@ -257,6 +272,9 @@ const DEATH_FADE_DUR = 1.5; // ... over this long ...
 const DEATH_OPACITY = 0.4; // ... to 40% opacity
 const STEALTH_OPACITY = 0.22; // §7.7: stealth ⇒ ~85% transparent
 const GAIT_OFF = [0, Math.PI, Math.PI, 0]; // diagonal quadruped pairs FL,FR,BL,BR
+/** Swimming: idle-bob angular rate (period 1.6 s) and the paddle-phase wrap (a multiple of 2π, keeps sin(ph·2), sin(ph·½) exact). */
+// (SWIM_BOB_W lives in swim.ts)
+const SWIM_PHASE_WRAP = Math.PI * 2 * 1000;
 
 /**
  * Shared driver every animal rig extends. Subclass contract:
@@ -309,6 +327,21 @@ export abstract class BaseRig implements AnimalRig {
 
   /** Baked triangle count (budget check / demo readout). */
   triangleCount = 0;
+
+  // ── Swimming (v1.8 WP-J4, see swim.ts) ───────────────────────────────────
+  /** This animal's swim tuning (data in swim.ts); the per-animal `poseSwim` overrides read it. */
+  protected readonly swim: SwimTune;
+  /** Paddle cycle phase (rad): advances with the swim cadence (treading minimum, faster with speed). */
+  protected swimPhase = 0;
+  /** Smoothed water-speed fraction 0..1 (speed / this animal's top speed in the water). */
+  protected swimMv = 0;
+  /** Linear 0..1 water blend (eased by `smooth01` where it is applied); 0 = the land rig, exactly. */
+  private swimBlend = 0;
+  private swimWakeT = 0;
+  private swimSunk = false;
+  private swimPre: Float64Array | null = null;
+  /** Top speed (m/s) in the water: land speed × the animal's water multiplier. */
+  private readonly swimTop: number;
 
   private readonly jointList: Joint[] = [];
   private readonly mats: THREE.Material[] = [];
@@ -363,6 +396,8 @@ export abstract class BaseRig implements AnimalRig {
 
   protected constructor(def: AnimalDef) {
     this.def = def;
+    this.swim = SWIM_TUNE[def.id];
+    this.swimTop = Math.max(0.5, def.speed * waterSpeedMultiplier(def));
     this.pal = makePalette(def.accent);
     this.accent = this.pal.accent;
     this.root.add(this.bodyRoot);
@@ -670,7 +705,12 @@ export abstract class BaseRig implements AnimalRig {
       dz = _fpd.z * follow;
     }
     const e = this.fpxEyeCur;
-    eyeWorldOffset(this.root.rotation.y, e.side + dx, e.up + dy, e.forward + dz, _fpo);
+    // Swimming (v1.8): the eye drops with the water sink (the head-follow above already carries `follow` of it), so the view
+    // sits lower in the pool. Exactly 0 on land (bodyRoot is never offset there).
+    let swimDy = 0;
+    const sunk = -this.bodyRoot.position.y;
+    if (sunk > 1e-6) swimDy = -sunk * Math.max(0, SWIM_EYE_FRACTION - (tr !== null && follow > 0 ? follow : 0));
+    eyeWorldOffset(this.root.rotation.y, e.side + dx, e.up + dy + swimDy, e.forward + dz, _fpo);
     out.rootX = this.root.position.x;
     out.rootY = this.root.position.y;
     out.rootZ = this.root.position.z;
@@ -1070,8 +1110,8 @@ export abstract class BaseRig implements AnimalRig {
       this.fadeT = 0;
       if (state.action === 'dead') this.deathT = 0;
       const was = this.prevAction;
-      if ((was === 'jump' || was === 'glide') && state.action !== 'jump' && state.action !== 'glide') {
-        const sink = getFxSink();
+      if ((was === 'jump' || was === 'glide') && state.action !== 'jump' && state.action !== 'glide' && state.inWater !== true) {
+        const sink = getFxSink(); // (landing IN the pool: the scene's splash event replaces the dust)
         if (sink !== null) sink.land(this.root, this.root.position.x, this.root.position.z, 0.9 + this.def.radius * 0.5);
       }
       this.prevAction = state.action;
@@ -1084,6 +1124,7 @@ export abstract class BaseRig implements AnimalRig {
     this.fadeT += dt;
     if (state.action === 'dead') this.deathT += dt;
     if (this.fpxPose !== null) this.fpxTick(state, speed, dt);
+    if (state.inWater === true || this.swimBlend > 0) this.swimStep(state, dt, speed);
 
     // Burrowed: hide the body, show the churning dirt mound.
     const burrowed = state.action === 'burrowed';
@@ -1098,6 +1139,8 @@ export abstract class BaseRig implements AnimalRig {
       for (let i = 0; i < this.jointList.length; i++) this.jointList[i].reset();
       const u = state.actionDur > 1e-6 ? Math.min(1, state.actionT / state.actionDur) : 0;
       this.pose(state, u, speed);
+      if (this.swimBlend > 0) this.swimLayer(state, u, speed);
+      else if (this.swimSunk) this.swimClear();
       if (this.fpxPose !== null) this.fpxApplyPose(state, u, speed);
       const f = this.fadeT >= FADE_DUR ? 1 : smooth01(this.fadeT / FADE_DUR);
       for (let i = 0; i < this.jointList.length; i++) this.jointList[i].apply(f);
@@ -1137,11 +1180,21 @@ export abstract class BaseRig implements AnimalRig {
     if (sink === null) return;
     const x = this.root.position.x;
     const z = this.root.position.z;
-    if (state.action === 'run' && this.stepScale > 0 && speed > 1.2 && !state.airborne) {
+    if (state.action === 'run' && this.stepScale > 0 && speed > 1.2 && !state.airborne && state.inWater !== true) {
       const step = Math.floor(this.gaitPhase / Math.PI);
       if (step !== this.lastStep) {
         this.lastStep = step;
         sink.footstep(this.root, x, z, this.stepScale * (0.6 + 0.4 * Math.min(1, speed / this.def.speed)));
+      }
+    }
+    // Swimming: the basic-attack impact throws a splash at the exact animation instant (once per swing).
+    if (state.inWater === true && !state.airborne && this.prevU < SWIM_IMPACT_U && u >= SWIM_IMPACT_U) {
+      const a = state.action;
+      if (a === 'attack1' || a === 'attack2' || a === 'attack3') {
+        const n = a === 'attack1' ? 1 : a === 'attack2' ? 2 : 3;
+        const sp = swimSplash(n, this.def.radius, this.swim.splash);
+        const yaw = this.root.rotation.y;
+        sink.splash?.(this.root, x + Math.sin(yaw) * sp.forward, z + Math.cos(yaw) * sp.forward, sp.radius, sp.strength);
       }
     }
     for (let i = 0; i < this.slams.length; i++) {
@@ -1153,6 +1206,204 @@ export abstract class BaseRig implements AnimalRig {
       }
     }
   }
+
+  // ── Swimming (v1.8 WP-J4) ──────────────────────────────────────────────────
+  // The swim layer runs AFTER the normal pose and BEFORE the joint cross-fade, driven only by `FighterState.inWater` (+ action,
+  // actionT / actionDur, vel). With `inWater` absent / false the blend stays at exactly 0 and nothing below ever runs, so the
+  // colosseum and the Champions League hooks are bit-identical to before.
+
+  /** Advance the water blend (≈ 0.15 s), the paddle cadence and the throttled wake FX. */
+  private swimStep(state: FighterState, dt: number, speed: number): void {
+    const want = state.inWater === true && !state.airborne && state.action !== 'burrowed';
+    if (want) this.swimBlend = Math.min(1, this.swimBlend + dt / SWIM_BLEND_S);
+    else this.swimBlend = Math.max(0, this.swimBlend - dt / (state.airborne ? SWIM_BLEND_AIR_S : SWIM_BLEND_S));
+    if (this.swimBlend <= 0) {
+      this.swimMv = 0;
+      return;
+    }
+    const tune = this.swim;
+    this.swimMv += (Math.min(1, speed / (this.swimTop * 0.9)) - this.swimMv) * (1 - Math.exp(-dt * 8));
+    this.swimPhase += dt * (tune.freqMin + (tune.freqMax - tune.freqMin) * this.swimMv) * Math.PI * 2;
+    if (this.swimPhase > SWIM_PHASE_WRAP) this.swimPhase -= SWIM_PHASE_WRAP;
+    if (want && speed > 0.4) {
+      this.swimWakeT += dt;
+      if (this.swimWakeT >= WAKE_PERIOD_S) {
+        this.swimWakeT %= WAKE_PERIOD_S;
+        getFxSink()?.wake?.(this.root, this.root.position.x, this.root.position.z, speed, this.def.radius * 1.25);
+      }
+    } else this.swimWakeT = WAKE_PERIOD_S;
+  }
+
+  /** Back on land: undo the sink exactly. */
+  private swimClear(): void {
+    this.bodyRoot.position.y = 0;
+    this.swimSunk = false;
+    this.swimMv = 0;
+  }
+
+  private swimSave(): Float64Array {
+    const list = this.jointList;
+    const n = list.length;
+    if (this.swimPre === null) this.swimPre = new Float64Array(n * 7);
+    const pre = this.swimPre;
+    for (let i = 0; i < n; i++) {
+      const j = list[i];
+      const o = i * 7;
+      pre[o] = j.rx;
+      pre[o + 1] = j.ry;
+      pre[o + 2] = j.rz;
+      pre[o + 3] = j.px;
+      pre[o + 4] = j.py;
+      pre[o + 5] = j.pz;
+      pre[o + 6] = j.s;
+      j.reset();
+    }
+    return pre;
+  }
+
+  /** Blend the freshly written water pose (in the joints) with the saved land pose by `w` (1 = all water). */
+  private swimMix(pre: Float64Array, w: number): void {
+    const list = this.jointList;
+    for (let i = 0; i < list.length; i++) {
+      const j = list[i];
+      const o = i * 7;
+      j.rx = pre[o] + (j.rx - pre[o]) * w;
+      j.ry = pre[o + 1] + (j.ry - pre[o + 1]) * w;
+      j.rz = pre[o + 2] + (j.rz - pre[o + 2]) * w;
+      j.px = pre[o + 3] + (j.px - pre[o + 3]) * w;
+      j.py = pre[o + 4] + (j.py - pre[o + 4]) * w;
+      j.pz = pre[o + 5] + (j.pz - pre[o + 5]) * w;
+      j.s = pre[o + 6] + (j.s - pre[o + 6]) * w;
+    }
+  }
+
+  /** The swim layer proper: pose replacement / modification by action, then the body sink. */
+  private swimLayer(state: FighterState, u: number, speed: number): void {
+    const w = smooth01(this.swimBlend);
+    const act = state.action;
+    switch (act) {
+      case 'idle':
+      case 'run':
+      case 'feared': {
+        // The run gait / idle pose is REPLACED by the paddle pose.
+        const pre = this.swimSave();
+        this.poseSwim(speed, this.timePhase, this.swimMv);
+        // First person: the nose-up swim pitch (body and head) would lift the shoulders / back / snout into the view, so it is mostly dropped.
+        if (this.fpxProfile !== null) {
+          this.body.rx *= 0.3;
+          this.head.rx *= 0.3;
+        }
+        if (act === 'feared') {
+          this.head.ry += Math.sin(this.timePhase * 13) * 0.32;
+          this.head.rx += -0.1;
+        }
+        this.swimMix(pre, w);
+        break;
+      }
+      case 'attack1':
+      case 'attack2':
+      case 'attack3': {
+        // The authored swing, time-warped for the water drag (impact still at u = 0.55) + the water modifiers.
+        const n = act === 'attack1' ? 1 : act === 'attack2' ? 2 : 3;
+        const uw = attackWarp(u);
+        const pre = this.swimSave();
+        this.poseAttack(n, uw);
+        this.swimAttackMods(n, u, uw);
+        this.swimMix(pre, w);
+        break;
+      }
+      case 'block': {
+        const pre = this.swimSave();
+        this.poseBlock(this.timePhase);
+        this.swimBlockMods();
+        this.swimMix(pre, w);
+        break;
+      }
+      default:
+        break; // special / ultimate / hit / stagger / knockdown / dead / grab …: the normal pose, only sunk below
+    }
+    let sink = this.swim.sink;
+    if (act === 'knockdown' || act === 'dead') {
+      // A collapsed body settles AT the water line (it floats / lies in the shallows, never below the pool floor).
+      const c = Math.min(1, Math.max(0, -this.body.py / Math.max(0.05, this.hipDrop)));
+      const settle = Math.min(sink, this.swim.settle);
+      sink += (settle - sink) * c;
+    }
+    this.bodyRoot.position.y = -sink * w * poolSinkScale();
+    this.swimSunk = true;
+  }
+
+  /** Lazy paddle under the authored limbs: legs that are not striking (|rx| small) keep a slow paddle cycle. */
+  private swimLazyLegs(amp: number): void {
+    const n = Math.min(this.legs.length, 4);
+    const s = this.swim;
+    for (let i = 0; i < n; i++) {
+      const cur = this.legs[i].rx;
+      const k = smooth01(Math.abs(cur) / 0.5); // 1 = the authored striking / bracing limb
+      const pad = s.tuck + Math.sin(this.swimPhase + GAIT_OFF[i]) * s.legAmp * amp;
+      this.legs[i].rx = pad + (cur - pad) * k;
+    }
+  }
+
+  /**
+   * Attack-while-swimming modifiers on top of the authored swing (already evaluated at the warped progress `uw`): rear back /
+   * pitch up on the windup, lunge further into the strike, a stronger recoil in the follow-through, lazy paddling legs and a
+   * tail swish; then the per-animal {@link poseSwimAttack} flavour.
+   */
+  private swimAttackMods(n: 1 | 2 | 3, u: number, uw: number): void {
+    const c = attackCurve(uw);
+    const wind = c < 0 ? -c / 0.45 : 0;
+    const strike = c > 0 ? c : 0;
+    const fb = followBump(u);
+    const sz = 0.6 + 0.6 * this.def.radius;
+    if (this.body.py < 0) this.body.py *= 0.35; // the water holds the body up: the authored dips / crouches are mostly cancelled
+    if (this.body.rx > 0) this.body.rx *= 0.5; // ... and buoyancy keeps the nose from plunging (the feet would punch through the pool bed)
+    this.body.rx += -0.16 * wind - 0.04 * strike - 0.1 * fb;
+    this.body.py += 0.03 * wind - 0.025 * fb + Math.sin(this.timePhase * SWIM_BOB_W) * this.swim.bob * 0.6;
+    this.body.pz += (0.1 * strike - 0.13 * fb) * sz;
+    this.swimLazyLegs(0.4);
+    if (this.tail !== null) this.tail.ry += Math.sin(this.swimPhase * 0.5 + 0.6) * this.swim.tail * 0.5;
+    this.poseSwimAttack(n, u, uw);
+  }
+
+  /** Block in the water: the authored hunker, but the body stays up out of the water and the legs keep treading. */
+  private swimBlockMods(): void {
+    this.body.py = this.body.py * 0.3 + Math.sin(this.timePhase * SWIM_BOB_W) * this.swim.bob * 0.6;
+    this.body.rx += -0.04;
+    this.swimLazyLegs(0.35);
+    if (this.tail !== null) this.tail.ry += Math.sin(this.swimPhase * 0.5 + 0.6) * this.swim.tail * 0.4;
+  }
+
+  /**
+   * The swimming pose (idle treading + moving), written into freshly reset joints; REPLACES the run / idle pose by the swim
+   * blend. `speed` m/s, `t` running clock (s), `mv` 0..1 = speed / this animal's top water speed. The default is a generic
+   * quadruped dog-paddle (alternating diagonal legs, a gentle bob, nose up while moving, head and tail lifted); every animal
+   * overrides it with its own flavour.
+   */
+  protected poseSwim(_speed: number, t: number, mv: number): void {
+    const s = this.swim;
+    const ph = this.swimPhase;
+    const amp = s.legAmp * (s.tread + (1 - s.tread) * mv);
+    const n = Math.min(this.legs.length, 4);
+    for (let i = 0; i < n; i++) {
+      const o = GAIT_OFF[i];
+      this.legs[i].rx = s.tuck + Math.sin(ph + o) * amp * (i < 2 ? 1 : 0.75);
+      this.legs[i].rz = (i % 2 === 0 ? -1 : 1) * (0.08 + 0.07 * Math.sin(ph + o + 1.6)) * (0.5 + 0.5 * mv);
+    }
+    const bob = Math.sin(t * SWIM_BOB_W);
+    this.body.py = bob * s.bob + Math.sin(ph * 2) * s.bob * 0.4 * mv;
+    this.body.rx = -s.pitch * mv + Math.sin(t * SWIM_BOB_W + 0.9) * 0.025;
+    this.body.rz = Math.sin(ph) * 0.045 * mv;
+    this.head.rx = -s.headUp * (0.6 + 0.4 * mv) + Math.sin(t * SWIM_BOB_W + 0.5) * 0.03;
+    this.head.ry = Math.sin(t * 0.6) * 0.15;
+    if (this.tail !== null) {
+      this.tail.rx = -0.35;
+      this.tail.ry = Math.sin(ph * 0.5 + 0.6) * s.tail;
+    }
+  }
+
+  /** Per-animal flavour of the swinging attacks in the water (called last, on the already-modified pose). Default: none. */
+  protected poseSwimAttack(_n: 1 | 2 | 3, _u: number, _uw: number): void {}
 
   // ── Action dispatch ────────────────────────────────────────────────────────
 

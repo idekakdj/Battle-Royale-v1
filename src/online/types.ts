@@ -10,11 +10,15 @@
  *   Controllers + UI   NetBrawlController (WP-N5), BR net controller (WP-N6), Online screens (WP-N4)
  */
 
-import type { AnimalId, Difficulty } from '../core/types';
+import type { AnimalId, ArenaId, Difficulty } from '../core/types';
 import type { StageId } from '../brawl/types';
 
-/** Bump whenever ANY wire format changes (both peers must match exactly, checked in the room handshake). */
-export const ONLINE_PROTOCOL_VERSION = 1;
+/**
+ * Bump whenever ANY wire format changes (both peers must match exactly, checked in the room handshake).
+ *  1  v1.5 launch (Champions League rollback + Battle Royale host/client).
+ *  2  v1.8 Jungle: BR snapshot fighter flags `inWater` (flags bit 7) / `onMoss` (opt bit 12) and the `splash` event (tag 22).
+ */
+export const ONLINE_PROTOCOL_VERSION = 2;
 
 export type OnlineMode = 'battleRoyale' | 'championsLeague';
 
@@ -124,8 +128,11 @@ export interface OnlineStart {
   /** This machine's fighter id. */
   localSlot: number;
   hostPeerId: string;
-  /** Battle Royale: bot skill for the bot slots. */
-  br?: { difficulty: Difficulty };
+  /**
+   * Battle Royale: bot skill for the bot slots + (v1.8) the map the host picked (absent = 'colosseum'; it travels in the reliable JSON
+   * start message, so no binary wire format changes).
+   */
+  br?: { difficulty: Difficulty; arena?: ArenaId };
   /** Champions League: rules. Bots (if any) use `botLevel`. */
   cl?: { stage: StageId; stocks: number; timeLimitS: number; botLevel: Difficulty };
 }

@@ -117,6 +117,14 @@ export interface FighterState {
   ultPhase?: 'windup' | 'active' | 'recovery';
   ultStage?: number;
   ultTargetId?: number;
+  /**
+   * v1.8 terrain flags (Jungle arena; docs/JUNGLE-PLAN.md). Present and `true` ONLY while they hold — absent means false, so
+   * colosseum snapshots are unchanged. `inWater`: grounded, centre inside the shallow pool (wading/swimming: swim animation,
+   * slosh sound, water speed). `onMoss`: grounded, body overlapping a moss patch (squelch, slow). Computed by the sim's
+   * TerrainSystem once per tick; consumers must not recompute terrain.
+   */
+  inWater?: boolean;
+  onMoss?: boolean;
 }
 
 export interface PickupState {
@@ -248,6 +256,12 @@ export type GameEvent =
   | { type: 'trapExpired'; trapId: number; kind: TrapKind; pos: Vec3 }
   /** Eagle came down from height and hit the ground (AoE). radius/damage are what was applied. */
   | { type: 'landingImpact'; fighterId: number; pos: Vec3; radius: number; damage: number; height: number }
+  /**
+   * v1.8: a grounded fighter crossed the waterline of the jungle pool (`FighterState.inWater` flipped). `entering` true = stepped /
+   * landed in, false = left (or jumped out). `pos` = the fighter's XZ with `y` at the water surface; `strength` 0..1 from its
+   * horizontal + vertical speed (see `splashStrength` in config/terrain.ts). Cosmetic: splash VFX + sound.
+   */
+  | { type: 'splash'; fighterId: number; pos: Vec3; entering: boolean; strength: number }
   | { type: 'matchEnd'; winnerId: number };
 
 /** Narrows {@link GameEvent} to a single variant by its `type` tag. */
@@ -272,4 +286,10 @@ export interface RosterEntry {
 export interface MatchConfig {
   roster: RosterEntry[];
   difficulty: Difficulty;
+  /** v1.8: which arena the match is played in (absent = 'colosseum'; the pre-1.8 behaviour). */
+  arena?: ArenaId;
 }
+
+/** v1.8: Battle Royale arenas. 'colosseum' is the original; 'jungle' adds trees, moss patches and a wading pool (docs/JUNGLE-PLAN.md). */
+export type ArenaId = 'colosseum' | 'jungle';
+export const ARENA_IDS: readonly ArenaId[] = ['colosseum', 'jungle'];

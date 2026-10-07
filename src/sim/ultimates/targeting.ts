@@ -28,7 +28,8 @@ import type { FighterState, UltTargetKind, Vec3 } from '../../core/types';
 import type { Fighter, Sim } from '../Fighter';
 import { angleDelta, dirToYaw } from '../../core/math';
 import { MOVE } from '../../config/balance';
-import { WALL_RADIUS } from '../../config/arena';
+import type { ArenaDef } from '../../config/arenas';
+import { COLOSSEUM_ARENA } from '../../config/arenas';
 import { groundHeightAt } from '../MovementSystem';
 import { sectorCircleOverlap } from '../hitbox';
 import { AIM_SNAP_LATERAL, AIM_SNAP_SLACK, AIM_SNAP_MIN } from '../simTuning';
@@ -68,13 +69,15 @@ export interface TargetingOpts {
    * derives it from the state via {@link isStateUntargetable}.
    */
   isUntargetable?: (st: FighterState) => boolean;
+  /** v1.8: the arena being played (wall radius / ground height). Default: the colosseum. The sim passes `sim.arena`. */
+  arena?: ArenaDef;
 }
 
 // ── State helpers ────────────────────────────────────────────────────────────
 
 /** Metres above the (dais-aware) ground under a state's position. */
-export function stateAltitude(st: FighterState): number {
-  return st.pos.y - groundHeightAt(st.pos.x, st.pos.z);
+export function stateAltitude(st: FighterState, arena: ArenaDef = COLOSSEUM_ARENA): number {
+  return st.pos.y - groundHeightAt(st.pos.x, st.pos.z, arena);
 }
 
 /** Body radius (m) of a state's animal. */
@@ -97,8 +100,16 @@ export function isStateUntargetable(st: FighterState): boolean {
  * Length along the ray (x,z)+t·(dx,dz) (unit dir) before it leaves the arena
  * (radius WALL_RADIUS − margin), capped at `len`. 0 when already outside.
  */
-export function clipRayToArena(x: number, z: number, dx: number, dz: number, len: number, margin = ARENA_MARGIN): number {
-  const R = WALL_RADIUS - margin;
+export function clipRayToArena(
+  x: number,
+  z: number,
+  dx: number,
+  dz: number,
+  len: number,
+  margin = ARENA_MARGIN,
+  wallRadius: number = COLOSSEUM_ARENA.wallRadius,
+): number {
+  const R = wallRadius - margin;
   const b = x * dx + z * dz;
   const c = x * x + z * z - R * R;
   if (c > 0) return 0;
@@ -107,13 +118,13 @@ export function clipRayToArena(x: number, z: number, dx: number, dz: number, len
 }
 
 /** End point of a `range`-long aim line from the attacker, clipped at the arena wall. */
-export function lineEndPoint(attacker: FighterState, aimYaw: number, range: number): Vec3 {
+export function lineEndPoint(attacker: FighterState, aimYaw: number, range: number, arena: ArenaDef = COLOSSEUM_ARENA): Vec3 {
   const dx = Math.sin(aimYaw);
   const dz = Math.cos(aimYaw);
-  const len = clipRayToArena(attacker.pos.x, attacker.pos.z, dx, dz, range);
+  const len = clipRayToArena(attacker.pos.x, attacker.pos.z, dx, dz, range, ARENA_MARGIN, arena.wallRadius);
   const x = attacker.pos.x + dx * len;
   const z = attacker.pos.z + dz * len;
-  return { x, y: groundHeightAt(x, z), z };
+  return { x, y: groundHeightAt(x, z, arena), z };
 }
 
 /** Distance from point (px,pz) to the segment (ax,az)-(bx,bz) in the XZ plane. */
@@ -169,7 +180,7 @@ export function selectLockTarget(
     const t = fighters[i];
     if (t.id === attacker.id || !t.alive) continue;
     if (untargetable(t)) continue;
-    if (tg.hitsAir !== true && stateAltitude(t) > MOVE.groundHitMaxAltitude) continue;
+    if (tg.hitsAir !== true && stateAltitude(t, opts.arena) > MOVE.groundHitMaxAltitude) continue;
     const dx = t.pos.x - ax;
     const dz = t.pos.z - az;
     if (!sectorCircleOverlap(ax, az, aim, tg.range, cone, t.pos.x, t.pos.z, stateRadius(t))) continue;
@@ -226,7 +237,7 @@ export function resolveGroundPoint(
   for (let i = 0; i < fighters.length; i++) {
     const t = fighters[i];
     if (t.id === attacker.id || !t.alive || untargetable(t)) continue;
-    if (tg.hitsAir !== true && stateAltitude(t) > MOVE.groundHitMaxAltitude) continue;
+    if (tg.hitsAir !== true && stateAltitude(t, opts.arena) > MOVE.groundHitMaxAltitude) continue;
     const rx = t.pos.x - attacker.pos.x;
     const rz = t.pos.z - attacker.pos.z;
     const along = rx * dx + rz * dz;
@@ -240,7 +251,7 @@ export function resolveGroundPoint(
     }
   }
   const dist = found ? Math.min(maxRange, Math.max(AIM_SNAP_MIN, best)) : maxRange;
-  const len = clipRayToArena(attacker.pos.x, attacker.pos.z, dx, dz, dist);
+  const len = clipRayToArena(attacker.pos.x, attacker.pos.z, dx, dz, dist, ARENA_MARGIN, (opts.arena ?? COLOSSEUM_ARENA).wallRadius);
   return { dist, x: attacker.pos.x + dx * len, z: attacker.pos.z + dz * len, snappedId };
 }
 
@@ -275,7 +286,7 @@ export function previewUltTarget(
       const t = fighters[indexOfId(fighters, id)];
       return { kind: 'lock', valid: true, targetId: id, from, to: copy(t.pos), range: tg.range, width: 0 };
     }
-    return { kind: 'lock', valid: false, targetId: -1, from, to: lineEndPoint(attacker, aim, tg.range), range: tg.range, width: 0 };
+    return { kind: 'lock', valid: false, targetId: -1, from, to: lineEndPoint(attacker, aim, tg.range, opts.arena), range: tg.range, width: 0 };
   }
 
   if (tg.kind === 'line') {
@@ -291,7 +302,7 @@ export function previewUltTarget(
       valid: tg.requireTarget !== true,
       targetId: -1,
       from,
-      to: lineEndPoint(attacker, aim, tg.range),
+      to: lineEndPoint(attacker, aim, tg.range, opts.arena),
       range: tg.range,
       width,
     };
@@ -304,7 +315,7 @@ export function previewUltTarget(
     valid: tg.requireTarget !== true || gp.snappedId >= 0,
     targetId: gp.snappedId,
     from,
-    to: { x: gp.x, y: groundHeightAt(gp.x, gp.z), z: gp.z },
+    to: { x: gp.x, y: groundHeightAt(gp.x, gp.z, opts.arena ?? COLOSSEUM_ARENA), z: gp.z },
     range: tg.range,
     width: (tg.radius ?? 0) * 2,
   };
@@ -332,6 +343,7 @@ export function resolveUltTarget(sim: Sim, f: Fighter, spec: { targeting?: UltTa
   for (let i = 0; i < n; i++) SCRATCH_STATES[i] = sim.fighters[i].state;
   return previewUltTarget(spec, f.state, SCRATCH_STATES, {
     aimYaw: f.intent.aimYaw,
+    arena: sim.arena,
     isUntargetable: (st) => {
       const t = sim.fighters[st.id];
       return t !== undefined ? t.untargetable : isStateUntargetable(st);

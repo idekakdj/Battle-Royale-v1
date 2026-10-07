@@ -12,7 +12,7 @@ import { groundHeightAt } from './MovementSystem';
 
 /** Metres above the ground (dais-aware) under the fighter. */
 export function altitudeOf(f: Fighter): number {
-  return f.state.pos.y - groundHeightAt(f.state.pos.x, f.state.pos.z);
+  return f.state.pos.y - groundHeightAt(f.state.pos.x, f.state.pos.z, f.arena);
 }
 
 /**

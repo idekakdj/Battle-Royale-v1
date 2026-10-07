@@ -4,12 +4,14 @@
  *  - `gk-animal`     → last-selected gladiator (lobby default)
  *  - `gk-difficulty` → last-selected difficulty tier
  *  - `gk-mode`       → last-chosen game mode on the PLAY mode-select screen (v1.5.1)
+ *  - `gk-arena`      → last-chosen Battle Royale map (colosseum | jungle; v1.8)
  *
  * All reads are defensive: corrupt/missing/blocked storage falls back to sane
  * defaults so the UI never throws on boot.
  */
 
-import type { AnimalId, Difficulty } from '../core/types';
+import type { AnimalId, ArenaId, Difficulty } from '../core/types';
+import { ARENA_IDS } from '../core/types';
 import { ANIMAL_IDS } from '../config/animals';
 import { parseBrawlSetup, type BrawlSetupChoice } from '../brawl/ui/setup';
 
@@ -20,6 +22,8 @@ export const DIFFICULTY_KEY = 'gk-difficulty';
 export const BRAWL_KEY = 'gk-brawl';
 /** v1.5.1: last game mode chosen on the mode-select screen (`battleRoyale` | `championsLeague`). */
 export const MODE_KEY = 'gk-mode';
+/** v1.8: last Battle Royale map chosen on the difficulty screen (`colosseum` | `jungle`). */
+export const ARENA_KEY = 'gk-arena';
 
 /** Audio settings, all volumes normalized to 0..1 (BLUEPRINT §12/§13). */
 export interface GkSettings {
@@ -162,6 +166,26 @@ export function loadDifficulty(): Difficulty {
 /** Persist the selected difficulty under `gk-difficulty`. */
 export function saveDifficulty(difficulty: Difficulty): void {
   writeRaw(DIFFICULTY_KEY, String(difficulty));
+}
+
+// ── v1.8 Battle Royale map (Colosseum | Jungle Clearing) ───────────────────────────────────────────────────────
+
+/** The pre-selected map when nothing (valid) is stored yet — the original arena. */
+export const DEFAULT_ARENA: ArenaId = 'colosseum';
+
+/** Validate a raw stored/received/URL arena id; anything unknown falls back to {@link DEFAULT_ARENA} (the colosseum). */
+export function parseArena(raw: unknown): ArenaId {
+  return typeof raw === 'string' && (ARENA_IDS as readonly string[]).includes(raw) ? (raw as ArenaId) : DEFAULT_ARENA;
+}
+
+/** The last-chosen Battle Royale map (validated; the colosseum when missing, corrupt or storage is blocked). Never throws. */
+export function loadArena(): ArenaId {
+  return parseArena(readRaw(ARENA_KEY));
+}
+
+/** Persist the chosen Battle Royale map under `gk-arena`. */
+export function saveArena(arena: ArenaId): void {
+  writeRaw(ARENA_KEY, parseArena(arena));
 }
 
 // ── v1.5.1 mode select (PLAY → Battle Royale | Champions League) ─────────────────────────────────────────────────

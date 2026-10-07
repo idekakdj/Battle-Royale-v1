@@ -98,7 +98,7 @@ export const moleUltimate: UltimateImpl = {
       s.pos.x = rt.sx + (sk.ex - rt.sx) * u;
       s.pos.z = rt.sz + (sk.ez - rt.sz) * u;
       clampToWall(f); // underground: no pillars, but never outside the arena
-      s.pos.y = groundHeightAt(s.pos.x, s.pos.z);
+      s.pos.y = groundHeightAt(s.pos.x, s.pos.z, f.arena);
       const inv = dt > 1e-6 ? 1 / dt : 0;
       s.vel.x = (s.pos.x - ox) * inv;
       s.vel.z = (s.pos.z - oz) * inv;
@@ -119,7 +119,7 @@ export const moleUltimate: UltimateImpl = {
       clampToWall(f);
       s.yaw = dirToYaw(rt.px - s.pos.x, rt.pz - s.pos.z);
     }
-    s.pos.y = groundHeightAt(s.pos.x, s.pos.z);
+    s.pos.y = groundHeightAt(s.pos.x, s.pos.z, sim.arena);
     s.vel.x = 0;
     s.vel.z = 0;
     f.untargetable = false; // surfaced at the rim: vulnerable, but the cast is uninterruptible
@@ -128,7 +128,7 @@ export const moleUltimate: UltimateImpl = {
     // Phase clock for the rig: the vortex has its own actionT/actionDur.
     s.actionT = 0;
     s.actionDur = K.vortexS;
-    emitUltimateStage(sim, f, rt, 1, { x: rt.px, y: groundHeightAt(rt.px, rt.pz), z: rt.pz });
+    emitUltimateStage(sim, f, rt, 1, { x: rt.px, y: groundHeightAt(rt.px, rt.pz, sim.arena), z: rt.pz });
   },
 
   activeTick(sim, f, rt, dt) {
@@ -143,7 +143,7 @@ export const moleUltimate: UltimateImpl = {
       rt.accum -= K.tickS;
       tick = true;
     }
-    const cy = groundHeightAt(rt.px, rt.pz);
+    const cy = groundHeightAt(rt.px, rt.pz, sim.arena);
     const fs = sim.fighters;
     for (let i = 0; i < fs.length; i++) {
       const t = fs[i];
@@ -184,7 +184,7 @@ function collapse(sim: Sim, f: Fighter, rt: AbilityRuntime): void {
     shape: 'circle',
     cx: rt.px,
     cz: rt.pz,
-    cy: groundHeightAt(rt.px, rt.pz),
+    cy: groundHeightAt(rt.px, rt.pz, sim.arena),
     yaw: f.state.yaw,
     range: spec.radius ?? 4.5,
     arcDeg: 360,
@@ -196,7 +196,7 @@ function collapse(sim: Sim, f: Fighter, rt: AbilityRuntime): void {
   });
   rt.didHit = any;
   f.ccImmuneChannel = false;
-  emitUltimateStage(sim, f, rt, 2, { x: rt.px, y: groundHeightAt(rt.px, rt.pz), z: rt.pz });
+  emitUltimateStage(sim, f, rt, 2, { x: rt.px, y: groundHeightAt(rt.px, rt.pz, sim.arena), z: rt.pz });
   f.state.actionT = 0;
   f.state.actionDur = K.recoveryS;
   toRecovery(rt);

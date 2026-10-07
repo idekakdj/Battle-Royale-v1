@@ -12,7 +12,7 @@
  *   any phase ── leave() / host gone / kicked ──► `closed`
  */
 
-import type { AnimalId, Difficulty } from '../../core/types';
+import type { AnimalId, ArenaId, Difficulty } from '../../core/types';
 import type { StageId } from '../../brawl/types';
 import type { GameChannel, NetEndReason, OnlineMode, OnlineStart, Transport } from '../types';
 import type { RoomClock } from './clock';
@@ -58,6 +58,8 @@ export interface BrRoomSettings {
   botLevel: Difficulty;
   /** Fill the roster with bots up to {@link ROOM_LIMITS.maxFighters} when the match starts (default true). */
   fillBots: boolean;
+  /** v1.8: the map the host picked (default 'colosseum'). Visible to everyone, host-only editable. */
+  arena: ArenaId;
 }
 
 export interface ClRoomSettings {
@@ -81,7 +83,7 @@ export interface RoomSettingsPatch {
 }
 
 export const DEFAULT_ROOM_SETTINGS: Readonly<RoomSettings> = {
-  br: { botLevel: 2, fillBots: true },
+  br: { botLevel: 2, fillBots: true, arena: 'colosseum' },
   cl: { stage: 'brokenColosseum', stocks: 3, timeLimitS: 300 },
 };
 

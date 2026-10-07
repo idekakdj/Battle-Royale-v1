@@ -789,6 +789,28 @@
   opacity: 0.55;
 }
 
+/* v1.8 Battle Royale map picker: same two-card row as the stage picker, but with a square thumbnail + the blurb. */
+.gk-on .gk-on-map .gk-bs__thumb {
+  flex: 0 0 clamp(52px, 4.6vw, 88px);
+  aspect-ratio: 1;
+  background: #0b0d0a;
+}
+
+.gk-on .gk-on-map .gk-bs__stage-blurb {
+  -webkit-line-clamp: 2;
+}
+
+/* short windows (1280x720): a slimmer picker so the rules column keeps clear of the bottom edge, even with the client's note line */
+@media (max-height: 760px) {
+  .gk-on .gk-on-map .gk-bs__thumb {
+    flex-basis: 44px;
+  }
+
+  .gk-on .gk-on-map .gk-bs__stage-blurb {
+    -webkit-line-clamp: 1;
+  }
+}
+
 .gk-on .gk-on-stage:disabled.is-selected {
   opacity: 1;
   box-shadow: 0 0 0 1px var(--gk-gold);

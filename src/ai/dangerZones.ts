@@ -25,7 +25,8 @@
 
 import type { AnimalId, GameEvent, TrapState } from '../core/types';
 import { ANIMALS } from '../config/animals';
-import { PILLARS, WALL_RADIUS } from '../config/arena';
+import type { ArenaDef } from '../config/arenas';
+import { COLOSSEUM_ARENA } from '../config/arenas';
 import { setDir, type Move2 } from './Steering';
 
 /** Default radius (m) of a lock-kind zone around its victim. */
@@ -143,6 +144,12 @@ const SCRATCH: Move2 = { x: 0, z: 0 };
 export class DangerZones {
   /** Live zones, registration order. */
   readonly list: DangerZone[] = [];
+  /** v1.8: arena used to judge whether an exit's landing point is clean (inside the wall, clear of pillars/trees). */
+  readonly arena: ArenaDef;
+
+  constructor(arena: ArenaDef = COLOSSEUM_ARENA) {
+    this.arena = arena;
+  }
 
   get count(): number {
     return this.list.length;
@@ -292,7 +299,7 @@ export class DangerZones {
         anyX = px;
         anyZ = pz;
       }
-      if (d < bestClean - 1e-9 && landingClean(px, pz, pad, traps)) {
+      if (d < bestClean - 1e-9 && landingClean(this.arena, px, pz, pad, traps)) {
         bestClean = d;
         cleanI = i;
         cleanX = px;
@@ -409,11 +416,12 @@ export class DangerZones {
   }
 }
 
-/** Landing point sanity: inside the arena, clear of pillars and armed/active traps. */
-function landingClean(px: number, pz: number, pad: number, traps: readonly TrapState[] | undefined): boolean {
-  if (Math.hypot(px, pz) > WALL_RADIUS - pad - 0.3) return false;
-  for (let i = 0; i < PILLARS.length; i++) {
-    const p = PILLARS[i];
+/** Landing point sanity: inside the arena, clear of pillars/trees and armed/active traps. */
+function landingClean(arena: ArenaDef, px: number, pz: number, pad: number, traps: readonly TrapState[] | undefined): boolean {
+  if (Math.hypot(px, pz) > arena.wallRadius - pad - 0.3) return false;
+  const blockers = arena.circles;
+  for (let i = 0; i < blockers.length; i++) {
+    const p = blockers[i];
     if (Math.hypot(px - p.x, pz - p.z) < p.radius + pad + 0.2) return false;
   }
   if (traps !== undefined) {

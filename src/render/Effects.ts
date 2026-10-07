@@ -18,18 +18,26 @@
  * Public API is event-shaped so WP-I can pipe GameEvents straight in
  * (positions are plain `Vec3` from core/types) — unchanged from v1.0.
  *
+ * v1.8 jungle (WP-J3): water FX — `splash` / `wake` (the `FxSink` hooks the swimming rigs call), `handleSplashEvent` (the
+ * `splash` GameEvent) and terrain-aware footsteps / landings (ripples in the pool, green spore puffs on moss). The water pieces
+ * live in `waterFx.ts` (one GPU-animated ripple draw call + droplets on the existing soft pool) and are created lazily, so the
+ * colosseum never allocates them.
+ *   MATCH WIRING (WP-J5): in MatchController's event wiring add ONE line next to the `landingImpact` handler:
+ *     `this.bus.on('splash', (e) => this.effects.handleSplashEvent(e));`
+ *
  * Budgets: ≤500 live particles (two pools totalling 500); typical draw calls
- * ≤ 2 (points) + visible ribbons/decals/numbers/flashes.
+ * ≤ 2 (points) + visible ribbons/decals/numbers/flashes (+1 ripple draw in the jungle).
  */
 
 import * as THREE from 'three';
-import type { AnimalId, TrapKind, Vec3 } from '../core/types';
+import type { AnimalId, GameEventOf, TrapKind, Vec3 } from '../core/types';
 import { ANIMALS } from '../config/animals';
 import { DEG2RAD, TAU, clamp01 } from '../core/math';
-import { STANDS_INNER } from '../config/arena';
 import { OVERLAY_LAYER } from './SceneManager';
 import { kickFov, setFxSink, getFxSink, type FxSink, type SlamKind } from './fxBus';
 import { tierProfile } from './quality';
+import { getRenderArena, mossZoneAt, renderArenaHasTerrain, terrainAudio, waterZoneAt } from './arenaContext';
+import { WaterFx } from './waterFx';
 
 export type TelegraphKind = 'ring' | 'arc' | 'rect';
 
@@ -69,6 +77,9 @@ const COL_TELE_FRIEND = 0xffc93c;
 
 const _c = new THREE.Color();
 const _v = new THREE.Vector3();
+/** Footstep dust colours (linear-ish RGB; the colosseum value is the original 0.8/0.67/0.46). */
+const COLOSSEUM_DUST: readonly [number, number, number] = [0.79, 0.66, 0.44];
+const JUNGLE_DUST: readonly [number, number, number] = [0.5, 0.44, 0.3];
 
 // ── Point-sprite shaders (per-particle size/alpha/color) ────────────────────
 const POINTS_VERTEX = /* glsl */ `
@@ -1104,6 +1115,8 @@ export class Effects implements FxSink {
   private readonly rings = new RingPool();
   private readonly cracks = new CrackPool();
   private readonly columns = new ColumnPool();
+  /** v1.8 jungle water FX (lazy: created on the first splash / wake / water footstep). */
+  private water: WaterFx | null = null;
 
   private readonly pointScale: { value: number };
   private readonly fovDeg: number;
@@ -1149,6 +1162,7 @@ export class Effects implements FxSink {
     this.rings.update(dt);
     this.cracks.update(dt);
     this.columns.update(dt);
+    if (this.water !== null) this.water.update(dt);
     this.shake *= Math.exp(-dt / SHAKE_TAU);
     if (this.shake < 0.0004) this.shake = 0;
   }
@@ -1254,25 +1268,44 @@ export class Effects implements FxSink {
     }
     this.rings.spawn(pos, 0xc8402f, 0.5, 3.4, 0.45, 1.3);
     this.onDust(pos, 1.3);
-    // Streamers: thrown from the stands toward the arena, fluttering down.
-    for (let i = 0; i < 46; i++) {
-      const ang = Math.random() * TAU;
-      const r = STANDS_INNER + 0.5 + Math.random() * 8;
-      const x = Math.cos(ang) * r;
-      const z = Math.sin(ang) * r;
-      const inX = -Math.cos(ang);
-      const inZ = -Math.sin(ang);
-      const sp = 2 + Math.random() * 2.5;
-      const ci = Math.floor(Math.random() * 4);
-      const cr = ci === 0 ? 0.95 : ci === 1 ? 0.85 : ci === 2 ? 0.45 : 0.95;
-      const cg = ci === 0 ? 0.75 : ci === 1 ? 0.25 : ci === 2 ? 0.7 : 0.93;
-      const cb = ci === 0 ? 0.25 : ci === 1 ? 0.2 : ci === 2 ? 0.75 : 0.88;
-      this.soft.spawn(
-        x, 6 + Math.random() * 5, z,
-        inX * sp, 1.5 + Math.random() * 2, inZ * sp,
-        2.2 + Math.random() * 0.8, 0.2, 0.1,
-        cr, cg, cb, 0.85, -3.2, 0.6,
-      );
+    if (getRenderArena().id === 'jungle') {
+      // No crowd in the jungle: a flurry of leaves shaken loose from the canopy above the fallen fighter.
+      const leaves = Math.max(10, Math.round(30 * tierProfile().fxScale));
+      for (let i = 0; i < leaves; i++) {
+        const ang = Math.random() * TAU;
+        const rr = Math.random() * 5;
+        const ci = Math.floor(Math.random() * 4);
+        const cr = ci === 0 ? 0.3 : ci === 1 ? 0.5 : ci === 2 ? 0.85 : 0.2;
+        const cg = ci === 0 ? 0.62 : ci === 1 ? 0.75 : ci === 2 ? 0.65 : 0.5;
+        const cb = ci === 0 ? 0.18 : ci === 1 ? 0.2 : ci === 2 ? 0.2 : 0.2;
+        this.soft.spawn(
+          pos.x + Math.cos(ang) * rr, 8 + Math.random() * 3, pos.z + Math.sin(ang) * rr,
+          (Math.random() - 0.5) * 1.5, -0.5 - Math.random(), (Math.random() - 0.5) * 1.5,
+          3 + Math.random() * 1.2, 0.2, 0.12,
+          cr, cg, cb, 0.85, -1.6, 0.9,
+        );
+      }
+    } else {
+      // Streamers: thrown from the stands toward the arena, fluttering down.
+      for (let i = 0; i < 46; i++) {
+        const ang = Math.random() * TAU;
+        const r = getRenderArena().standsInner + 0.5 + Math.random() * 8;
+        const x = Math.cos(ang) * r;
+        const z = Math.sin(ang) * r;
+        const inX = -Math.cos(ang);
+        const inZ = -Math.sin(ang);
+        const sp = 2 + Math.random() * 2.5;
+        const ci = Math.floor(Math.random() * 4);
+        const cr = ci === 0 ? 0.95 : ci === 1 ? 0.85 : ci === 2 ? 0.45 : 0.95;
+        const cg = ci === 0 ? 0.75 : ci === 1 ? 0.25 : ci === 2 ? 0.7 : 0.93;
+        const cb = ci === 0 ? 0.25 : ci === 1 ? 0.2 : ci === 2 ? 0.75 : 0.88;
+        this.soft.spawn(
+          x, 6 + Math.random() * 5, z,
+          inX * sp, 1.5 + Math.random() * 2, inZ * sp,
+          2.2 + Math.random() * 0.8, 0.2, 0.1,
+          cr, cg, cb, 0.85, -3.2, 0.6,
+        );
+      }
     }
     this.addShake(0.05);
   }
@@ -1678,7 +1711,19 @@ export class Effects implements FxSink {
 
   footstep(source: THREE.Object3D, x: number, z: number, scale: number): void {
     if (source.parent !== this.scene) return;
+    // v1.8 jungle: a step into the pool ripples, a step on moss puffs green spores (point tests against the arena's zones).
+    if (renderArenaHasTerrain()) {
+      if (waterZoneAt(x, z, 0.1) !== null) {
+        this.getWater().step(x, z, scale);
+        return;
+      }
+      if (mossZoneAt(x, z, 0.35) !== null) {
+        this.mossPuff(x, z, scale, 2);
+        return;
+      }
+    }
     const n = scale > 0.8 ? 3 : 2;
+    const dc = this.dustRgb();
     for (let i = 0; i < n; i++) {
       const ang = Math.random() * TAU;
       const sp = 0.3 + Math.random() * 0.5;
@@ -1686,14 +1731,81 @@ export class Effects implements FxSink {
         x + Math.cos(ang) * 0.2, 0.08, z + Math.sin(ang) * 0.2,
         Math.cos(ang) * sp, 0.25 + Math.random() * 0.4, Math.sin(ang) * sp,
         0.55 + Math.random() * 0.3, 0.2 * scale, 0.6 * scale,
-        0.8, 0.67, 0.46, 0.22, -0.6, 2.5,
+        dc[0] + 0.01, dc[1] + 0.01, dc[2] + 0.02, 0.22, -0.6, 2.5,
       );
     }
   }
 
   land(source: THREE.Object3D, x: number, z: number, scale: number): void {
     if (source.parent !== this.scene) return;
+    if (renderArenaHasTerrain()) {
+      if (waterZoneAt(x, z, 0.1) !== null) {
+        this.getWater().splash(x, z, scale * 0.9, Math.min(1, 0.35 + scale * 0.3));
+        return;
+      }
+      if (mossZoneAt(x, z, 0.35) !== null) {
+        this.mossPuff(x, z, scale * 1.4, 6);
+        return;
+      }
+    }
     this.dustRing(x, z, scale * 1.2, 10);
+  }
+
+  /** v1.8: a swimming rig's splash at the surface (attack impact, heavy stroke). Ignored for rigs outside this scene. */
+  splash(source: THREE.Object3D, x: number, z: number, radius: number, strength: number): void {
+    if (source.parent !== this.scene) return;
+    this.getWater().splash(x, z, radius, strength);
+  }
+
+  /** v1.8: a swimming rig's wake / waterline halo (call every rendered frame while it swims; throttled inside). */
+  wake(source: THREE.Object3D, x: number, z: number, speed: number, scale: number): void {
+    if (source.parent !== this.scene) return;
+    this.getWater().wake(source, x, z, speed, scale);
+  }
+
+  /**
+   * v1.8: the sim's `splash` GameEvent (a fighter entered / left the pool): droplet burst + rings scaled by `strength`.
+   * WP-J5 wires it in MatchController: `this.bus.on('splash', (e) => this.effects.handleSplashEvent(e));`
+   */
+  handleSplashEvent(e: GameEventOf<'splash'>): void {
+    this.getWater().handleSplashEvent(e);
+  }
+
+  /** The water FX (created on first use; its ripple mesh joins the scene). */
+  getWater(): WaterFx {
+    if (this.water === null) {
+      this.water = new WaterFx(this);
+      this.scene.add(this.water.root);
+    }
+    return this.water;
+  }
+
+  /** Green spore puff of a fighter running on moss (`n` motes; scaled by the quality tier). */
+  private mossPuff(x: number, z: number, scale: number, n: number): void {
+    if (terrainAudio.mossStep !== null) terrainAudio.mossStep(x, z);
+    const cnt = Math.max(1, Math.round(n * tierProfile().fxScale));
+    for (let i = 0; i < cnt; i++) {
+      const ang = Math.random() * TAU;
+      const sp = 0.25 + Math.random() * 0.45;
+      this.soft.spawn(
+        x + Math.cos(ang) * 0.25, 0.1, z + Math.sin(ang) * 0.25,
+        Math.cos(ang) * sp, 0.35 + Math.random() * 0.5, Math.sin(ang) * sp,
+        0.7 + Math.random() * 0.4, 0.14 * scale, 0.42 * scale,
+        0.52, 0.78, 0.3, 0.3, -0.25, 2.2,
+      );
+    }
+    if (Math.random() < 0.7) {
+      this.additive.spawn(
+        x + (Math.random() - 0.5) * 0.4, 0.2, z + (Math.random() - 0.5) * 0.4,
+        (Math.random() - 0.5) * 0.4, 0.5 + Math.random() * 0.5, (Math.random() - 0.5) * 0.4,
+        0.9, 0.08, 0.02, 0.55, 0.9, 0.35, 0.55, -0.1, 1.5,
+      );
+    }
+  }
+
+  /** Footstep / landing dust colour for the current arena (sand-tan on the colosseum, damp earth in the jungle). */
+  private dustRgb(): readonly [number, number, number] {
+    return getRenderArena().id === 'jungle' ? JUNGLE_DUST : COLOSSEUM_DUST;
   }
 
   slam(source: THREE.Object3D, x: number, z: number, radius: number, color: number, kind: SlamKind): void {
@@ -1721,6 +1833,7 @@ export class Effects implements FxSink {
 
   private dustRing(x: number, z: number, radius: number, count: number): void {
     const n = Math.max(4, Math.round(count * tierProfile().fxScale));
+    const dc = this.dustRgb();
     for (let i = 0; i < n; i++) {
       const ang = (i / n) * TAU + Math.random() * 0.3;
       const sp = (1.2 + Math.random() * 0.8) * Math.max(0.6, radius);
@@ -1728,7 +1841,7 @@ export class Effects implements FxSink {
         x + Math.cos(ang) * 0.3, 0.12, z + Math.sin(ang) * 0.3,
         Math.cos(ang) * sp, 0.4 + Math.random() * 0.6, Math.sin(ang) * sp,
         0.8 + Math.random() * 0.4, 0.4, 1.2 + radius * 0.2,
-        0.79, 0.66, 0.44, 0.38, -0.8, 3.2,
+        dc[0], dc[1], dc[2], 0.38, -0.8, 3.2,
       );
     }
   }
@@ -1757,5 +1870,10 @@ export class Effects implements FxSink {
     this.rings.dispose();
     this.cracks.dispose();
     this.columns.dispose();
+    if (this.water !== null) {
+      this.scene.remove(this.water.root);
+      this.water.dispose();
+      this.water = null;
+    }
   }
 }

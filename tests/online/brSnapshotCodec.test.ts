@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SnapshotDecoder, encodeSnapshot, STATS_EVERY } from '../../src/online/br/snapshotCodec';
 import { wrapSnapshot, SNAPSHOT_WRAPPER_BYTES } from '../../src/online/br/miscCodec';
 import type { FighterState, WorldSnapshot } from '../../src/core/types';
-import { busyMatch, recordMatch, rng, snapshotMismatches } from './brTestUtil';
+import { busyMatch, recordJungleWander, recordMatch, rng, snapshotMismatches } from './brTestUtil';
 
 /** A fighter with EVERY optional/rare field populated. */
 function fullFighter(id: number, over: Partial<FighterState> = {}): FighterState {
@@ -246,6 +246,160 @@ describe('snapshot codec: bandwidth budget (10 fighters, busy fight)', () => {
     expect(max).toBeLessThanOrEqual(8192);
     // we aim far below the ceiling; keep a regression alarm well under it
     expect(avg).toBeLessThanOrEqual(700);
+  });
+});
+
+describe('snapshot codec: v1.8 terrain flags (inWater / onMoss)', () => {
+  const roundTrip = (f: FighterState): FighterState => {
+    const s: WorldSnapshot = { ...fullSnapshot(), fighters: [f], matchOver: false, winnerId: -1 };
+    const out = new SnapshotDecoder().decode(encodeSnapshot(s, { seq: 1, keyframe: true }));
+    expect(out).not.toBeNull();
+    return (out as { snapshot: WorldSnapshot }).snapshot.fighters[0];
+  };
+  const solo = (f: FighterState): WorldSnapshot => ({ ...fullSnapshot(), fighters: [f], matchOver: false, winnerId: -1 });
+
+  it('round-trips all four combinations, and absent stays absent (the colosseum never carries them)', () => {
+    const base = fullFighter(0);
+    expect('inWater' in base || 'onMoss' in base).toBe(false);
+    for (const [w, m] of [
+      [false, false],
+      [true, false],
+      [false, true],
+      [true, true],
+    ] as const) {
+      const f = fullFighter(0, { ...(w ? { inWater: true } : {}), ...(m ? { onMoss: true } : {}) });
+      const d = roundTrip(f);
+      expect(d.inWater, `water ${w}`).toBe(w ? true : undefined);
+      expect(d.onMoss, `moss ${m}`).toBe(m ? true : undefined);
+      expect('inWater' in d).toBe(w);
+      expect('onMoss' in d).toBe(m);
+      // every other field is untouched by the flags (the bits do not collide with the combo index / optional groups)
+      expect(snapshotMismatches(solo(f), solo(d))).toEqual([]);
+    }
+  });
+
+  it('the flags cost nothing in the colosseum and at most one byte per fighter in the jungle', () => {
+    const plain = fullSnapshot();
+    const len = (fighters: FighterState[]): number => encodeSnapshot({ ...plain, fighters }, { seq: 3, keyframe: false }).length;
+    const none = len(plain.fighters);
+    const water = len(plain.fighters.map((f) => ({ ...f, inWater: true })));
+    const moss = len(plain.fighters.map((f) => ({ ...f, onMoss: true })));
+    const both = len(plain.fighters.map((f) => ({ ...f, inWater: true, onMoss: true })));
+    expect(water).toBe(none); // lives in the fighter flags byte: free
+    expect(moss - none).toBeLessThanOrEqual(plain.fighters.length);
+    expect(both - none).toBeLessThanOrEqual(plain.fighters.length);
+    // a lean fighter (one-byte optional mask): water is free, moss is +1 byte
+    const lean = (extra: Partial<FighterState>): number =>
+      len([
+        fullFighter(0, {
+          buffs: [],
+          specialCd: 0,
+          actionT: 0,
+          actionDur: 0,
+          comboWindow: 0,
+          guardRegenDelay: 0,
+          grabTargetId: -1,
+          grabbedById: -1,
+          glideT: 0,
+          burrowT: 0,
+          ultPhase: undefined,
+          ultStage: undefined,
+          ultTargetId: undefined,
+          ...extra,
+        }),
+      ]);
+    expect(lean({ inWater: true })).toBe(lean({}));
+    expect(lean({ onMoss: true }) - lean({})).toBe(1);
+  });
+
+  it('single-bit and high-bit flips around the flags still decode to sane snapshots or null (never throw)', () => {
+    const bytes = encodeSnapshot(solo(fullFighter(0, { inWater: true, onMoss: true })), { seq: 1, keyframe: true });
+    expect(new SnapshotDecoder().decode(bytes)).not.toBeNull();
+    const dec = new SnapshotDecoder();
+    for (let i = 0; i < bytes.length; i++) {
+      for (const mask of [0x80, 0x40, 0x20, 0x10]) {
+        const c = bytes.slice();
+        c[i] ^= mask;
+        const out = dec.decode(c);
+        if (out !== null) for (const f of out.snapshot.fighters) expect(Number.isFinite(f.pos.x + f.hp + f.yaw)).toBe(true);
+      }
+    }
+  });
+});
+
+describe('snapshot codec: jungle bandwidth budget (10 fighters, wading stress and bot matches)', () => {
+  /** The same snapshot with both terrain flags removed (what the pre-1.8 wire would have carried). */
+  const stripped = (snap: WorldSnapshot): WorldSnapshot => ({
+    ...snap,
+    fighters: snap.fighters.map((f) => {
+      const { inWater: _w, onMoss: _m, ...rest } = f;
+      return rest;
+    }),
+  });
+
+  function measure(rec: ReturnType<typeof recordJungleWander>): { avg: number; max: number; n: number; wet: number; moss: number; keyframeAvg: number; flagCost: number } {
+    let flagBytes = 0;
+    let total = 0;
+    let max = 0;
+    let n = 0;
+    let wet = 0;
+    let moss = 0;
+    let keyTotal = 0;
+    let keys = 0;
+    let seq = 0;
+    const dec = new SnapshotDecoder();
+    for (let t = 0; t < rec.snapshots.length; t += 2) {
+      const keyframe = n % 60 === 0;
+      const snap = rec.snapshots[t];
+      const body = encodeSnapshot(snap, { seq, keyframe, stats: seq % STATS_EVERY === 0 });
+      flagBytes += body.length - encodeSnapshot(stripped(snap), { seq, keyframe, stats: seq % STATS_EVERY === 0 }).length;
+      const wire = 1 + wrapSnapshot(0, 0, body).length;
+      total += wire;
+      max = Math.max(max, wire);
+      if (keyframe) {
+        keyTotal += wire;
+        keys++;
+      }
+      for (const f of snap.fighters) {
+        if (f.inWater === true) wet++;
+        if (f.onMoss === true) moss++;
+      }
+      // the flags survive the wire exactly
+      const out = dec.decode(body);
+      if (out !== null) {
+        for (let i = 0; i < snap.fighters.length; i++) {
+          if (out.snapshot.fighters[i].inWater !== snap.fighters[i].inWater) throw new Error(`inWater lost, snapshot ${n} fighter ${i}`);
+          if (out.snapshot.fighters[i].onMoss !== snap.fighters[i].onMoss) throw new Error(`onMoss lost, snapshot ${n} fighter ${i}`);
+        }
+      }
+      seq = (seq + 1) & 0xffff;
+      n++;
+    }
+    return { avg: total / n, max, n, wet, moss, keyframeAvg: keyTotal / Math.max(1, keys), flagCost: flagBytes / n };
+  }
+
+  it('a jungle wading stress with the flags set stays within the same budget (<= 1.2 KB average, <= 8 KB max)', () => {
+    const rec = recordJungleWander(404, 60);
+    const m = measure(rec);
+    console.log(
+      `[BR budget jungle wading] snapshots=${m.n} avg=${m.avg.toFixed(0)} B  max=${m.max} B  keyframe avg=${m.keyframeAvg.toFixed(0)} B  flags cost ${m.flagCost.toFixed(2)} B/snapshot  fighter-snapshots inWater=${m.wet} onMoss=${m.moss}`,
+    );
+    expect(m.wet).toBeGreaterThan(200); // the measurement really contains wading fighters
+    expect(m.moss).toBeGreaterThan(20);
+    expect(m.flagCost).toBeGreaterThanOrEqual(0);
+    expect(m.flagCost).toBeLessThanOrEqual(10); // 'a few bytes' per snapshot, even with the whole field wading
+    expect(m.avg).toBeLessThanOrEqual(1200);
+    expect(m.max).toBeLessThanOrEqual(8192);
+    expect(m.avg).toBeLessThanOrEqual(700);
+  });
+
+  it('a jungle bot match (default bots) stays within the budget too', () => {
+    const rec = recordMatch(4242, 4, 60, 'jungle');
+    const m = measure(rec);
+    console.log(`[BR budget jungle bots] snapshots=${m.n} avg=${m.avg.toFixed(0)} B  max=${m.max} B  flags cost ${m.flagCost.toFixed(2)} B/snapshot  inWater=${m.wet} onMoss=${m.moss}`);
+    expect(m.avg).toBeLessThanOrEqual(1200);
+    expect(m.max).toBeLessThanOrEqual(8192);
+    expect(m.avg).toBeLessThanOrEqual(700);
   });
 });
 

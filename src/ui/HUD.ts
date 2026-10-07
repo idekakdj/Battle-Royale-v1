@@ -108,6 +108,9 @@ export class HUD {
   private controlsHint!: HTMLElement;
   private spectateEl!: HTMLElement;
   private nameplate!: HTMLElement;
+  /** v1.8 jungle: "Swimming · 62 % speed" / "Mossy ground · 65 % speed" chip above the vitals (absolute: no layout shift). */
+  private terrainTagEl!: HTMLElement;
+  private lastTerrainTag: string | null = null;
   /** v1.5 online: own chosen name for the vitals plate (null = the animal's display name). */
   private playerName: string | null = null;
   private toastEl!: HTMLElement;
@@ -139,7 +142,9 @@ export class HUD {
     this.hpText = el('span', { class: 'gk-hud__hp-text' });
     this.guardFill = el('div', { class: 'gk-hud__guard-fill' });
     this.nameplate = el('div', { class: 'gk-hud__nameplate gk-display' });
+    this.terrainTagEl = el('div', { class: 'gk-hud__terrain', attrs: { 'aria-live': 'off' } });
     const vitals = el('div', { class: 'gk-hud__vitals' }, [
+      this.terrainTagEl,
       this.nameplate,
       el('div', { class: 'gk-hud__hp' }, [this.hpChip, this.hpFill, this.hpText]),
       el('div', { class: 'gk-hud__guard' }, [this.guardFill]),
@@ -229,6 +234,7 @@ export class HUD {
     this.lastUltPct = -1;
     this.lockTagOn = false;
     this.ultPreviewState = 'off';
+    this.lastTerrainTag = null;
   }
 
   /**
@@ -338,6 +344,20 @@ export class HUD {
     const low = player.alive && hpFrac < LOW_HP_FRAC;
     this.vignetteEl.classList.toggle('is-active', low);
     if (low) this.vignetteEl.style.setProperty('--low', String(1 - hpFrac / LOW_HP_FRAC));
+  }
+
+  /**
+   * v1.8 jungle: show the terrain chip for the local player (`text`, e.g. "Swimming · 62 % speed") or hide it (`null`). Only
+   * touches the DOM when the text changes; the chip is absolutely positioned above the vitals, so showing it shifts nothing.
+   */
+  setTerrainTag(text: string | null): void {
+    if (this.root === null || text === this.lastTerrainTag) return;
+    this.lastTerrainTag = text;
+    if (text !== null) {
+      this.terrainTagEl.textContent = text;
+      this.terrainTagEl.dataset.kind = text.startsWith('Swimming') ? 'water' : 'moss';
+    }
+    this.terrainTagEl.classList.toggle('is-on', text !== null);
   }
 
   /** v1.5 online: show the player's chosen name on the vitals plate instead of the animal name (`null` restores it). */

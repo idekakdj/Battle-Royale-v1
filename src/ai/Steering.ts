@@ -2,14 +2,15 @@
  * Steering (BLUEPRINT §10.3 executor half 1).
  *
  * Seek / flee / strafe-orbit plus obstacle avoidance via feeler probes against
- * the CONFIG obstacle layout (pillars, fallen columns, live crates from the
- * snapshot) and local avoidance of other fighters. Everything writes into a
+ * the ARENA's obstacle layout (round blockers = pillars/trees, low segments =
+ * fallen columns/logs, live crates from the snapshot) and local avoidance of other fighters. Everything writes into a
  * caller-owned {@link Move2} so hot paths allocate nothing.
  */
 
 import type { FighterState, TrapState, WorldSnapshot } from '../core/types';
-import { PILLARS, FALLEN_COLUMNS, WALL_RADIUS, CRATE_HALF, DAIS } from '../config/arena';
-import { ARENA } from '../config/balance';
+import { CRATE_HALF } from '../config/arena';
+import type { ArenaDef } from '../config/arenas';
+import { arenaGroundHeight } from '../config/arenas';
 import type { TrapAwareness } from '../config/botProfiles';
 
 export interface Move2 {
@@ -83,6 +84,7 @@ export function avoidObstacles(
   selfRadius: number,
   crates: WorldSnapshot['crates'],
   ignoreObstacles: boolean,
+  arena: ArenaDef,
 ): boolean {
   if (out.x === 0 && out.z === 0) return false;
 
@@ -91,9 +93,10 @@ export function avoidObstacles(
   let jumpable = false;
 
   if (!ignoreObstacles) {
-    // Pillars — closest approach of the probe segment to each circle.
-    for (let i = 0; i < PILLARS.length; i++) {
-      const p = PILLARS[i];
+    // Pillars / tree trunks — closest approach of the probe segment to each circle.
+    const pillars = arena.circles;
+    for (let i = 0; i < pillars.length; i++) {
+      const p = pillars[i];
       const relX = p.x - sx;
       const relZ = p.z - sz;
       let t = relX * out.x + relZ * out.z; // projection onto the unit dir
@@ -136,8 +139,9 @@ export function avoidObstacles(
 
     // Fallen columns (jumpable low walls) — distance from a forward sample
     // point to the wall segment.
-    for (let i = 0; i < FALLEN_COLUMNS.length; i++) {
-      const w = FALLEN_COLUMNS[i];
+    const columns = arena.segments;
+    for (let i = 0; i < columns.length; i++) {
+      const w = columns[i];
       const px = sx + out.x * 1.3;
       const pz = sz + out.z * 1.3;
       const ex = w.bx - w.ax;
@@ -167,8 +171,9 @@ export function avoidObstacles(
   const fx = sx + out.x * 1.6;
   const fz = sz + out.z * 1.6;
   const fr = Math.sqrt(fx * fx + fz * fz);
-  if (fr > WALL_RADIUS - 1.6 && fr > 1e-6) {
-    const pull = (fr - (WALL_RADIUS - 1.6)) * 0.9;
+  const wallR = arena.wallRadius;
+  if (fr > wallR - 1.6 && fr > 1e-6) {
+    const pull = (fr - (wallR - 1.6)) * 0.9;
     ax -= (fx / fr) * pull;
     az -= (fz / fr) * pull;
   }
@@ -188,9 +193,18 @@ const DETOUR_TIP_CLEAR = 1.2;
  * waypoint just past the column tip that gives the shorter way round.
  * Returns true when a detour was applied.
  */
-export function lowWallDetour(out: Move2, sx: number, sz: number, tx: number, tz: number, selfRadius: number): boolean {
-  for (let i = 0; i < FALLEN_COLUMNS.length; i++) {
-    const w = FALLEN_COLUMNS[i];
+export function lowWallDetour(
+  out: Move2,
+  sx: number,
+  sz: number,
+  tx: number,
+  tz: number,
+  selfRadius: number,
+  arena: ArenaDef,
+): boolean {
+  const columns = arena.segments;
+  for (let i = 0; i < columns.length; i++) {
+    const w = columns[i];
     const ex = w.bx - w.ax;
     const ez = w.bz - w.az;
     const len = Math.sqrt(ex * ex + ez * ez);
@@ -278,9 +292,9 @@ export function separation(
 
 // -- v1.2 arena traps ---------------------------------------------------------
 
-/** Ground height under (x,z) - mirrors the sim (dais top inside its radius). */
-export function groundY(x: number, z: number): number {
-  return Math.hypot(x - DAIS.x, z - DAIS.z) <= DAIS.radius ? ARENA.daisY : ARENA.groundY;
+/** Ground height under (x,z) - mirrors the sim (dais top inside its radius, when the arena has a dais). */
+export function groundY(x: number, z: number, arena: ArenaDef): number {
+  return arenaGroundHeight(arena, x, z);
 }
 
 /** Probe length (m) for bending around armed plates / active hazards ahead. */

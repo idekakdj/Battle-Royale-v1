@@ -16,7 +16,7 @@
  */
 
 import { EventBus } from '../../core/EventBus';
-import type { FighterIntent, GameEvent, RosterEntry, WorldSnapshot } from '../../core/types';
+import type { ArenaId, FighterIntent, GameEvent, RosterEntry, WorldSnapshot } from '../../core/types';
 import { ANIMALS } from '../../config/animals';
 import { World } from '../../sim/World';
 import { BotManager } from '../../ai/BotManager';
@@ -25,7 +25,7 @@ import type { GameChannel, OnlineStart } from '../types';
 import { BrNetHost, type BrHostClientStats, type BrNetHostOptions } from './BrNetHost';
 import { swapEventIds, swapIds } from './idSwap';
 import type { BrResults } from './miscCodec';
-import { buildNetRoster, controllerNames, controllerRoster, orderedSlots, slotLabel } from './netRoster';
+import { buildNetRoster, controllerNames, controllerRoster, netMatchConfig, orderedSlots, slotLabel, startArena } from './netRoster';
 
 export interface HostDriverOptions {
   start: OnlineStart;
@@ -51,6 +51,8 @@ export class HostSimDriver implements SimDriver {
   readonly kind = 'host' as const;
   readonly stepsSim = true;
   readonly pausable = false;
+  /** The host's map (v1.8): the controller builds the matching scene from it. */
+  readonly arena: ArenaId;
   readonly roster: readonly RosterEntry[];
   readonly names: readonly (string | null)[];
   readonly bus: EventBus;
@@ -93,9 +95,10 @@ export class HostSimDriver implements SimDriver {
       this.simBus.onAny((e) => outer.emit(swapEventIds(e, 0, me)));
       this.bus = outer;
     }
-    this.world = new World({ roster: simRoster, difficulty }, start.seed, this.simBus);
+    this.arena = startArena(start);
+    this.world = new World(netMatchConfig(start, simRoster, difficulty), start.seed, this.simBus);
     // BotManager MUST share the sim bus and exist before the first step.
-    this.bots = new BotManager(this.simBus, difficulty, start.seed);
+    this.bots = new BotManager(this.simBus, difficulty, start.seed, this.world.arena);
     this.simBus.onAny((e) => this.tickEvents.push(e));
     this.net = new BrNetHost({ channel, start, snapshotHz: opts.snapshotHz, now: opts.now, ...opts.hostOpts });
     this.unsubLeft = this.net.onPeerLeft((slot, reason) => {

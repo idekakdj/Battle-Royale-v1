@@ -38,6 +38,8 @@ export interface SheetCell {
   /** Look pitch (rad, + up) and yaw. */
   pitch?: number;
   yaw?: number;
+  /** v1.8: standing in the jungle pool (`FighterState.inWater`): the swim layer sinks the body, the eye drops. */
+  inWater?: boolean;
   /** Ultimate phase / stage (state.ultPhase / state.ultStage) for `a: 'ultimate'` cells. */
   ultPhase?: 'windup' | 'active' | 'recovery';
   ultStage?: number;
@@ -88,6 +90,8 @@ function poseCell(mc: MatchLike, c: SheetCell, u: number, aspect: number): void 
   const sp = c.speed ?? (c.a === 'run' ? 8 : 0);
   st.pos = { x: base.pos.x, y: c.y ?? 0, z: base.pos.z };
   st.airborne = c.airborne === true;
+  if (c.inWater === true) st.inWater = true;
+  else delete st.inWater;
   st.yaw = yaw;
   rig.root.rotation.y = yaw;
   cr.yaw = yaw;
@@ -312,6 +316,16 @@ export function defaultPoses(animal: AnimalId): PoseSpec[] {
       ult('recovery2', 'recovery', 2, {}),
     );
   }
+  // v1.8 swimming: the same clear-view rules must hold in the pool (eye lowered with the sink, paddle / attack-swim poses).
+  L.push(
+    { name: 'idle-water', a: 'idle', inWater: true },
+    { name: 'run-water', a: 'run', speed: 3.5, inWater: true },
+    { name: 'attack1-water', a: 'attack1', inWater: true, us: [0.1, 0.25, 0.4, 0.55, 0.7, 0.9] },
+    { name: 'attack2-water', a: 'attack2', inWater: true, us: [0.1, 0.25, 0.4, 0.55, 0.7, 0.9] },
+    { name: 'attack3-water', a: 'attack3', inWater: true, us: [0.1, 0.25, 0.4, 0.55, 0.7, 0.9] },
+    { name: 'block-water', a: 'block', inWater: true },
+    { name: 'look-down-water', a: 'idle', inWater: true, pitch: -0.5 },
+  );
   if (animal === 'eagle') {
     L.push(
       { name: 'glide', a: 'glide', airborne: true, y: 5, vy: 0, speed: 9 },

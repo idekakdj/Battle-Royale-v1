@@ -10,7 +10,6 @@ import { DAMAGE, GUARD, REACT, COMBO, ULT, MOVE } from '../config/balance';
 import { SHOVE_RANGE, SHOVE_ARC_DEG } from './simTuning';
 import { clamp01 } from '../core/math';
 import { isBehind, inFrontArc, meleeArcHit, coneHit, circleHit, sectorCircleOverlap } from './hitbox';
-import { CRATE_HALF } from '../config/arena';
 import {
   hasBuff,
   addBuff,
@@ -376,7 +375,7 @@ function resolveSwingHit(sim: Sim, f: Fighter): void {
   for (let i = 0; i < sim.crates.length; i++) {
     const c = sim.crates[i];
     if (!c.alive) continue;
-    if (sectorCircleOverlap(f.x, f.state.pos.z, f.state.yaw, hitRange, hitArc, c.x, c.z, CRATE_HALF)) sim.damageCrate(c, base);
+    if (sectorCircleOverlap(f.x, f.state.pos.z, f.state.yaw, hitRange, hitArc, c.x, c.z, c.halfX)) sim.damageCrate(c, base);
   }
 
   // Ult charge on landed basics only (§7.2), halved when only chip/blocked.

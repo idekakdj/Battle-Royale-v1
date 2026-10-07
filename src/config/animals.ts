@@ -289,6 +289,13 @@ export interface AnimalDef {
   guardMax: number;
   /** Approximate DPS (reference only). */
   approxDps: number;
+  /**
+   * v1.8 swim aptitude, 0..1 (see config/terrain.ts `waterSpeedMultiplier`): 1 = a fully aquatic ambush predator that is
+   * as fast in the water as on land, 0 = a land animal that can only wade. While wading/swimming in the Jungle pool the
+   * animal's ORDINARY run speed is scaled by `0.30 + 0.70 × swim` (so crocodile ≈ 0.95 … giraffe ≈ 0.32 of its own land
+   * speed); abilities and ultimates keep their own speeds. Each animal carries a one-line real-life justification.
+   */
+  swim: number;
 
   // Presentation / metadata.
   statPips: StatPips;
@@ -341,6 +348,8 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     blockReduction: 0.6,
     guardMax: 100,
     approxDps: 110,
+    // swim: Lions can swim and do cross rivers when they must, but avoid water and are clumsy paddlers; mid-low (stat pips: spd 4 on land only).
+    swim: 0.29,
     statPips: { hp: 3, atk: 4, def: 3, spd: 4, rng: 3 },
     difficultyTag: 'Easy',
     finisher: {
@@ -378,6 +387,8 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     blockReduction: 0.7,
     guardMax: 130,
     approxDps: 113,
+    // swim: Gorillas cannot swim and fear deep water; they wade upright, knuckling and balancing with their arms, so the pool is a heavy drag.
+    swim: 0.08,
     statPips: { hp: 4, atk: 4, def: 4, spd: 3, rng: 2 },
     difficultyTag: 'Medium',
     finisher: {
@@ -418,6 +429,8 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     blockReduction: 0.75,
     guardMax: 140,
     approxDps: 114,
+    // swim: The apex aquatic ambusher: tail-sculling bursts of 25+ km/h, as quick in the water as on land (the game's lunge-from-the-water fantasy).
+    swim: 0.93,
     statPips: { hp: 5, atk: 4, def: 4, spd: 3, rng: 2 },
     difficultyTag: 'Medium',
     finisher: {
@@ -454,6 +467,8 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     blockReduction: 0.85,
     guardMax: 180,
     approxDps: 102,
+    // swim: Semi-aquatic: spends most of the day submerged and walks/bounds along the bottom at a good clip, at home in water but not a true swimmer.
+    swim: 0.80,
     statPips: { hp: 5, atk: 4, def: 5, spd: 2, rng: 2 },
     difficultyTag: 'Easy',
     finisher: {},
@@ -487,6 +502,8 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     blockReduction: 0.7,
     guardMax: 130,
     approxDps: 96,
+    // swim: Rhinos do swim across rivers, but a ~2 t, short-legged plodder wades slowly and heavily; low.
+    swim: 0.14,
     statPips: { hp: 5, atk: 3, def: 5, spd: 2, rng: 2 },
     difficultyTag: 'Easy',
     finisher: {
@@ -528,6 +545,8 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     blockReduction: 0.45,
     guardMax: 80,
     approxDps: 122,
+    // swim: On foot an eagle is a clumsy hopper; it can row itself across water with its wings in an emergency but is not built for it (it can simply fly out).
+    swim: 0.21,
     statPips: { hp: 1, atk: 5, def: 1, spd: 5, rng: 2 },
     difficultyTag: 'Hard',
     finisher: {
@@ -585,6 +604,8 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     blockReduction: 0.5,
     guardMax: 90,
     approxDps: 125,
+    // swim: Leopards (the panther's species) are decent, willing swimmers that cross rivers and hunt fish; the best of the big cats here, still a cat.
+    swim: 0.43,
     statPips: { hp: 2, atk: 5, def: 2, spd: 5, rng: 2 },
     difficultyTag: 'Hard',
     finisher: {},
@@ -621,6 +642,8 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     blockReduction: 0.55,
     guardMax: 100,
     approxDps: 102,
+    // swim: Pythons are strong, natural swimmers (they cross channels and ambush at the water's edge); their S-undulation works as well in water as on land.
+    swim: 0.65,
     statPips: { hp: 2, atk: 4, def: 3, spd: 3, rng: 4 },
     difficultyTag: 'Medium',
     finisher: {},
@@ -656,6 +679,8 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     blockReduction: 0.55,
     guardMax: 110,
     approxDps: 77,
+    // swim: Giraffes essentially cannot swim (long legs, a top-heavy body and no buoyancy); in 0.55 m of water it simply stilts through, the slowest in the pool.
+    swim: 0.03,
     statPips: { hp: 3, atk: 3, def: 3, spd: 3, rng: 5 },
     difficultyTag: 'Medium',
     finisher: {
@@ -692,6 +717,8 @@ export const ANIMALS: Record<AnimalId, AnimalDef> = {
     blockReduction: 0.5,
     guardMax: 95,
     approxDps: 104,
+    // swim: Moles (the star-nosed kind especially) are surprisingly capable swimmers, though tiny and built to tunnel; a small, steady paddle.
+    swim: 0.36,
     statPips: { hp: 2, atk: 3, def: 2, spd: 4, rng: 1 },
     difficultyTag: 'Hard',
     finisher: {

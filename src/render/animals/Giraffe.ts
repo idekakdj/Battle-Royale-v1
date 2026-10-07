@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, IMPACT } from './Animator';
+import { SWIM_BOB_W } from './swim';
 import { GIRAFFE_CH, GIRAFFE_IMPACT_T, TC, sampleGiraffeUlt } from './ultPose/giraffe';
 import {
   makeMat,
@@ -261,6 +262,21 @@ export class GiraffeRig extends BaseRig {
       for (let i = 0; i < 4; i++) this.legs[i].rx += Math.sin(this.gaitPhase + GAIT_OFF[i]) * 0.5 * k;
       this.body.py += Math.sin(this.gaitPhase * 2) * 0.03 * k;
     }
+  }
+
+  /** Stilting (v1.8): high steps through the shallows, the long neck held up and pumping, the body barely wet. */
+  protected override poseSwim(speed: number, t: number, mv: number): void {
+    super.poseSwim(speed, t, mv);
+    const ph = this.swimPhase;
+    const amp = this.swim.legAmp * (this.swim.tread + (1 - this.swim.tread) * mv);
+    for (let i = 0; i < 4; i++) {
+      const sn = Math.sin(ph + GAIT_OFF[i]);
+      this.legs[i].rx = this.swim.tuck + (sn > 0 ? sn * 1.15 : sn * 0.5) * amp; // knees come up high, then reach back
+    }
+    this.body.py = Math.sin(t * SWIM_BOB_W) * this.swim.bob + Math.abs(Math.sin(ph)) * 0.05 * mv;
+    this.neck1.rx = -0.04 + Math.sin(ph * 2) * 0.05 * mv;
+    this.neck2.rx = Math.sin(ph * 2 + 0.6) * 0.05 * mv;
+    this.head.rx = -0.1;
   }
 
   protected poseBlock(t: number): void {

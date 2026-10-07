@@ -4,7 +4,9 @@
  */
 
 import { ANIMALS, ANIMAL_IDS } from '../../config/animals';
-import type { AnimalId } from '../../core/types';
+import type { AnimalId, ArenaId } from '../../core/types';
+import { ARENA_IDS } from '../../core/types';
+import { getArena } from '../../config/arenas';
 import { STAGES } from '../../brawl/data';
 import { STAGE_IDS, type StageId } from '../../brawl/types';
 import { stageCards, type StageBadge } from '../../brawl/ui/stageThumb';
@@ -19,7 +21,7 @@ export const MODE_LABEL: Record<OnlineMode, string> = {
 
 export const MODE_BLURB: Record<OnlineMode, string> = {
   championsLeague: 'Platform fighter. 2–4 players, no bots. Knock rivals off the stage.',
-  battleRoyale: 'Colosseum free-for-all. 2–4 players, bots fill the arena up to 10 fighters.',
+  battleRoyale: 'Free-for-all in the colosseum or the jungle. 2–4 players, bots fill the arena up to 10 fighters.',
 };
 
 /** The rule line shown under the roster. */
@@ -38,6 +40,21 @@ export interface StagePickVM {
 
 export function stagePickerItems(selected: StageId): StagePickVM[] {
   return stageCards(STAGE_IDS, STAGES).map((c) => ({ id: c.id, name: c.name, selected: c.id === selected, badges: c.badges }));
+}
+
+/** One card of the Battle Royale map picker in the room (every arena of `ARENA_IDS`, in order; copy straight from the `ArenaDef`). */
+export interface MapPickVM {
+  id: ArenaId;
+  name: string;
+  blurb: string;
+  selected: boolean;
+}
+
+export function mapPickerItems(selected: ArenaId): MapPickVM[] {
+  return ARENA_IDS.map((id) => {
+    const a = getArena(id);
+    return { id, name: a.name, blurb: a.blurb, selected: id === selected };
+  });
 }
 
 export interface PlayerCardVM {
@@ -215,5 +232,5 @@ export function buildRoomView(state: RoomState): RoomVM {
 export function settingsKey(state: RoomState): string {
   const s = state.settings;
   const bots = state.slots.filter((x) => x.kind === 'bot').length;
-  return [state.role, state.mode, state.phase === 'lobby' ? 'L' : 'X', s.br.botLevel, s.br.fillBots ? 1 : 0, s.cl.stage, s.cl.stocks, s.cl.timeLimitS, bots, state.botFill, state.slots.filter((x) => x.kind === 'human').length].join('|');
+  return [state.role, state.mode, state.phase === 'lobby' ? 'L' : 'X', s.br.botLevel, s.br.fillBots ? 1 : 0, s.br.arena, s.cl.stage, s.cl.stocks, s.cl.timeLimitS, bots, state.botFill, state.slots.filter((x) => x.kind === 'human').length].join('|');
 }

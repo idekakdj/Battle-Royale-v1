@@ -27,6 +27,11 @@
  *  - kill feed `cause: 'trap'` for environment deaths (`killerId === -1`);
  *  - `hud.pickupToast(kind)` for the player's own pickups.
  *
+ * v1.8 jungle (WP-J5): the match's MAP (`opts.arena`, or the online driver's `sim.arena`) builds the matching scenery through
+ * `createArenaScene` (render/arenaScene.ts; the colosseum stays the unchanged `Stadium`), the `splash` event feeds the water FX, a
+ * HUD chip shows the local player's terrain speed ("Swimming · 62 % speed" / "Mossy ground · 65 % speed"), and the QA shortcut
+ * (`?br=1&…`) exposes `window.__gkBr = { world, controller }` with a manual `tick` / `renderFrame`.
+ *
  * WP-T (v1.3) additions (ultimate targeting UI + render/audio infra):
  *  - `UltIndicators` (pooled ring / ribbon / reticle / arc / zone) + the
  *    `UltFxDispatcher` that routes `ultimateTarget` / `ultimateStage` / `blink` /
@@ -49,6 +54,7 @@ import type { EventBus } from '../core/EventBus';
 import { wrapAngle, clamp } from '../core/math';
 import type {
   AnimalId,
+  ArenaId,
   Difficulty,
   FighterAction,
   FighterIntent,
@@ -61,7 +67,9 @@ import type {
 } from '../core/types';
 import { ANIMALS } from '../config/animals';
 import { SceneManager } from '../render/SceneManager';
-import { Stadium } from '../render/Stadium';
+import { createArenaScene, type ArenaScene } from '../render/arenaScene';
+import { getArena } from '../config/arenas';
+import { terrainTagText } from '../ui/terrainTag';
 import { CameraRig } from '../render/CameraRig';
 import { Effects } from '../render/Effects';
 import { TrapRenderer } from '../render/traps/TrapRenderer';
@@ -150,6 +158,10 @@ export interface MatchControllerOptions {
   animal: AnimalId;
   difficulty: Difficulty;
   seed: number;
+  /** v1.8: the Battle Royale map (absent = 'colosseum'). Online, the driver's `arena` wins. */
+  arena?: ArenaId;
+  /** v1.8 QA shortcut (`?br=1&qa=1`): expose `window.__gkBr` in production builds too (dev builds always do). */
+  qa?: boolean;
   /** Fired once, ~2.5 s after matchEnd, with the assembled results. */
   onMatchEnd: (results: MatchResults) => void;
   /** Pause menu → QUIT TO LOBBY. */
@@ -170,7 +182,11 @@ export class MatchController implements Screen {
   /** Display name per fighter id (`null` = animal name). All null offline. */
   private names: readonly (string | null)[] = [];
   private sceneManager!: SceneManager;
-  private stadium!: Stadium;
+  private stadium!: ArenaScene;
+  /** The map this match is played on (drives the scene, the HUD terrain chip and the results). */
+  private arenaId: ArenaId = 'colosseum';
+  /** QA only (`window.__gkBr.controller.qaIntent = {moveX: 1}`): fields merged over the player's real input each sim tick. */
+  qaIntent: Partial<FighterIntent> | null = null;
   private cameraRig!: CameraRig;
   private effects!: Effects;
   private fpFade!: NearCameraFade; // v1.3 WP-Q: own effects fade out around the first-person camera
@@ -277,7 +293,8 @@ export class MatchController implements Screen {
     // shuffle (fresh neighbours every match / REMATCH). Online, the driver
     // supplies the fixed room roster with the local player remapped to id 0.
     // One shared bus: sim emits; AI, audio, and the pipes below subscribe.
-    this.sim = this.opts.sim ?? new LocalSimDriver({ animal, difficulty, seed });
+    this.sim = this.opts.sim ?? new LocalSimDriver({ animal, difficulty, seed, arena: this.opts.arena });
+    this.arenaId = this.sim.arena ?? this.opts.arena ?? 'colosseum';
     const roster = this.sim.roster;
     this.rosterAnimals = roster.map((r) => r.animal);
     this.names = this.sim.names;
@@ -289,8 +306,8 @@ export class MatchController implements Screen {
     this.rigSensitivity = settings.sensitivity;
     this.sensitivity = settings.sensitivity;
     this.sceneManager = new SceneManager(canvas);
-    this.stadium = new Stadium();
-    this.sceneManager.scene.add(this.stadium.root);
+    // v1.8: styles the light rig / fog / sky for the arena, builds its scenery (colosseum = the unchanged Stadium) and adds it.
+    this.stadium = createArenaScene(this.sceneManager, getArena(this.arenaId));
     const fxBefore = new Set(this.sceneManager.scene.children); // v1.3 WP-Q
     this.effects = new Effects(this.sceneManager.scene);
     this.fpFade = new NearCameraFade(this.sceneManager.scene, fxBefore);
@@ -404,9 +421,11 @@ export class MatchController implements Screen {
       render: (alpha, dtRender) => this.render(alpha, dtRender),
     });
     this.loop.start();
+    this.installQaHook();
   }
 
   unmount(): void {
+    this.removeQaHook();
     this.loop.stop();
     this.input.disable();
     this.input.detach();
@@ -444,6 +463,7 @@ export class MatchController implements Screen {
     // Player intent (camera-relative). While dead, the consumed attack edge
     // (or Tab) cycles the spectate target instead of driving the corpse.
     const intent = this.input.getIntent(this.cameraRig.yaw);
+    if (this.qaIntent !== null) Object.assign(intent, this.qaIntent);
     const lockToggle = this.input.consumeLockToggle();
     const lockCycle = this.input.consumeLockCycle();
     // v1.3 WP-Q: V toggles first/third person (ignored while dead / spectating).
@@ -751,6 +771,7 @@ export class MatchController implements Screen {
       performance.now(),
     );
     this.hud.update(this.snap, 0);
+    this.hud.setTerrainTag(this.playerDead ? null : terrainTagText(this.snap.fighters[0], this.arenaId));
     this.updateUltHud();
     this.syncPickups();
 
@@ -1028,6 +1049,9 @@ export class MatchController implements Screen {
     bus.on('pickup', (e) => {
       if (e.fighterId === 0) this.hud.pickupToast(e.kind);
     });
+
+    // v1.8 jungle: a fighter crossed the pool's waterline → splash rings + droplets (the audio engine hears it through the same bus).
+    bus.on('splash', (e) => this.effects.handleSplashEvent(e));
   }
 
   /** Fighter the camera follows: the player, or the spectated bot once dead. */
@@ -1296,6 +1320,43 @@ export class MatchController implements Screen {
       ultsUsed: p.ultsUsed,
       matchTimeS: Math.max(0, s.time),
       difficulty: this.opts.difficulty,
+      arena: this.arenaId,
     };
+  }
+
+  // ── v1.8 QA hook (`?br=1&qa=1` or a dev build): window.__gkBr = { world, controller } ─────────────────────────────
+
+  /**
+   * QA: advance exactly one fixed sim step (default 1/60 s) — the same code the loop runs. With the loop frozen
+   * (`window.requestAnimationFrame = () => 0`) `tick` + {@link renderFrame} step the match by hand.
+   */
+  tick(dt: number = FIXED_DT): void {
+    this.step(dt);
+  }
+
+  /** QA: draw one frame at interpolation `alpha` (default 1 = the latest sim state). */
+  renderFrame(alpha = 1, dtRender: number = FIXED_DT): void {
+    this.render(alpha, dtRender);
+  }
+
+  /** The latest simulation snapshot (QA / tests). */
+  get snapshot(): WorldSnapshot {
+    return this.snap;
+  }
+
+  private installQaHook(): void {
+    if (typeof window === 'undefined') return;
+    if (!(import.meta.env.DEV || this.opts.qa === true)) return;
+    (window as unknown as { __gkBr?: unknown }).__gkBr = {
+      world: (this.sim as unknown as { world?: unknown }).world ?? null,
+      sim: this.sim,
+      controller: this,
+    };
+  }
+
+  private removeQaHook(): void {
+    if (typeof window === 'undefined') return;
+    const w = window as unknown as { __gkBr?: { controller?: unknown } };
+    if (w.__gkBr?.controller === this) delete w.__gkBr;
   }
 }

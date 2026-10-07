@@ -240,7 +240,7 @@ export function emitUltimateTarget(
     kind: target.kind,
     targetId: target.targetId,
     from: { x: target.from.x, y: target.from.y, z: target.from.z },
-    to: { x: tx, y: to !== undefined ? groundHeightAt(tx, tz) : target.to.y, z: tz },
+    to: { x: tx, y: to !== undefined ? groundHeightAt(tx, tz, sim.arena) : target.to.y, z: tz },
     range: target.range,
     width: target.width,
     windup,
@@ -279,12 +279,12 @@ export function emitUltimateStage(sim: Sim, f: Fighter, rt: AbilityRuntime, stag
 export function blink(sim: Sim, f: Fighter, x: number, z: number, opts?: { yaw?: number }): void {
   const s = f.state;
   const from: Vec3 = { x: s.pos.x, y: s.pos.y, z: s.pos.z };
-  const alt = Math.max(0, s.pos.y - groundHeightAt(s.pos.x, s.pos.z));
+  const alt = Math.max(0, s.pos.y - groundHeightAt(s.pos.x, s.pos.z, sim.arena));
   s.pos.x = x;
   s.pos.z = z;
   resolveObstacles(sim, f, false);
   clampToWall(f);
-  s.pos.y = groundHeightAt(s.pos.x, s.pos.z) + alt;
+  s.pos.y = groundHeightAt(s.pos.x, s.pos.z, sim.arena) + alt;
   s.vel.x = 0;
   s.vel.z = 0;
   f.knockVX = 0;

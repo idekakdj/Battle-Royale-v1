@@ -6,7 +6,7 @@
  *  2. If `?demo=<name>` is present, load demo-registration modules and run the
  *     matching demo, then stop (BLUEPRINT §14 demo-flag convention).
  *  3. Otherwise run the real game flow:
- *     Lobby → ModeSelect → (Battle Royale) CharacterSelect → DifficultySelect → Match → Results, with
+ *     Lobby → ModeSelect → (Battle Royale) CharacterSelect → DifficultySelect (difficulty + map) → Match → Results, with
  *     REMATCH (same settings, fresh seed) / CHANGE GLADIATOR / LOBBY loops; or
  *     Lobby → ModeSelect → (Champions League) fighter/stage setup → Match → Results (lazily loaded).
  *     Back chain: DifficultySelect → CharacterSelect / BrawlSetup → ModeSelect → Lobby.
@@ -17,7 +17,7 @@
 
 import { ScreenManager } from './core/ScreenManager';
 import { getDemo, demoNames } from './core/demos';
-import type { AnimalId, Difficulty } from './core/types';
+import type { AnimalId, ArenaId, Difficulty } from './core/types';
 import { AudioEngine } from './audio/AudioEngine';
 import { createPreview } from './render/preview';
 import {
@@ -31,10 +31,12 @@ import {
   setPreviewFactory,
   loadAnimal,
   loadDifficulty,
+  loadArena,
   loadMode,
   loadBrawlSetup,
 } from './ui';
 import { MatchController } from './match/MatchController';
+import { parseBrParams } from './match/brParams';
 import { mountFpsCounter } from './ui/FpsCounter';
 // v1.4 Champions League: the whole mode is loaded lazily (`await import('./brawl')`); only types are imported here.
 import type { BrawlSetupChoice } from './brawl/ui/setup';
@@ -128,13 +130,20 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearch
     screens.transition(
       new DifficultySelect({
         initialDifficulty: loadDifficulty(),
-        onStart: (difficulty) => startMatch(animal, difficulty),
+        initialArena: loadArena(),
+        onStart: (difficulty, arena) => startMatch(animal, difficulty, arena),
         onBack: () => showCharacterSelect(),
       }),
     );
   };
 
-  const startMatch = (animal: AnimalId, difficulty: Difficulty): void => {
+  const startMatch = (
+    animal: AnimalId,
+    difficulty: Difficulty,
+    arena: ArenaId = 'colosseum',
+    seed: number = Date.now(),
+    qa = false,
+  ): void => {
     audio.stopMusic();
     screens.transition(
       new MatchController({
@@ -142,7 +151,9 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearch
         audio,
         animal,
         difficulty,
-        seed: Date.now(),
+        arena,
+        seed,
+        qa,
         onMatchEnd: (results) => showResults(results),
         onQuitToLobby: () => showLobby(),
       }),
@@ -154,8 +165,8 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearch
     screens.transition(
       new Results({
         results,
-        // REMATCH: same animal + difficulty, fresh seed inside startMatch.
-        onRematch: () => startMatch(results.animal, results.difficulty),
+        // REMATCH: same animal + difficulty + map, fresh seed inside startMatch.
+        onRematch: () => startMatch(results.animal, results.difficulty, results.arena ?? 'colosseum'),
         onChangeGladiator: () => showCharacterSelect(),
         onLobby: () => showLobby(),
       }),
@@ -249,6 +260,14 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearch
   const shortcut = parseBrawlParams(params, loadBrawlSetup());
   if (shortcut !== null) {
     void startBrawl(shortcut);
+    return;
+  }
+
+  // QA / power-user shortcut: `?br=1&arena=jungle&animal=croc&level=3[&seed=7]&qa=1` boots straight into a local Battle Royale
+  // match on that map (`&qa=1` also exposes `window.__gkBr = { world, controller }` in production builds).
+  const brShortcut = parseBrParams(params, { animal: loadAnimal(), difficulty: loadDifficulty() });
+  if (brShortcut !== null) {
+    startMatch(brShortcut.animal, brShortcut.difficulty, brShortcut.arena, brShortcut.seed ?? Date.now(), brShortcut.qa);
     return;
   }
 

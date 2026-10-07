@@ -8,6 +8,7 @@
  *   statics  (KEYFRAME only, every ~2 s and for any client that asks) per fighter animal/isPlayer/maxHp/maxGuard,
  *            per pickup/crate/trap id + position (+ trap kind/radius)
  *   fighters per fighter: u8 flags · u8 action · i16 x · i16 z · u16 yaw · [y] [vel] · hp · guard · ult · varu optMask · optional groups
+ *            (flags bit 7 = `inWater`, optMask bit 12 = `onMoss`: the v1.8 jungle terrain flags, absent/0 costs nothing)
  *   pickups  u8 kind|active · [respawnT]
  *   crates   u16 (hp×4 | alive<<15)
  *   traps    u8 phase|hasTime · u8 triggeredBy+1 · [timeLeft]
@@ -70,6 +71,7 @@ const F_HAS_Y = 4;
 const F_HAS_VEL = 8;
 const F_HAS_VY = 16;
 // bits 5..6: comboIndex
+const F_IN_WATER = 128; // v1.8 terrain flag (FighterState.inWater)
 
 // ── Fighter optional-group bits (varu) ───────────────────────────────────────
 const O_SPECIAL_CD = 1 << 0;
@@ -84,7 +86,8 @@ const O_BURROW = 1 << 8;
 const O_ULT_PHASE = 1 << 9;
 const O_ULT_STAGE = 1 << 10;
 const O_ULT_TARGET = 1 << 11;
-const O_KNOWN = (1 << 12) - 1;
+const O_ON_MOSS = 1 << 12; // v1.8 terrain flag (FighterState.onMoss); a flag only, no payload
+const O_KNOWN = (1 << 13) - 1;
 
 const MAX_FIGHTERS = 64;
 const MAX_BUFFS = 32;
@@ -237,6 +240,7 @@ function writeFighter(w: ByteWriter, f: FighterState, explicitId: boolean): void
   if (hasVel) b0 |= F_HAS_VEL;
   if (qvy !== 0) b0 |= F_HAS_VY;
   b0 |= (f.comboIndex & 3) << 5;
+  if (f.inWater === true) b0 |= F_IN_WATER;
   w.u8(b0);
   w.u8(encEnum(ACTION_TABLE, f.action));
   w.i16(qI16(f.pos.x, Q.POS)).i16(qI16(f.pos.z, Q.POS));
@@ -268,6 +272,7 @@ function writeFighter(w: ByteWriter, f: FighterState, explicitId: boolean): void
   if (f.ultPhase !== undefined) opt |= O_ULT_PHASE;
   if (f.ultStage !== undefined) opt |= O_ULT_STAGE;
   if (f.ultTargetId !== undefined) opt |= O_ULT_TARGET;
+  if (f.onMoss === true) opt |= O_ON_MOSS;
   w.varu(opt);
   if (opt & O_SPECIAL_CD) w.u16(qCd);
   if (opt & O_ACTION_CLOCK) w.u16(qAT).u16(qAD);
@@ -481,7 +486,6 @@ function readStatics(r: ByteReader, nF: number, nP: number, nC: number, nT: numb
 function readFighter(r: ByteReader, st: SnapshotStatics['fighters'][number], index: number, explicitId: boolean): FighterState {
   const id = explicitId ? r.varu() : index;
   const b0 = r.u8();
-  if ((b0 & 128) !== 0) throw new RangeError('bad fighter byte');
   const action = decEnum(ACTION_TABLE, r.u8());
   const x = r.i16() / Q.POS;
   const z = r.i16() / Q.POS;
@@ -533,6 +537,8 @@ function readFighter(r: ByteReader, st: SnapshotStatics['fighters'][number], ind
     burrowT: 0,
   };
   if (s.comboIndex > 2) throw new RangeError('bad combo index');
+  if ((b0 & F_IN_WATER) !== 0) s.inWater = true;
+  if (opt & O_ON_MOSS) s.onMoss = true;
   if (opt & O_SPECIAL_CD) s.specialCd = r.u16() / (Q.TIME / 10);
   if (opt & O_ACTION_CLOCK) {
     s.actionT = r.u16() / Q.TIME;

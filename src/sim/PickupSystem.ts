@@ -9,7 +9,8 @@ import type { PickupState } from '../core/types';
 import type { Fighter, Sim } from './Fighter';
 import type { Rng } from '../core/math';
 import { PICKUPS } from '../config/balance';
-import { PICKUP_PADS } from '../config/arena';
+import type { ArenaDef } from '../config/arenas';
+import { COLOSSEUM_ARENA } from '../config/arenas';
 import { addBuff } from './StatusEffects';
 import { withinGroundReach } from './hitbox';
 
@@ -20,9 +21,9 @@ function chooseKind(rng: Rng): PickupState['kind'] {
   return 'rage';
 }
 
-/** Build the 6 pad pickups, each with an initial randomly-weighted kind. */
-export function createPickups(rng: Rng): PickupState[] {
-  return PICKUP_PADS.map((p) => ({
+/** Build one pickup per pad of `arena` (default the colosseum), each with an initial randomly-weighted kind. */
+export function createPickups(rng: Rng, arena: ArenaDef = COLOSSEUM_ARENA): PickupState[] {
+  return arena.pickupPads.map((p) => ({
     id: p.id,
     kind: chooseKind(rng),
     pos: { x: p.x, y: 0, z: p.z },

@@ -137,7 +137,7 @@ export const gorillaUltimate: UltimateImpl = {
     st.emitT -= dt;
     if (st.emitT <= 0) {
       st.emitT += K.trackEmitS;
-      emitUltimateStage(sim, f, rt, 0, { x: st.tx, y: groundHeightAt(st.tx, st.tz), z: st.tz });
+      emitUltimateStage(sim, f, rt, 0, { x: st.tx, y: groundHeightAt(st.tx, st.tz, sim.arena), z: st.tz });
     }
   },
 
@@ -161,7 +161,7 @@ export const gorillaUltimate: UltimateImpl = {
     const dz = st.tz - z0;
     const dist = Math.max(1, Math.hypot(dx, dz));
     const flight = Math.max(K.minFlightS, dist / K.speed);
-    const yt = groundHeightAt(st.tx, st.tz) + K.aimHeight;
+    const yt = groundHeightAt(st.tx, st.tz, sim.arena) + K.aimHeight;
     const vy = (yt - y0 + 0.5 * K.gravity * flight * flight) / flight;
     const ownerId = f.id;
     spawnProjectile(sim, {
@@ -177,7 +177,7 @@ export const gorillaUltimate: UltimateImpl = {
       onImpact: (sm, p, hit) => land(sm, f, rt, p, hit),
     });
 
-    emitUltimateStage(sim, f, rt, 1, { x: st.tx, y: groundHeightAt(st.tx, st.tz), z: st.tz });
+    emitUltimateStage(sim, f, rt, 1, { x: st.tx, y: groundHeightAt(st.tx, st.tz, sim.arena), z: st.tz });
     f.ccImmuneChannel = false; // the recovery can be punished
     toRecovery(rt);
   },
@@ -218,7 +218,7 @@ function land(sim: Sim, f: Fighter, rt: AbilityRuntime, _p: ProjectileRuntime, h
       shape: 'circle',
       cx,
       cz,
-      cy: groundHeightAt(cx, cz),
+      cy: groundHeightAt(cx, cz, sim.arena),
       yaw: f.state.yaw,
       range: K.impactRadius,
       arcDeg: 360,

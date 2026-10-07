@@ -9,7 +9,7 @@
  */
 
 import type { Screen } from '../core/ScreenManager';
-import type { AnimalId, Difficulty } from '../core/types';
+import type { AnimalId, ArenaId, Difficulty } from '../core/types';
 import { el, button } from './dom';
 import { animalHeadSvg, laurelSvg } from './icons';
 import { ANIMALS } from '../config/animals';
@@ -43,6 +43,8 @@ export interface MatchResults {
   /** Match duration in seconds of sim time. */
   matchTimeS: number;
   difficulty: Difficulty;
+  /** v1.8: the map the match was played on (absent = colosseum). REMATCH keeps it. */
+  arena?: ArenaId;
   /** v1.5 online: the whole room's final standings (shown as a table under the stats). */
   standings?: ResultsStanding[];
 }

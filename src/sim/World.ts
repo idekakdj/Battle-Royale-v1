@@ -23,8 +23,8 @@ import { EventBus } from '../core/EventBus';
 import { mulberry32, dirToYaw, type Rng } from '../core/math';
 import { ANIMALS } from '../config/animals';
 import { MATCH, BLOODLUST, ULT } from '../config/balance';
-import { PILLARS, FALLEN_COLUMNS, CRATES } from '../config/arena';
 import type { Obstacle } from '../config/arena';
+import { getArena, spawnPositions, staticObstaclesOf, type ArenaDef } from '../config/arenas';
 import { Fighter, type Sim, type CrateRuntime } from './Fighter';
 import { groundHeightAt, locomote, resolveFighterCollisions, cancelFlight } from './MovementSystem';
 import { flightLocked, landingSlam } from './soar';
@@ -35,10 +35,9 @@ import { createPickups, updatePickups } from './PickupSystem';
 import { placeTraps, updateTraps, snapshotTraps, type TrapRuntime } from './TrapSystem';
 import { ProjectileSystem } from './projectiles';
 import { GroundZoneSystem } from './groundZones'; // v1.3 hippo mud
+import { TerrainSystem, specialBlockedByTerrain } from './TerrainSystem'; // v1.8 moss + shallow pool
 import { abortUlt } from './ultimates';
 import { fillUltSnapshot } from './ultimates/common';
-
-const STATIC_OBSTACLES: readonly Obstacle[] = [...PILLARS, ...FALLEN_COLUMNS];
 
 /** Optional World construction flags (not part of the §5.1 contract). */
 export interface WorldOptions {
@@ -52,7 +51,10 @@ export interface WorldOptions {
 export class World implements Sim {
   readonly fighters: Fighter[] = [];
   readonly crates: CrateRuntime[];
-  readonly staticObstacles: readonly Obstacle[] = STATIC_OBSTACLES;
+  /** v1.8: the arena being played (`cfg.arena`, default the colosseum). Every sim module reads geometry from here. */
+  readonly arena: ArenaDef;
+  /** The arena's static colliders (round blockers + segments); live crates are in {@link crates}. */
+  readonly staticObstacles: readonly Obstacle[];
   readonly bus: EventBus;
   readonly rng: Rng;
 
@@ -67,6 +69,8 @@ export class World implements Sim {
   readonly projectiles = new ProjectileSystem();
   /** v1.3 hippo mud: persistent ground zones (Riverlord's Flood pools). */
   readonly groundZones = new GroundZoneSystem();
+  /** v1.8 terrain (moss patches + the shallow pool of the arena's `terrain` zones); a no-op on the colosseum. */
+  readonly terrain: TerrainSystem;
   private deaths = 0;
   matchOver = false;
   private winnerId = -1;
@@ -74,23 +78,22 @@ export class World implements Sim {
   constructor(cfg: MatchConfig, seed: number, bus: EventBus, opts: WorldOptions = {}) {
     this.bus = bus;
     this.rng = mulberry32(seed);
+    this.arena = getArena(cfg.arena);
+    this.staticObstacles = staticObstaclesOf(this.arena);
+    this.terrain = new TerrainSystem(this.arena);
 
     const n = cfg.roster.length;
-    const stepDeg = n > 0 ? 360 / n : MATCH.spawnStepDeg;
-    const spawns: { x: number; z: number }[] = [];
+    const spawns = spawnPositions(this.arena, n); // colosseum: the v1.0 ring rule, bit-identical; jungle: cleared seats
     for (let i = 0; i < n; i++) {
       const entry = cfg.roster[i];
       const def = ANIMALS[entry.animal];
-      const angle = ((270 + stepDeg * i) * Math.PI) / 180;
-      const x = MATCH.spawnRing * Math.cos(angle);
-      const z = MATCH.spawnRing * Math.sin(angle);
+      const { x, z } = spawns[i];
       const yaw = dirToYaw(-x, -z); // face arena centre
-      const pos = { x, y: groundHeightAt(x, z), z };
-      spawns.push({ x, z });
-      this.fighters.push(new Fighter(i, entry.animal, def, entry.isPlayer, pos, yaw));
+      const pos = { x, y: groundHeightAt(x, z, this.arena), z };
+      this.fighters.push(new Fighter(i, entry.animal, def, entry.isPlayer, pos, yaw, this.arena));
     }
 
-    this.crates = CRATES.map((c, id) => ({
+    this.crates = this.arena.crates.map((c, id) => ({
       id,
       x: c.x,
       z: c.z,
@@ -101,9 +104,9 @@ export class World implements Sim {
       alive: true,
     }));
 
-    this.pickups = createPickups(this.rng);
+    this.pickups = createPickups(this.rng, this.arena);
     // Own RNG stream (seed ^ salt) — never perturbs this.rng (determinism).
-    this.traps = opts.traps === false ? [] : placeTraps(seed, cfg.difficulty, spawns, n);
+    this.traps = opts.traps === false ? [] : placeTraps(seed, cfg.difficulty, spawns, n, this.arena);
   }
 
   // ── Public API (§5.1) ──────────────────────────────────────────────────────
@@ -129,6 +132,9 @@ export class World implements Sim {
 
     // 0. Reset per-tick ownership flags.
     for (let i = 0; i < fs.length; i++) fs[i].movementOwned = false;
+
+    // 0b. v1.8 terrain: inWater / onMoss flags, speed multiplier and splash events (before decisions and locomotion).
+    this.terrain.step(this, dt);
 
     // 1. Edges, timers, buffs, CC decrement, guard.
     for (let i = 0; i < fs.length; i++) {
@@ -184,7 +190,8 @@ export class World implements Sim {
         // v1.3: a fizzled cast (requireTarget, no valid target) spends nothing and falls through.
         if (startUlt(this, f)) continue;
       }
-      if (f.edgeSpecial && f.state.specialCd <= 0) {
+      // v1.8: the mole cannot dig into the pool — the cast does nothing, the cooldown is not consumed (see TerrainSystem).
+      if (f.edgeSpecial && f.state.specialCd <= 0 && !specialBlockedByTerrain(f)) {
         startSpecial(this, f);
         continue;
       }
@@ -193,6 +200,18 @@ export class World implements Sim {
       setBlocking(this, f, wantBlock);
       if (!f.blocking && f.edgeAttack) tryStartSwing(f);
       updateSwing(this, f, dt);
+    }
+
+    // 2a. A held / carried fighter whose holder lost its ability to an interruption (a rhino staggered mid Lockdown carry; those
+    // specials are not `isGrab`) would stay 'grabbed' for ever: release it at once. Never fires for a healthy grab.
+    // v1.8: applies to EVERY arena (found on the jungle first; the colosseum had the same bug, ≈ 1 Cub match in 80 ended in a
+    // timeout) — an intentional bug fix, so colosseum sweeps differ slightly from v1.7 in that rare case.
+    for (let i = 0; i < fs.length; i++) {
+      const f = fs[i];
+      if (!f.state.alive || f.state.grabTargetId < 0 || f.ability !== null) continue;
+      const held = fs[f.state.grabTargetId];
+      if (held !== undefined && held.state.grabbedById === f.id) held.state.grabbedById = -1;
+      f.state.grabTargetId = -1;
     }
 
     // 2b. Casting, grabbed or carried fighters drop out of an eagle flight
@@ -246,6 +265,9 @@ export class World implements Sim {
     for (let i = 0; i < this.fighters.length; i++) {
       const st = cloneState(this.fighters[i].state);
       fillUltSnapshot(st, this.fighters[i]); // v1.3 ultPhase/ultStage/ultTargetId while casting
+      // v1.8 terrain flags: present (true) only while they hold, so colosseum snapshots are unchanged.
+      if (this.fighters[i].inWater) st.inWater = true;
+      if (this.fighters[i].onMoss) st.onMoss = true;
       fighters[i] = st;
     }
     const pickups: PickupState[] = this.pickups.map((p) => ({

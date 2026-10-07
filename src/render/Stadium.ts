@@ -53,6 +53,8 @@ import {
 import { SUN_POSITION } from './SceneManager';
 import { getQualityTier, onQualityChange, tierProfile, type QualityTier } from './quality';
 import { PickupBeacons } from './pickupBeacons';
+import { COLOSSEUM_ARENA } from '../config/arenas';
+import type { ArenaScene } from './arenaScene';
 
 export type PickupKind = PickupState['kind'];
 
@@ -100,8 +102,10 @@ const _p = new THREE.Vector3();
 const _s = new THREE.Vector3();
 const ZERO_SCALE = new THREE.Matrix4().makeScale(0, 0, 0);
 
-export class Stadium {
+export class Stadium implements ArenaScene {
   readonly root = new THREE.Group();
+  /** v1.8: the arena this scene dresses (the colosseum; every number below still comes from `config/arena.ts`). */
+  readonly arena = COLOSSEUM_ARENA;
 
   private readonly crowd: Crowd;
   private readonly sandMesh: THREE.Mesh;

@@ -15,6 +15,9 @@
  *   localStorage.
  * - {@link attachBus} subscribes to the typed {@link EventBus} and maps every
  *   gameplay event to its §13 sound.
+ * - v1.8 jungle: when the arena (`render/arenaContext.getRenderArena()`, set by `createArenaScene`) is the jungle,
+ *   {@link startCrowd} starts the jungle ambience bed (`./jungle`) INSTEAD of the crowd murmur — there are no spectators —
+ *   and the `splash` event, the water slosh loops and the moss squelch become audible. Colosseum audio is unchanged.
  */
 
 import type { AnimalId, PickupState, TrapKind, Vec3 } from '../core/types';
@@ -26,6 +29,8 @@ import { Roars } from './roars';
 import { Crowd } from './crowd';
 import { Music } from './music';
 import { UltAudioRegistry, playDryClick, synth as ultSynth, type UltAudioApi } from './ults';
+import { JungleAudio } from './jungle';
+import { getRenderArena, resetWaterActivity, terrainAudio } from '../render/arenaContext';
 
 /** Shape of the persisted `gk-settings` localStorage value (UI owns writes). */
 export interface AudioSettings {
@@ -87,6 +92,7 @@ export class AudioEngine {
   private crowdMod: Crowd | null = null;
   private musicMod: Music | null = null;
   private trapMod: TrapSfx | null = null;
+  private jungleMod: JungleAudio | null = null;
 
   // Listener for world-positioned SFX (set per frame by the match; until then
   // every positioned sound plays at full level, e.g. in the demos).
@@ -150,6 +156,9 @@ export class AudioEngine {
     this.crowdMod = null;
     this.musicMod = null;
     this.trapMod = null;
+    this.jungleMod?.stop();
+    this.jungleMod = null;
+    terrainAudio.mossStep = null;
     this.ultApiCache = null;
     this.ultAudio.dispose();
   }
@@ -224,6 +233,11 @@ export class AudioEngine {
         if (a !== null) this.ultAudio.impact(a, ev);
       }),
       bus.on('ultimateFizzle', (ev) => this.ultFizzle(ev.fighterId)),
+      // v1.8 jungle: pool splashes + combat ducking of the ambience bed (all no-ops outside the jungle).
+      bus.on('splash', (ev) => this.splashSfx(ev.pos, ev.strength, ev.entering)),
+      bus.on('hit', () => this.jungleMod?.noteCombat(0.16)),
+      bus.on('ultimate', () => this.jungleMod?.noteCombat(0.5)),
+      bus.on('death', () => this.jungleMod?.noteCombat(0.6)),
     ];
   }
 
@@ -295,6 +309,17 @@ export class AudioEngine {
     if (!mine) return;
     const sc = this.ready();
     if (sc !== null) playDryClick(sc);
+  }
+
+  /** v1.8: a fighter entered / left the jungle pool (`splash` event). Scaled by `strength`, attenuated by distance. */
+  splashSfx(pos: Vec3, strength: number, entering: boolean): void {
+    if (this.ready() === null || this.jungleMod === null) return;
+    this.jungleMod.splash(strength, entering, this.distanceGain(pos));
+  }
+
+  /** True while the arena on screen is the jungle (no crowd, jungle ambience). */
+  private get jungleArena(): boolean {
+    return getRenderArena().id === 'jungle';
   }
 
   /** Remove all EventBus subscriptions installed by {@link attachBus}. */
@@ -415,6 +440,10 @@ export class AudioEngine {
   /** Death: heavy thud + crowd gasp, then a cheer swell (audio-clock delayed). */
   deathSfx(): void {
     this.withSfx((s) => s.deathThud());
+    if (this.jungleArena) {
+      this.jungleMod?.flush(); // no crowd in the jungle: the birds scatter instead
+      return;
+    }
     const crowd = this.crowdMod;
     if (crowd !== null && this.ready() !== null) {
       crowd.gasp();
@@ -425,6 +454,10 @@ export class AudioEngine {
 
   /** Match end: full crowd eruption. */
   matchEndSfx(): void {
+    if (this.jungleArena) {
+      this.jungleMod?.flush();
+      return;
+    }
     const crowd = this.crowdMod;
     if (crowd !== null && this.ready() !== null) {
       crowd.cheer(true);
@@ -438,12 +471,21 @@ export class AudioEngine {
   startCrowd(): void {
     const sc = this.ready();
     if (sc === null) return;
+    if (this.jungleArena) {
+      // v1.8: the jungle has no spectators — start its ambience bed instead and route moss footsteps to the squelch.
+      this.jungleMod?.start();
+      terrainAudio.mossStep = (x, z) => this.jungleMod?.squelch(this.distanceGain({ x, y: 0, z }));
+      return;
+    }
     this.crowdMod?.start();
   }
 
-  /** Fade out and stop the crowd bed (match teardown). */
+  /** Fade out and stop the crowd bed (and the jungle ambience; match teardown). */
   stopCrowd(): void {
     this.crowdMod?.stop();
+    this.jungleMod?.stop();
+    terrainAudio.mossStep = null;
+    resetWaterActivity();
   }
 
   /** Set the baseline crowd excitement (0..1); event spikes stack on top. */
@@ -458,7 +500,7 @@ export class AudioEngine {
 
   /** Cheer swell — `big` for bloodlust steps / victory moments. */
   crowdCheer(big = false): void {
-    if (this.ready() === null) return;
+    if (this.ready() === null || this.jungleArena) return;
     this.crowdMod?.cheer(big);
   }
 
@@ -513,6 +555,7 @@ export class AudioEngine {
     this.crowdMod = new Crowd(sc);
     this.musicMod = new Music(sc);
     this.trapMod = new TrapSfx(sc);
+    this.jungleMod = new JungleAudio(sc, () => ({ has: this.hasListener, x: this.listenerX, z: this.listenerZ }));
     this.applyVolumes();
     return sc;
   }

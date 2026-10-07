@@ -19,6 +19,12 @@
  * Quality API (for the Settings UI): `setQuality('auto'|'low'|'medium'|'high')`,
  * `getQuality()`, `getQualityTier()`; the module-level equivalents in
  * `render/quality.ts` work with no SceneManager alive.
+ *
+ * v1.8 ARENA ENTRY POINT (WP-J3): `sceneManager.setArena(arenaDef?)` switches the light rig / fog / sky / grade
+ * to the arena's look (default = the colosseum, i.e. exactly the v1.7 values) and publishes the arena to
+ * `render/arenaContext` (CameraRig, first-person eye clamp, Effects and the audio ambience read it from there).
+ * Normal callers do not call it directly: `createArenaScene(sceneManager, arena)` (render/arenaScene.ts) calls it,
+ * builds the matching scene (Stadium or the jungle) and adds it to `scene` in one go.
  */
 
 import * as THREE from 'three';
@@ -27,6 +33,8 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { COLOSSEUM_ARENA, type ArenaDef } from '../config/arenas';
+import { setRenderArena } from './arenaContext';
 import {
   autoDowngrade,
   getQualitySetting,
@@ -43,6 +51,87 @@ export const OVERLAY_LAYER = 2;
 
 /** World position of the sun light (direction source for sky + light shafts). */
 export const SUN_POSITION: Readonly<{ x: number; y: number; z: number }> = { x: 46, y: 34, z: 24 };
+
+/** Everything an arena can restyle in the shared light rig / fog / sky / colour grade. */
+export interface ArenaLook {
+  fogColor: number;
+  fogNear: number;
+  fogFar: number;
+  hemiSky: number;
+  hemiGround: number;
+  hemiIntensity: number;
+  sunColor: number;
+  sunIntensity: number;
+  sun: { x: number; y: number; z: number };
+  exposure: number;
+  skyTop: number;
+  skyHorizon: number;
+  skyBottom: number;
+  skySun: number;
+  cloudLit: number;
+  cloudShade: number;
+  /** Sky clouds allowed (still subject to the quality tier). */
+  clouds: boolean;
+  gradeWarm: number;
+  gradeSat: number;
+  gradeVignette: number;
+  gradeLift: readonly [number, number, number];
+}
+
+/** The v1.7 colosseum look (these are the numbers the constructor always used). */
+export const COLOSSEUM_LOOK: ArenaLook = {
+  fogColor: 0xe9c08c,
+  fogNear: 60,
+  fogFar: 185,
+  hemiSky: 0xffe6bf,
+  hemiGround: 0x6e5536,
+  hemiIntensity: 1.2,
+  sunColor: 0xffd9a8,
+  sunIntensity: 2.35,
+  sun: SUN_POSITION,
+  exposure: 1.12,
+  skyTop: 0x4f86c0,
+  skyHorizon: 0xffd7a0,
+  skyBottom: 0xb98e5f,
+  skySun: 0xffe2b0,
+  cloudLit: 0xfff1dc,
+  cloudShade: 0xc9a58a,
+  clouds: true,
+  gradeWarm: 1,
+  gradeSat: 1.08,
+  gradeVignette: 0.32,
+  gradeLift: [0.012, 0.007, 0.0],
+};
+
+/**
+ * The v1.8 jungle look: a bright, humid clearing - green-tinted haze, a cooler sun at a high angle (long trunk shadows
+ * without losing the floor), richer saturation, a lighter warm grade and a slightly heavier vignette.
+ */
+export const JUNGLE_LOOK: ArenaLook = {
+  fogColor: 0x9db592,
+  fogNear: 26,
+  fogFar: 110,
+  hemiSky: 0xd6efc2,
+  hemiGround: 0x35502a,
+  hemiIntensity: 1.28,
+  sunColor: 0xfff0c8,
+  sunIntensity: 2.5,
+  sun: { x: 30, y: 44, z: 18 },
+  exposure: 1.1,
+  skyTop: 0x5d93b8,
+  skyHorizon: 0xdce8b0,
+  skyBottom: 0x6f8a55,
+  skySun: 0xfff0c0,
+  cloudLit: 0xf6f8e6,
+  cloudShade: 0xa4b896,
+  clouds: false,
+  gradeWarm: 0.5,
+  gradeSat: 1.14,
+  gradeVignette: 0.38,
+  gradeLift: [0.004, 0.01, 0.006],
+};
+
+const ARENA_LOOKS: Readonly<Record<string, ArenaLook>> = { colosseum: COLOSSEUM_LOOK, jungle: JUNGLE_LOOK };
 
 const AUTO_FPS_MIN = 45;
 const AUTO_SLOW_SECONDS = 3;
@@ -179,6 +268,9 @@ export class SceneManager {
   };
 
   private tier: QualityTier;
+  /** v1.8: the arena this manager is currently styled for (default colosseum). */
+  private arena: ArenaDef = COLOSSEUM_ARENA;
+  private look: ArenaLook = COLOSSEUM_LOOK;
   private composer: EffectComposer | null = null;
   private bloomPass: UnrealBloomPass | null = null;
   private gradePass: ShaderPass | null = null;
@@ -205,7 +297,7 @@ export class SceneManager {
     // Shadows re-render once per frame (not again for the overlay pass).
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.12;
+    this.renderer.toneMappingExposure = COLOSSEUM_LOOK.exposure;
     // Stats cover every pass of a frame (reset manually in render()).
     this.renderer.info.autoReset = false;
 
@@ -214,14 +306,14 @@ export class SceneManager {
     this.camera.lookAt(0, 1, 0);
 
     // Warm haze: barely touches the arena, softens the far stands.
-    this.scene.fog = new THREE.Fog(0xe9c08c, 60, 185);
+    this.scene.fog = new THREE.Fog(COLOSSEUM_LOOK.fogColor, COLOSSEUM_LOOK.fogNear, COLOSSEUM_LOOK.fogFar);
 
     // §11.1 lighting: hemisphere + one shadowed directional sun (golden hour).
-    const hemi = new THREE.HemisphereLight(0xffe6bf, 0x6e5536, 1.2);
+    const hemi = new THREE.HemisphereLight(COLOSSEUM_LOOK.hemiSky, COLOSSEUM_LOOK.hemiGround, COLOSSEUM_LOOK.hemiIntensity);
     this.scene.add(hemi);
     this.hemi = hemi;
 
-    const sun = new THREE.DirectionalLight(0xffd9a8, 2.35);
+    const sun = new THREE.DirectionalLight(COLOSSEUM_LOOK.sunColor, COLOSSEUM_LOOK.sunIntensity);
     sun.position.set(SUN_POSITION.x, SUN_POSITION.y, SUN_POSITION.z);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -272,6 +364,65 @@ export class SceneManager {
     window.addEventListener('resize', this.handleResize);
     // Debug/QA handle (perf readouts from the console): window.__gkSceneManager.getStats()
     (window as unknown as { __gkSceneManager?: SceneManager }).__gkSceneManager = this;
+  }
+
+  // ── Arena (v1.8) ───────────────────────────────────────────────────────────
+
+  /**
+   * Style the shared light rig, fog, sky and colour grade for `def` (default: the colosseum) and publish it to
+   * `render/arenaContext`. Safe to call before the first frame and again later (rematch / arena change). Note that
+   * it does NOT build any scenery - use `createArenaScene` (render/arenaScene.ts) for that.
+   */
+  setArena(def?: ArenaDef): void {
+    const arena = def ?? COLOSSEUM_ARENA;
+    this.arena = arena;
+    setRenderArena(arena);
+    this.applyLook(ARENA_LOOKS[arena.id] ?? COLOSSEUM_LOOK);
+  }
+
+  /** The arena this manager is styled for. */
+  getArena(): ArenaDef {
+    return this.arena;
+  }
+
+  /** The active look numbers (read by arena scenes for their own tinting). */
+  getLook(): ArenaLook {
+    return this.look;
+  }
+
+  private applyLook(look: ArenaLook): void {
+    this.look = look;
+    this.renderer.toneMappingExposure = look.exposure;
+    const fog = this.scene.fog as THREE.Fog;
+    fog.color.setHex(look.fogColor);
+    fog.near = look.fogNear;
+    fog.far = look.fogFar;
+    this.hemi.color.setHex(look.hemiSky);
+    this.hemi.groundColor.setHex(look.hemiGround);
+    this.hemi.intensity = look.hemiIntensity;
+    this.sun.color.setHex(look.sunColor);
+    this.sun.intensity = look.sunIntensity;
+    this.sun.position.set(look.sun.x, look.sun.y, look.sun.z);
+    const u = this.skyMaterial.uniforms;
+    (u.uTop.value as THREE.Color).setHex(look.skyTop);
+    (u.uHorizon.value as THREE.Color).setHex(look.skyHorizon);
+    (u.uBottom.value as THREE.Color).setHex(look.skyBottom);
+    (u.uSunColor.value as THREE.Color).setHex(look.skySun);
+    (u.uCloudLit.value as THREE.Color).setHex(look.cloudLit);
+    (u.uCloudShade.value as THREE.Color).setHex(look.cloudShade);
+    (u.uSunDir.value as THREE.Vector3).copy(this.sun.position).normalize();
+    (u.uClouds as THREE.IUniform<number>).value = look.clouds && tierProfile(this.tier).skyClouds ? 1 : 0;
+    this.applyGrade();
+  }
+
+  private applyGrade(): void {
+    if (this.gradePass === null) return;
+    const u = this.gradePass.uniforms;
+    const l = this.look;
+    (u.uWarm as THREE.IUniform<number>).value = l.gradeWarm;
+    (u.uSat as THREE.IUniform<number>).value = l.gradeSat;
+    (u.uVignette as THREE.IUniform<number>).value = l.gradeVignette;
+    (u.uLift as THREE.IUniform<THREE.Vector3>).value.set(l.gradeLift[0], l.gradeLift[1], l.gradeLift[2]);
   }
 
   // ── Quality API ────────────────────────────────────────────────────────────
@@ -358,6 +509,7 @@ export class SceneManager {
     const w = window as unknown as { __gkSceneManager?: SceneManager };
     if (w.__gkSceneManager === this) w.__gkSceneManager = undefined;
     window.removeEventListener('resize', this.handleResize);
+    setRenderArena(); // v1.8: back to the default (colosseum) for anything rendered after this match
     this.disposeComposer();
     this.skyMesh.geometry.dispose();
     this.skyMaterial.dispose();
@@ -393,7 +545,7 @@ export class SceneManager {
   private applyTier(tier: QualityTier, initial: boolean): void {
     this.tier = tier;
     const prof = tierProfile(tier);
-    (this.skyMaterial.uniforms.uClouds as THREE.IUniform<number>).value = prof.skyClouds ? 1 : 0;
+    (this.skyMaterial.uniforms.uClouds as THREE.IUniform<number>).value = prof.skyClouds && this.look.clouds ? 1 : 0;
 
     // Shadow map resolution (dispose so it is re-allocated at the new size).
     if (this.sun.shadow.mapSize.x !== prof.shadowMapSize) {
@@ -426,6 +578,7 @@ export class SceneManager {
     this.gradePass = new ShaderPass(GRADE_SHADER);
     (this.gradePass.uniforms.uAspect as THREE.IUniform<number>).value = w / h;
     composer.addPass(this.gradePass);
+    this.applyGrade();
     if (bloom) {
       // High threshold: only the sun disc, fire, sparks and ult flashes bloom.
       this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.5, 0.5, 0.88);

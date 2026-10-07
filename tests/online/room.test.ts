@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ANIMAL_IDS } from '../../src/config/animals';
-import { MSG } from '../../src/online/types';
+import { MSG, ONLINE_PROTOCOL_VERSION } from '../../src/online/types';
 import type { Link } from '../../src/online/types';
 import { OnlineRoom } from '../../src/online/room/OnlineRoom';
 import { ROOM_CODE_ALPHABET } from '../../src/online/room/roomCode';
@@ -136,7 +136,7 @@ describe('OnlineRoom — roster rules', () => {
     expect(host.state.settings.cl.stage).toBe('brokenColosseum');
     host.room.setSettings({ cl: { stage: 'skyAqueduct', stocks: 2, timeLimitS: 180 }, br: { botLevel: 3, fillBots: false } });
     await rig.run(100);
-    expect(bob.state.settings).toEqual({ br: { botLevel: 3, fillBots: false }, cl: { stage: 'skyAqueduct', stocks: 2, timeLimitS: 180 } });
+    expect(bob.state.settings).toEqual({ br: { botLevel: 3, fillBots: false, arena: 'colosseum' }, cl: { stage: 'skyAqueduct', stocks: 2, timeLimitS: 180 } });
     expect(bob.state.botFill).toBe(0);
   });
 
@@ -285,13 +285,14 @@ describe('OnlineRoom — handshake validation', () => {
   it('rejects a different protocol even when the app version is identical, naming both versions', async () => {
     const rig = new Rig();
     const host = await rig.host('Ann', 'eagle', { versions: { appVersion: '1.5.0' } });
-    const err = await rejection(rig.joinRoom(host.state.code, 'Bob', 'lion', { versions: { appVersion: '1.5.0', protocol: 2 } }));
+    const other = ONLINE_PROTOCOL_VERSION + 1; // (not a literal: the protocol version moves whenever a wire format changes)
+    const err = await rejection(rig.joinRoom(host.state.code, 'Bob', 'lion', { versions: { appVersion: '1.5.0', protocol: other } }));
     expect(err.code).toBe('version-mismatch');
     expect(err.details?.mismatch).toEqual(['protocol']);
     expect(err.details?.host?.protocol).toBe(host.state.versions.protocol);
-    expect(err.details?.local?.protocol).toBe(2);
+    expect(err.details?.local?.protocol).toBe(other);
     expect(err.message).toContain('1.5.0');
-    expect(err.message).toContain('protocol 2');
+    expect(err.message).toContain(`protocol ${other}`);
   });
 
   it('rejects a different protocol or data fingerprint', async () => {
@@ -467,7 +468,7 @@ describe('OnlineRoom — Battle Royale start', () => {
     expect(first.slots.filter((s) => s.kind === 'bot')).toHaveLength(7);
     expect(new Set(first.slots.map((s) => s.animal))).toEqual(new Set(ANIMAL_IDS));
     expect(first.slots.every((s) => (s.kind === 'bot') === (s.peerId === null))).toBe(true);
-    expect(first.br).toEqual({ difficulty: 2 });
+    expect(first.br).toEqual({ difficulty: 2, arena: 'colosseum' });
     expect(first.cl).toBeUndefined();
     expect(first.slots[0].peerId).toBe(host.state.localPeerId); // host keeps slot 0
     for (const p of all) {
@@ -502,7 +503,7 @@ describe('OnlineRoom — Battle Royale start', () => {
     const s = host.starts[0].start;
     expect(s.slots).toHaveLength(4);
     expect(s.slots.filter((x) => x.kind === 'bot').map((x) => x.animal).sort()).toEqual(['mole', 'python']);
-    expect(s.br).toEqual({ difficulty: 4 });
+    expect(s.br).toEqual({ difficulty: 4, arena: 'colosseum' });
   });
 
   it('delivers game packets that overtake the go message to the session that subscribes in its start handler', async () => {

@@ -23,6 +23,13 @@ export interface FxSink {
   land(source: THREE.Object3D, x: number, z: number, scale: number): void;
   /** Ground slam at the impact instant (gorilla leap, hippo rush, …). */
   slam(source: THREE.Object3D, x: number, z: number, radius: number, color: number, kind: SlamKind): void;
+  /**
+   * v1.8 jungle pool: a water splash at the surface (a swimming animal's attack impact, a paddle stroke, a heavy step).
+   * `radius` metres, `strength` 0..1. Optional so older sinks keep compiling; rigs call it with optional chaining.
+   */
+  splash?(source: THREE.Object3D, x: number, z: number, radius: number, strength: number): void;
+  /** v1.8: a swimming animal's wake / ripple ring while it moves in the water (`speed` m/s, `scale` ≈ body size). */
+  wake?(source: THREE.Object3D, x: number, z: number, speed: number, scale: number): void;
 }
 
 let sink: FxSink | null = null;

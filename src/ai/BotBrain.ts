@@ -8,9 +8,11 @@
 import type { FighterIntent, FighterState, WorldSnapshot } from '../core/types';
 import { ANIMALS, type AnimalDef } from '../config/animals';
 import { AI_TUNING, type BotProfile } from '../config/botProfiles';
-import { PILLARS, WALL_RADIUS } from '../config/arena';
+import type { ArenaDef } from '../config/arenas';
+import { COLOSSEUM_ARENA } from '../config/arenas';
 import { mulberry32, dirToYaw, angleDelta, DEG2RAD, type Rng } from '../core/math';
 import { Perception, MEMORY_SECONDS, type TrackedEnemy } from './Perception';
+import { TerrainSense } from './TerrainSense';
 import { BlockControl, sampleAimNoise, timeToImpact } from './CombatMicro';
 import { decideAbilities, type Situation, type AbilityWish } from './scripts';
 import { previewUltTarget } from '../sim/ultimates/targeting';
@@ -104,13 +106,20 @@ export class BotBrain {
   private soarWantedAt = -1e9; // a long telegraph covering us was perceived
   private inFlight = false;
 
-  constructor(id: number, animal: FighterState['animal'], profile: BotProfile, seed: number) {
+  /** v1.8: the arena being played (obstacles, wall, ground height). */
+  private readonly arena: ArenaDef;
+  /** v1.8: moss / pool awareness (inactive, and a no-op everywhere, on arenas without terrain - the colosseum). */
+  private readonly sense: TerrainSense;
+
+  constructor(id: number, animal: FighterState['animal'], profile: BotProfile, seed: number, arena: ArenaDef = COLOSSEUM_ARENA) {
     this.id = id;
+    this.arena = arena;
     this.def = ANIMALS[animal];
     this.profile = profile;
     this.ultNeedsTarget = this.def.ultimate.targeting?.requireTarget === true;
     this.rng = mulberry32(seed);
-    this.perception = new Perception(id, profile.reactionMs / 1000);
+    this.perception = new Perception(id, profile.reactionMs / 1000, arena);
+    this.sense = new TerrainSense(arena, animal, profile.difficulty, id);
     // Stagger decision ticks across bots (deterministically).
     this.decisionAcc = (id % 6) * 0.017;
     this.sit = {
@@ -163,6 +172,7 @@ export class BotBrain {
       return;
     }
 
+    if (this.sense.active) this.sense.setDifficulty(this.profile.difficulty);
     this.perception.update(now, self, delayed);
     this.processEvents(now, self);
     this.trapView = delayed.traps;
@@ -274,6 +284,11 @@ export class BotBrain {
   }
 
   private targetScore(t: TrackedEnemy): number {
+    const s = this.baseTargetScore(t);
+    return this.sense.active ? s + this.sense.targetBias(t) : s;
+  }
+
+  private baseTargetScore(t: TrackedEnemy): number {
     const p = this.profile;
     const closeness = 1 / (1 + t.dist * 0.15);
     switch (p.targetPolicy) {
@@ -415,7 +430,7 @@ export class BotBrain {
       sit.aimYawAway = dirToYaw(-toTx, -toTz) + this.aimNoise;
       sit.wallBehindTarget =
         this.def.id === 'rhino' && p.specialUse === 'fullScripts'
-          ? wallBehindTarget(sx, sz, t.x, t.z)
+          ? wallBehindTarget(sx, sz, t.x, t.z, this.arena)
           : false;
     } else {
       sit.tdist = 1e9;
@@ -639,7 +654,7 @@ export class BotBrain {
       case 'special':
       case 'ultimate': {
         // Fire the edge once, keep engage movement underneath.
-        if (goal === 'special' && this.wish.special && self.specialCd <= 0 && now >= this.lastSpecialPress + 0.3) {
+        if (goal === 'special' && this.wish.special && self.specialCd <= 0 && now >= this.lastSpecialPress + 0.3 && !(this.sense.active && this.sense.specialIntoWater(now, self.inWater === true, t))) {
           intent.special = true;
           this.lastSpecialPress = now;
           this.wish.special = false;
@@ -651,7 +666,7 @@ export class BotBrain {
         } else {
           aimYaw = this.wish.aimYaw;
         }
-        if (t !== null) this.engageMovement(move, self, t, tx, tz);
+        if (t !== null) this.engageMovement(now, move, self, t, tx, tz);
         if (!intent.special && !intent.ultimate) {
           // Edge already spent — behave as engage until the next decision.
           const r = this.engageAttack(now, self, t, tx, tz);
@@ -663,7 +678,7 @@ export class BotBrain {
 
       case 'engage': {
         if (t !== null) {
-          this.engageMovement(move, self, t, tx, tz);
+          this.engageMovement(now, move, self, t, tx, tz);
           const r = this.engageAttack(now, self, t, tx, tz);
           wantAttack = Number.isFinite(r);
           aimYaw = wantAttack ? r : dirToYaw(tx - sx, tz - sz) + this.aimNoise;
@@ -672,7 +687,11 @@ export class BotBrain {
           const m = this.freshestMemory(now);
           if (m !== null) {
             seek(move, sx, sz, m.x, m.z);
-            lowWallDetour(move, sx, sz, m.x, m.z, this.def.radius);
+            if (!lowWallDetour(move, sx, sz, m.x, m.z, this.def.radius, this.arena)) this.sense.plan(move, now, sx, sz, m.x, m.z);
+          } else if (this.sense.active) {
+            // v1.8: the jungle's centre is the pool - rally on a dry ring round it instead.
+            const dp = this.sense.driftPoint(sx, sz);
+            if (dp !== null) seek(move, sx, sz, dp.x, dp.z);
           } else if (sx * sx + sz * sz > 36) seek(move, sx, sz, 0, 0);
           aimYaw = move.x !== 0 || move.z !== 0 ? dirToYaw(move.x, move.z) : self.yaw;
         }
@@ -685,10 +704,11 @@ export class BotBrain {
         if (healIdx >= 0 && current.pickups[healIdx] !== undefined && current.pickups[healIdx].active) {
           const pad = current.pickups[healIdx];
           seek(move, sx, sz, pad.pos.x, pad.pos.z);
-          lowWallDetour(move, sx, sz, pad.pos.x, pad.pos.z, this.def.radius);
+          if (!lowWallDetour(move, sx, sz, pad.pos.x, pad.pos.z, this.def.radius, this.arena)) this.sense.plan(move, now, sx, sz, pad.pos.x, pad.pos.z);
         } else if (threat !== null) {
           if (p.retreat.losBreak) this.losBreakMove(move, sx, sz, threat);
           else flee(move, sx, sz, threat.x, threat.z);
+          this.sense.fleePlan(move, now, sx, sz, threat.animal);
         }
         if (threat !== null) {
           aimYaw = dirToYaw(threat.x - sx, threat.z - sz) + this.aimNoise;
@@ -710,7 +730,7 @@ export class BotBrain {
         const pad = idx >= 0 ? current.pickups[idx] : undefined;
         if (pad !== undefined && pad.active) {
           seek(move, sx, sz, pad.pos.x, pad.pos.z);
-          lowWallDetour(move, sx, sz, pad.pos.x, pad.pos.z, this.def.radius);
+          if (!lowWallDetour(move, sx, sz, pad.pos.x, pad.pos.z, this.def.radius, this.arena)) this.sense.plan(move, now, sx, sz, pad.pos.x, pad.pos.z);
           aimYaw =
             t !== null ? dirToYaw(t.x - sx, t.z - sz) + this.aimNoise : dirToYaw(move.x, move.z);
         } else {
@@ -746,6 +766,9 @@ export class BotBrain {
       }
     }
 
+    // v1.8 moss / pool: leave slow terrain when there is nothing to fight, and do not wade in to START a fight (soft wall).
+    if (this.sense.active) this.terrainPass(now, self, t, move, goal, wantAttack);
+
     // Detect incoming swings from the delayed view and schedule blocks.
     this.watchIncomingSwings(now, self);
 
@@ -770,16 +793,16 @@ export class BotBrain {
     }
 
     // v1.3 enemy-ultimate danger zones (grounded only; no-op unless an opted-in ultimate is live).
-    if (soarState === 0 && self.pos.y - groundY(sx, sz) < 1.0) this.dodgeZones(now, self, move);
+    if (soarState === 0 && self.pos.y - groundY(sx, sz, this.arena) < 1.0) this.dodgeZones(now, self, move);
 
     // v1.2 traps: route around plates / out of hazards (grounded only).
-    if (soarState === 0 && self.pos.y - groundY(sx, sz) < 1.0) {
+    if (soarState === 0 && self.pos.y - groundY(sx, sz, this.arena) < 1.0) {
       avoidTraps(move, sx, sz, this.def.radius, this.trapView, p.trapAwareness);
     }
 
     // Steering post-passes: obstacle feelers, local avoidance.
     const burrowed = false; // handled in driveChannel; normal flow is surface
-    const jumpableAhead = avoidObstacles(move, sx, sz, this.def.radius, current.crates, burrowed);
+    const jumpableAhead = avoidObstacles(move, sx, sz, this.def.radius, current.crates, burrowed, this.arena);
     separation(move, self, current.fighters, this.targetId);
     if (jumpableAhead && p.strafeSkill >= 0.3 && (move.x !== 0 || move.z !== 0)) {
       this.jumpHoldUntil = Math.max(this.jumpHoldUntil, now + 0.35);
@@ -801,6 +824,8 @@ export class BotBrain {
     intent.moveZ = move.z;
     intent.aimYaw = aimYaw;
     intent.jump = intent.jump || now < this.jumpHoldUntil;
+    // v1.8: bots never hop-chain through the pool (an eagle's glide hop is its own movement and stays).
+    if (this.sense.active && self.inWater === true && this.def.id !== 'eagle') intent.jump = false;
     // Soar plan: hold to climb, and ALWAYS release once the plan says so.
     if (soarState === 1) intent.jump = true;
     else if (soarState === 2) intent.jump = false;
@@ -835,6 +860,31 @@ export class BotBrain {
       } else if (p.specialUse === 'gapCloseEscapePeel' && self.comboIndex === 2 && this.def.id === 'eagle') {
         this.disengageUntil = now + 1.0;
       }
+    }
+  }
+
+  /**
+   * v1.8 terrain pass (jungle only), run on the final goal heading `move`:
+   *  1. a bot standing in slow terrain with nothing to fight (idle, or hurt) heads for the nearest dry point
+   *     (fast swimmers may stay in the pool unless hurt; moss is always left);
+   *  2. when it is about to WALK INTO a zone to reach a target (water for poor swimmers, moss for everyone) the soft wall slides it
+   *     along the edge for a few seconds of patience before it commits (L3+).
+   */
+  private terrainPass(now: number, self: FighterState, t: TrackedEnemy | null, move: Move2, goal: Goal, wantAttack: boolean): void {
+    const sense = this.sense;
+    const sx = self.pos.x;
+    const sz = self.pos.z;
+    const inWater = self.inWater === true;
+    const onMoss = self.onMoss === true;
+    const reach = t !== null ? this.def.range + ANIMALS[t.animal].radius : 0;
+    if (inWater || onMoss) {
+      const hurt = this.profile.retreat.mode !== 'never' && this.sit.hpFrac <= this.profile.retreat.hpThreshold;
+      const engaged = wantAttack || (t !== null && t.visible && t.dist <= reach + 0.8);
+      const moving = move.x !== 0 || move.z !== 0;
+      if (sense.wantsOut(inWater, onMoss, hurt) && !engaged && (!moving || hurt)) sense.exitVector(move, sx, sz);
+    }
+    if (goal === 'engage' || goal === 'special' || goal === 'ultimate') {
+      sense.guard(move, now, sx, sz, t !== null && t.dist <= reach + 0.3);
     }
   }
 
@@ -925,7 +975,7 @@ export class BotBrain {
     }
     const sx = self.pos.x;
     const sz = self.pos.z;
-    const alt = self.pos.y - groundY(sx, sz);
+    const alt = self.pos.y - groundY(sx, sz, this.arena);
     // Landing target: our target, else whoever is nearest (remembered).
     const tgt = t !== null ? t : this.freshestMemory(now);
     if (tgt !== null && elapsed >= AI_TUNING.soarEscapeS) {
@@ -999,7 +1049,7 @@ export class BotBrain {
   }
 
   /** Engage-goal movement: close to spacing, then strafe-orbit per skill. */
-  private engageMovement(move: Move2, self: FighterState, t: TrackedEnemy, tx: number, tz: number): void {
+  private engageMovement(now: number, move: Move2, self: FighterState, t: TrackedEnemy, tx: number, tz: number): void {
     const p = this.profile;
     const sx = self.pos.x;
     const sz = self.pos.z;
@@ -1020,7 +1070,7 @@ export class BotBrain {
       seek(move, sx, sz, tx, tz);
       if (dist < spacing * 0.8) flee(move, sx, sz, tx, tz); // unskilled: back off overlap
       // Walk round a fallen column instead of pressing into it (v1.1 stall fix).
-      else if (dist > range) lowWallDetour(move, sx, sz, tx, tz, this.def.radius);
+      else if (dist > range && !lowWallDetour(move, sx, sz, tx, tz, this.def.radius, this.arena)) this.sense.plan(move, now, sx, sz, tx, tz);
     } else {
       orbit(move, sx, sz, t.x, t.z, this.orbitSign, spacing, p.strafeSkill);
     }
@@ -1117,8 +1167,9 @@ export class BotBrain {
   private losBreakMove(move: Move2, sx: number, sz: number, threat: TrackedEnemy): void {
     let best = -1;
     let bestD = 1e9;
-    for (let i = 0; i < PILLARS.length; i++) {
-      const p = PILLARS[i];
+    const pillars = this.arena.circles;
+    for (let i = 0; i < pillars.length; i++) {
+      const p = pillars[i];
       // Prefer pillars roughly on the far side of us from the threat.
       const dx = p.x - sx;
       const dz = p.z - sz;
@@ -1134,7 +1185,7 @@ export class BotBrain {
       flee(move, sx, sz, threat.x, threat.z);
       return;
     }
-    const p = PILLARS[best];
+    const p = pillars[best];
     // Cover point: pillar centre pushed away from the threat.
     const cx = p.x - threat.x;
     const cz = p.z - threat.z;
@@ -1190,7 +1241,7 @@ export class BotBrain {
  * Rhino Lockdown Charge geometry: is there a wall or pillar within charge
  * range directly beyond the target along the self→target line? (§10 script.)
  */
-function wallBehindTarget(sx: number, sz: number, tx: number, tz: number): boolean {
+function wallBehindTarget(sx: number, sz: number, tx: number, tz: number, arena: ArenaDef): boolean {
   const dx = tx - sx;
   const dz = tz - sz;
   const dist = Math.sqrt(dx * dx + dz * dz);
@@ -1203,9 +1254,10 @@ function wallBehindTarget(sx: number, sz: number, tx: number, tz: number): boole
   for (let s = 1; s <= remaining; s++) {
     const px = tx + nx * s;
     const pz = tz + nz * s;
-    if (px * px + pz * pz >= (WALL_RADIUS - 1.4) * (WALL_RADIUS - 1.4)) return true;
-    for (let i = 0; i < PILLARS.length; i++) {
-      const p = PILLARS[i];
+    if (px * px + pz * pz >= (arena.wallRadius - 1.4) * (arena.wallRadius - 1.4)) return true;
+    const pillars = arena.circles;
+    for (let i = 0; i < pillars.length; i++) {
+      const p = pillars[i];
       const ox = px - p.x;
       const oz = pz - p.z;
       if (ox * ox + oz * oz <= (p.radius + 1.0) * (p.radius + 1.0)) return true;

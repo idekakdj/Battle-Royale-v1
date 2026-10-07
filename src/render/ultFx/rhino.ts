@@ -16,7 +16,7 @@
  */
 
 import * as THREE from 'three';
-import { WALL_RADIUS } from '../../config/arena';
+import { getRenderArena } from '../arenaContext';
 import { RHINO_STAMPEDE as K } from '../../config/ultimates/rhino';
 import { tierProfile } from '../quality';
 import type { ReticleHandle, RibbonHandle } from './primitives';
@@ -61,7 +61,7 @@ function rand(a: number, b: number): number {
 
 /** Distance along the ray (x,z)+t(dx,dz) (unit dir) to the arena wall (0.5 m inside the rim). */
 function rayToWall(x: number, z: number, dx: number, dz: number): number {
-  const R = WALL_RADIUS - 0.5;
+  const R = getRenderArena().wallRadius - 0.5;
   const b = x * dx + z * dz;
   const c = x * x + z * z - R * R;
   if (c > 0) return 0;

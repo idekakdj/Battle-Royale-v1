@@ -10,7 +10,8 @@ import { EventBus } from '../../src/core/EventBus';
 import { ANIMALS } from '../../src/config/animals';
 import { mulberry32 } from '../../src/core/math';
 import type { Obstacle } from '../../src/config/arena';
-import type { AnimalId, Difficulty, FighterIntent, GameEvent, MatchConfig, PickupState } from '../../src/core/types';
+import { COLOSSEUM_ARENA } from '../../src/config/arenas';
+import type { AnimalId, ArenaId, Difficulty, FighterIntent, GameEvent, MatchConfig, PickupState } from '../../src/core/types';
 
 export const DT = 1 / 60;
 
@@ -25,6 +26,7 @@ export function makeSim(fighters: Fighter[], events: GameEvent[] = [], obstacles
   const sim: Sim = {
     fighters,
     crates: [] as CrateRuntime[],
+    arena: COLOSSEUM_ARENA,
     staticObstacles: obstacles,
     bus,
     rng: mulberry32(1),
@@ -67,11 +69,12 @@ export function liveWorld(
   animals: AnimalId[],
   seed = 42,
   events: GameEvent[] = [],
-  opts: { traps?: boolean; difficulty?: Difficulty } = {},
+  opts: { traps?: boolean; difficulty?: Difficulty; arena?: ArenaId } = {},
 ): { world: World; events: GameEvent[] } {
   const cfg: MatchConfig = {
     roster: animals.map((a, i) => ({ animal: a, isPlayer: i === 0 })),
     difficulty: opts.difficulty ?? 1,
+    arena: opts.arena,
   };
   const bus = new EventBus();
   bus.onAny((e) => events.push(e));

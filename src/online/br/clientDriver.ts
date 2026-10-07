@@ -11,14 +11,14 @@
  */
 
 import { EventBus } from '../../core/EventBus';
-import type { FighterIntent, GameEvent, RosterEntry, WorldSnapshot } from '../../core/types';
+import type { ArenaId, FighterIntent, GameEvent, RosterEntry, WorldSnapshot } from '../../core/types';
 import { World } from '../../sim/World';
 import type { SimDriver, SimPull } from '../../match/SimDriver';
 import type { GameChannel, OnlineStart } from '../types';
 import { BrNetClient, type BrClientStats, type BrNetClientOptions } from './BrNetClient';
 import { swapEventIds, swapIds } from './idSwap';
 import type { BrResults } from './miscCodec';
-import { buildNetRoster, controllerNames, controllerRoster } from './netRoster';
+import { buildNetRoster, controllerNames, controllerRoster, netMatchConfig, startArena } from './netRoster';
 
 export interface ClientDriverOptions {
   start: OnlineStart;
@@ -33,6 +33,8 @@ export class ClientSimDriver implements SimDriver {
   readonly kind = 'client' as const;
   readonly stepsSim = false;
   readonly pausable = false;
+  /** The host's map (v1.8): the controller builds the matching scene from it. */
+  readonly arena: ArenaId;
   readonly roster: readonly RosterEntry[];
   readonly names: readonly (string | null)[];
   readonly bus = new EventBus();
@@ -60,7 +62,8 @@ export class ClientSimDriver implements SimDriver {
     const simRoster = buildNetRoster(start, null);
     this.roster = controllerRoster(simRoster, this.localSlot);
     this.names = controllerNames(start, this.localSlot);
-    const spawn = new World({ roster: simRoster, difficulty: start.br?.difficulty ?? 3 }, start.seed, new EventBus()).snapshot();
+    this.arena = startArena(start);
+    const spawn = new World(netMatchConfig(start, simRoster, start.br?.difficulty ?? 3), start.seed, new EventBus()).snapshot();
     this.snap = this.localSlot === 0 ? spawn : swapIds(spawn, 0, this.localSlot);
     this.net = new BrNetClient({ channel, start, now: opts.now, ...opts.clientOpts });
   }

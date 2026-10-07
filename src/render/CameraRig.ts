@@ -7,7 +7,10 @@
  * - Pitch clamped to [−30°, +55°]; distance 6.5 m spring-smoothed (τ = 0.12 s);
  *   pivot at the followed fighter's head height; shoulder offset 0.6 m.
  * - Collision: analytic sphere-cast against the §9 arena geometry (wall circle,
- *   pillars, ground). v1.1: the wall collider sits 0.6 m inside the wall face
+ *   pillars, ground). v1.8: the wall radius and the round blockers come from the CURRENT arena
+ *   (`render/arenaContext`, set by `SceneManager.setArena`); for the colosseum those are the same
+ *   numbers as before. Jungle TREE trunks never pull the boom in (they fade out instead, see
+ *   `render/jungle/treeFade.ts`); only a camera that would END inside a trunk is eased back. v1.1: the wall collider sits 0.6 m inside the wall face
  *   (in front of banners/torches); when it squeezes the boom, the rig smoothly
  *   raises its pitch and pivot (up to +28° / +0.6 m) so the camera rises over
  *   the fighter instead of collapsing into it. Pillar pull-in is fast-eased
@@ -29,8 +32,9 @@
 
 import * as THREE from 'three';
 import { DEG2RAD, clamp, wrapAngle } from '../core/math';
-import { PILLARS, PILLAR_HEIGHT, WALL_RADIUS } from '../config/arena';
 import { fovKick } from './fxBus';
+import { getRenderArena } from './arenaContext';
+import type { ArenaDef } from '../config/arenas';
 import type { FpEyeSample } from './animals/fp/types';
 import { UltCamOut } from './animals/fp/ultCam'; // v1.3 FP ult: ultimate camera director output
 import {
@@ -422,7 +426,7 @@ export class CameraRig {
       _fpPos.z += ul.slideZ + cosY * ul.eyeF;
       if (_fpPos.y < 0.14) _fpPos.y = 0.14;
       const r = Math.hypot(_fpPos.x, _fpPos.z);
-      const rMax = WALL_RADIUS - 0.22;
+      const rMax = getRenderArena().wallRadius - 0.22;
       if (r > rMax) {
         _fpPos.x *= rMax / r;
         _fpPos.z *= rMax / r;
@@ -494,58 +498,77 @@ export class CameraRig {
   }
 
   /**
-   * Analytic sphere-cast from `pivot` along `dir` (unit) against the arena
-   * wall circle (height-aware: a boom crossing above the rim continues to the
-   * stands), the six pillars (vertical cylinders) and the ground plane (§9
-   * geometry straight from config). Writes `_hit.hard` (wall/ground/stands —
-   * must never be crossed) and `_hit.soft` (pillars — eased pull-in).
+   * Analytic sphere-cast from `pivot` along `dir` (unit) against the CURRENT arena (see {@link boomCast}). Writes `_hit.hard`
+   * (wall/ground — must never be crossed) and `_hit.soft` (pillars — eased pull-in).
    */
   private collide(pivot: THREE.Vector3, dir: THREE.Vector3, maxDist: number): void {
-    let hard = maxDist;
-    let soft = maxDist;
-    const ox = pivot.x;
-    const oy = pivot.y;
-    const oz = pivot.z;
-    const dx = dir.x;
-    const dy = dir.y;
-    const dz = dir.z;
-    const a = dx * dx + dz * dz;
+    boomCast(getRenderArena(), pivot.x, pivot.y, pivot.z, dir.x, dir.y, dir.z, maxDist, _hit);
+  }
+}
 
-    if (a > 1e-8) {
-      // Arena wall: stay inside radius (WALL_RADIUS − pad) unless over the rim.
-      // (−WALL_DECOR: stay in front of the banners/torches/pilasters on the wall.)
-      // A pivot hugging the wall may sit outside the decor margin: then the
-      // collider grows to just beyond it (never past the real wall face).
-      const pr = Math.hypot(ox, oz) + 0.05;
-      let rw = WALL_RADIUS - CAM_PAD - WALL_DECOR;
-      if (pr > rw) rw = pr < WALL_RADIUS - CAM_PAD ? pr : WALL_RADIUS - CAM_PAD;
-      const tw = exitCircle(ox, oz, dx, dz, a, rw);
-      if (tw >= 0 && tw < hard) hard = tw;
+/**
+ * The camera boom's analytic sphere-cast (pure; `CameraRig.collide` calls it with the current arena): from (ox, oy, oz) along the
+ * unit direction (dx, dy, dz) up to `maxDist`, against the arena wall circle (height-aware: a boom crossing above the rim
+ * continues to the stands), its round blockers (vertical cylinders: the colosseum's pillars, the jungle's tree trunks) and the
+ * ground plane (§9 geometry straight from the arena data). Writes `out.hard` (wall / ground — must never be crossed) and
+ * `out.soft` (blockers — eased pull-in). For the colosseum this is bit-identical to the v1.7 collision. Tree trunks are special:
+ * a trunk between the pivot and the camera FADES instead (`render/jungle/treeFade.ts`), so only a boom end that would sit inside a
+ * trunk is eased back.
+ */
+export function boomCast(
+  arena: ArenaDef,
+  ox: number, oy: number, oz: number,
+  dx: number, dy: number, dz: number,
+  maxDist: number,
+  out: { hard: number; soft: number },
+): void {
+  let hard = maxDist;
+  let soft = maxDist;
+  const a = dx * dx + dz * dz;
 
-      // Pillars: ray vs expanded circle, honoring pillar height.
-      for (let i = 0; i < PILLARS.length; i++) {
-        const p = PILLARS[i];
-        const ocx = ox - p.x;
-        const ocz = oz - p.z;
-        const rr = p.radius + CAM_PAD;
-        const cc = ocx * ocx + ocz * ocz - rr * rr;
-        if (cc <= 0) continue; // pivot already inside the expanded circle
-        const bb = 2 * (ocx * dx + ocz * dz);
-        const disc2 = bb * bb - 4 * a * cc;
-        if (disc2 <= 0) continue;
-        const t0 = (-bb - Math.sqrt(disc2)) / (2 * a);
-        if (t0 > 0 && t0 < soft && oy + dy * t0 <= PILLAR_HEIGHT + CAM_PAD + 0.35) soft = t0;
+  if (a > 1e-8) {
+    // Arena wall: stay inside radius (wallRadius − pad) unless over the rim.
+    // (−WALL_DECOR: stay in front of the banners/torches/pilasters on the wall.)
+    // A pivot hugging the wall may sit outside the decor margin: then the
+    // collider grows to just beyond it (never past the real wall face).
+    const wallR = arena.wallRadius;
+    const pr = Math.hypot(ox, oz) + 0.05;
+    let rw = wallR - CAM_PAD - WALL_DECOR;
+    if (pr > rw) rw = pr < wallR - CAM_PAD ? pr : wallR - CAM_PAD;
+    const tw = exitCircle(ox, oz, dx, dz, a, rw);
+    if (tw >= 0 && tw < hard) hard = tw;
+
+    // Round blockers (pillars / tree trunks): ray vs expanded circle, honoring their height.
+    const circles = arena.circles;
+    for (let i = 0; i < circles.length; i++) {
+      const p = circles[i];
+      const ocx = ox - p.x;
+      const ocz = oz - p.z;
+      const rr = p.radius + CAM_PAD;
+      const cc = ocx * ocx + ocz * ocz - rr * rr;
+      if (cc <= 0) continue; // pivot already inside the expanded circle
+      const bb = 2 * (ocx * dx + ocz * dz);
+      const disc2 = bb * bb - 4 * a * cc;
+      if (disc2 <= 0) continue;
+      const sq = Math.sqrt(disc2);
+      const t0 = (-bb - sq) / (2 * a);
+      if (t0 > 0 && t0 < soft && oy + dy * t0 <= p.height + CAM_PAD + 0.35) {
+        if (p.kind === 'tree') {
+          const t1 = (-bb + sq) / (2 * a);
+          if (!(maxDist > t0 && maxDist < t1)) continue;
+        }
+        soft = t0;
       }
     }
-
-    // Ground plane.
-    if (dy < -1e-6) {
-      const tg = (GROUND_MIN_Y - oy) / dy;
-      if (tg > 0 && tg < hard) hard = tg;
-    }
-    _hit.hard = hard;
-    _hit.soft = soft < hard ? soft : hard;
   }
+
+  // Ground plane.
+  if (dy < -1e-6) {
+    const tg = (GROUND_MIN_Y - oy) / dy;
+    if (tg > 0 && tg < hard) hard = tg;
+  }
+  out.hard = hard;
+  out.soft = soft < hard ? soft : hard;
 }
 
 /** Distance along (dx,dz) at which a ray from inside a circle exits it (−1 if none). */

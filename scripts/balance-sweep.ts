@@ -10,6 +10,7 @@
  *   DUEL=1 N=10 LEVELS=4 npm run balance     (1v1 round-robin win matrix)
  *   TRAPS=0 N=60 npm run balance             (v1.2: no arena traps — the baseline)
  *   COMPARE=1 N=60 npm run balance           (v1.2: same seeds without and with traps + placement deltas)
+ *   ARENA=jungle N=30 npm run balance        (v1.8: play on the Jungle Clearing; default colosseum, output unchanged)
  *
  * v1.2 trap readout per level: trap triggers / damage per match, average trap
  * damage per fighter per match, trap share of ALL damage (fighter damage incl.
@@ -28,13 +29,17 @@ import { EventBus } from '../src/core/EventBus';
 import { BotManager } from '../src/ai/BotManager';
 import { ANIMAL_IDS } from '../src/config/animals';
 import { mulberry32 } from '../src/core/math';
-import type { AnimalId, Difficulty, MatchConfig } from '../src/core/types';
+import { ARENA_IDS } from '../src/core/types';
+import { getArena } from '../src/config/arenas';
+import type { AnimalId, ArenaId, Difficulty, MatchConfig } from '../src/core/types';
 
 const DT = 1 / 60;
 const N = Number(process.env.N ?? 30);
 const LEVELS = (process.env.LEVELS ?? '1,2,3,4')
   .split(',')
   .map((s) => Number(s.trim()) as Difficulty);
+/** FROM=201 N=400 re-runs only matches 201..400 of the FFA sweep (e.g. to trace one timeout without replaying the first 200). */
+const FROM = Number(process.env.FROM ?? 1);
 const SHUFFLE = (process.env.SEATS ?? 'shuffle') !== 'fixed';
 const DUEL = process.env.DUEL === '1';
 const MAX_SIM_S = Number(process.env.MAX_S ?? 300);
@@ -44,6 +49,15 @@ const TRACE = process.env.TRACE === '1';
 const TRAPS_ON = process.env.TRAPS !== '0';
 /** COMPARE=1 runs every level twice (no traps, then traps) on the same seeds. */
 const COMPARE = process.env.COMPARE === '1';
+/** v1.8 ARENA=colosseum|jungle: which arena the matches are played in (default colosseum). */
+const ARENA: ArenaId = ((): ArenaId => {
+  const v = process.env.ARENA ?? 'colosseum';
+  if (!(ARENA_IDS as readonly string[]).includes(v)) throw new Error(`ARENA must be one of ${ARENA_IDS.join('|')} (got "${v}")`);
+  return v as ArenaId;
+})();
+
+/** True when the chosen arena has terrain zones (the jungle): the sweep adds the water / moss readout. */
+const ARENA_HAS_TERRAIN = getArena(ARENA).terrain.length > 0;
 
 const A = ANIMAL_IDS as readonly AnimalId[];
 const IDX = new Map<AnimalId, number>(A.map((a, i) => [a, i]));
@@ -67,10 +81,17 @@ interface PerAnimal {
   held: number;
   /** v1.2: trap damage TAKEN. */
   trapTaken: number;
+  /** v1.8 (terrain arenas only): seconds alive in the water / on moss, over the pool without being in it (hop-chaining), damage dealt from the water. */
+  waterT: number;
+  mossT: number;
+  hopT: number;
+  dmgFromWater: number;
+  /** Damage taken (hit events, after block) while the VICTIM stood in the water. */
+  dmgTakenInWater: number;
 }
 
 function blank(): PerAnimal {
-  return { wins: 0, place: 0, ults: 0, specials: 0, dmg: 0, dmgBasic: 0, dmgSpecial: 0, dmgUlt: 0, dmgTotal: 0, kills: 0, survive: 0, ready: 0, held: 0, trapTaken: 0 };
+  return { wins: 0, place: 0, ults: 0, specials: 0, dmg: 0, dmgBasic: 0, dmgSpecial: 0, dmgUlt: 0, dmgTotal: 0, kills: 0, survive: 0, ready: 0, held: 0, trapTaken: 0, waterT: 0, mossT: 0, hopT: 0, dmgFromWater: 0, dmgTakenInWater: 0 };
 }
 
 /** v1.2 per-level trap / soar totals (ended matches only). */
@@ -117,11 +138,11 @@ function play(
   traps: boolean = TRAPS_ON,
   extras: LevelExtras | null = null,
 ): Outcome {
-  const cfg: MatchConfig = { roster: animals.map((a) => ({ animal: a, isPlayer: false })), difficulty: lvl };
+  const cfg: MatchConfig = { roster: animals.map((a) => ({ animal: a, isPlayer: false })), difficulty: lvl, arena: ARENA };
   const bus = new EventBus();
   const world = new World(cfg, seed, bus, { traps });
   const mx = blankExtras();
-  const bots = new BotManager(bus, lvl, seed);
+  const bots = new BotManager(bus, lvl, seed, world.arena);
   let ended = false;
   let winner = -1;
   const deathTime = new Array<number>(animals.length).fill(-1);
@@ -132,11 +153,15 @@ function play(
     const s = stats[IDX.get(animals[attackerId]) as number];
     const f = world.fighters[attackerId];
     s.dmg += damage;
+    if (f.inWater) s.dmgFromWater += damage;
     if (f.ability === null) s.dmgBasic += damage;
     else if (f.ability.kind === 'special') s.dmgSpecial += damage;
     else s.dmgUlt += damage;
   };
-  bus.on('hit', (e) => credit(e.attackerId, e.damage));
+  bus.on('hit', (e) => {
+    credit(e.attackerId, e.damage);
+    if (stats !== null && e.targetId >= 0 && world.fighters[e.targetId].inWater) stats[IDX.get(animals[e.targetId]) as number].dmgTakenInWater += e.damage;
+  });
   bus.on('blocked', (e) => credit(e.attackerId, e.damage));
   bus.on('ultimate', (e) => {
     if (stats !== null) stats[IDX.get(animals[e.fighterId]) as number].ults++;
@@ -168,6 +193,11 @@ function play(
   });
 
   const maxTicks = Math.ceil((MAX_SIM_S + 3.5) / DT);
+  const hasTerrain = world.arena.terrain.length > 0;
+  const pool = world.arena.terrain.find((z) => z.kind === 'water');
+  const poolX = pool?.x ?? 0;
+  const poolZ = pool?.z ?? 0;
+  const poolR = pool?.radius ?? 0;
   const wasFull = new Array<boolean>(animals.length).fill(false);
   for (let tick = 0; tick < maxTicks && !ended; tick++) {
     bots.update(world.snapshot(), DT);
@@ -178,6 +208,12 @@ function play(
         const st = world.fighters[id].state;
         const full = st.alive && st.ultCharge >= 100;
         const s = stats[IDX.get(animals[id]) as number];
+        if (hasTerrain && st.alive) {
+          const wf = world.fighters[id];
+          if (wf.inWater) s.waterT += DT;
+          if (wf.onMoss) s.mossT += DT;
+          if (!wf.inWater && poolR > 0 && Math.hypot(st.pos.x - poolX, st.pos.z - poolZ) < poolR) s.hopT += DT;
+        }
         if (full && !wasFull[id]) s.ready++;
         if (full) s.held += DT;
         wasFull[id] = full;
@@ -222,6 +258,11 @@ function pct(n: number, d: number): string {
   return `${((100 * n) / Math.max(1, d)).toFixed(0).padStart(3)}%`;
 }
 
+/** One-decimal percentage (the terrain readout needs finer cells than `pct`). */
+function pct1(n: number, d: number): string {
+  return `${((100 * n) / Math.max(1e-9, d)).toFixed(1).padStart(5)}%`;
+}
+
 function runFfa(lvl: Difficulty, traps: boolean = TRAPS_ON): PerAnimal[] {
   const stats = A.map(() => blank());
   const ex = blankExtras();
@@ -230,7 +271,7 @@ function runFfa(lvl: Difficulty, traps: boolean = TRAPS_ON): PerAnimal[] {
   let timeouts = 0;
   let bloodlust = 0;
   const t0 = Date.now();
-  for (let s = 1; s <= N; s++) {
+  for (let s = FROM; s <= N; s++) {
     const seed = 1000 * lvl + s;
     const r = play(seed, lvl, seatOrder(seed), stats, traps, ex);
     if (!r.ended) {
@@ -244,7 +285,7 @@ function runFfa(lvl: Difficulty, traps: boolean = TRAPS_ON): PerAnimal[] {
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   const e = Math.max(1, ended);
   console.log(
-    `\n=== L${lvl}  matches=${N} ended=${ended} timeouts=${timeouts} avgTime=${(timeSum / e).toFixed(0)}s  bloodlust=${pct(bloodlust, e)}  seats=${SHUFFLE ? 'shuffle' : 'fixed'}  traps=${traps ? 'on' : 'off'}  (${secs}s wall)`,
+    `\n=== L${lvl}  matches=${N} ended=${ended} timeouts=${timeouts} avgTime=${(timeSum / e).toFixed(0)}s  bloodlust=${pct(bloodlust, e)}  seats=${SHUFFLE ? 'shuffle' : 'fixed'}  traps=${traps ? 'on' : 'off'}${ARENA === 'colosseum' ? '' : `  arena=${ARENA}`}  (${secs}s wall)`,
   );
   console.log('animal     wins  win%  place | rdy/m ult/m held spc/m  dmg/m kill/m  life | basic spec  ult  (hit-event share) | trapT/m');
   const rows = A.map((a, i) => ({ a, s: stats[i] }));
@@ -261,6 +302,15 @@ function runFfa(lvl: Difficulty, traps: boolean = TRAPS_ON): PerAnimal[] {
   const totalUlts = stats.reduce((acc, s) => acc + s.ults, 0);
   const totalSpc = stats.reduce((acc, s) => acc + s.specials, 0);
   console.log(`avg ults/fighter/match ${(totalUlts / e / A.length).toFixed(2)}  specials/fighter/match ${(totalSpc / e / A.length).toFixed(1)}`);
+  if (ARENA_HAS_TERRAIN) {
+    console.log('terrain (share of life; hop = over the pool but not in it):  animal      water%  moss%  hop%   dmg-from-water%  pool-exchange (dealt/taken in water)');
+    for (const { a, s } of rows) {
+      const life = Math.max(1, s.survive);
+      console.log(
+        `                                                  ${a.padEnd(10)} ${pct1(s.waterT, life)} ${pct1(s.mossT, life)} ${pct1(s.hopT, life)}  ${pct1(s.dmgFromWater, Math.max(1, s.dmg))}      ${(s.dmgFromWater / Math.max(1, s.dmgTakenInWater)).toFixed(2)}`,
+      );
+    }
+  }
   console.log(
     `traps: triggers/match ${(ex.trapTriggers / e).toFixed(1)}  trapDmg/match ${(ex.trapDmg / e).toFixed(0)}  ` +
       `trapDmg/fighter/match ${(ex.trapDmg / e / A.length).toFixed(1)}  share of all damage ${((100 * ex.trapDmg) / Math.max(1, ex.allDmg)).toFixed(1)}%  ` +
@@ -309,7 +359,7 @@ function runDuels(lvl: Difficulty): void {
       }
     }
   }
-  console.log(`\n=== DUELS L${lvl}  N=${N} per pair  timeouts=${timeouts}   (row win% vs column)`);
+  console.log(`\n=== DUELS L${lvl}  N=${N} per pair  timeouts=${timeouts}${ARENA === 'colosseum' ? '' : `  arena=${ARENA}`}   (row win% vs column)`);
   console.log('           ' + A.map((a) => a.slice(0, 5).padStart(6)).join('') + '   total');
   for (let i = 0; i < A.length; i++) {
     let w = 0;

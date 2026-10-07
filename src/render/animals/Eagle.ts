@@ -22,6 +22,7 @@ import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, impactPulse, ramp, smooth01, easeOutCubic } from './Animator';
+import { SWIM_BOB_W } from './swim';
 import { EAGLE_DFA } from '../../config/ultimates/eagle';
 import {
   makeMat,
@@ -527,6 +528,28 @@ export class EagleRig extends BaseRig {
     m.tailRx = flare * 0.65 + proud * 0.15 + rest * -0.25;
     m.tailFan = flare + proud * 0.6;
     m.torsoRx = flare * -0.5 + rest * TORSO_REST;
+  }
+
+  /** Paddling (v1.8): half-spread wings rowing alternately low over the water (no flight), feet treading, nose up, tail on the water. */
+  protected override poseSwim(_speed: number, t: number, mv: number): void {
+    const ph = this.swimPhase;
+    const a = 0.5 + 0.5 * mv;
+    this.wingPose(0.5, 0.18, 0.25, 0, 0, 0.35);
+    const row = Math.sin(ph) * 0.5 * a;
+    this.wingLIn.rz += row;
+    this.wingRIn.rz -= Math.sin(ph + Math.PI) * 0.5 * a;
+    this.wingLOut.rz -= Math.max(0, row) * 0.4;
+    this.wingROut.rz += Math.max(0, Math.sin(ph + Math.PI) * 0.5 * a) * 0.4;
+    this.legs[0].rx = this.swim.tuck + Math.sin(ph) * 0.7 * a;
+    this.legs[1].rx = this.swim.tuck + Math.sin(ph + Math.PI) * 0.7 * a;
+    this.body.py = Math.sin(t * SWIM_BOB_W) * this.swim.bob + Math.sin(ph * 2) * 0.015 * mv;
+    this.body.rx = -0.1 - this.swim.pitch * mv;
+    this.body.rz = Math.sin(ph) * 0.05 * a;
+    this.head.rx = -0.12 + Math.max(0, Math.sin(t * 0.23)) * 0.2;
+    this.head.ry = Math.sin(t * 0.5) * 0.5;
+    this.tailFan.rx = 0.15;
+    this.tailFan.ry = Math.sin(ph * 0.5 + 0.6) * 0.3;
+    this.tailOpen(0.25);
   }
 
   protected poseBlock(t: number): void {

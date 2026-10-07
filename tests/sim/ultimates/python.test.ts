@@ -353,7 +353,7 @@ describe('python Coil Snare — interruption, cleanup, determinism', () => {
     step(fx, 2);
     expect(fx.c.state.alive).toBe(false);
     expect(fx.t.state.grabbedById).toBe(-1);
-    expect(fx.t.state.pos.y).toBeCloseTo(groundHeightAt(fx.t.state.pos.x, fx.t.state.pos.z), 5);
+    expect(fx.t.state.pos.y).toBeCloseTo(groundHeightAt(fx.t.state.pos.x, fx.t.state.pos.z, fx.t.arena), 5);
     step(fx, 20);
     expect(fx.t.state.action).not.toBe('grabbed');
     expect(fx.t.movementOwned).toBe(false);

@@ -48,6 +48,7 @@ export const EVENT_ID_FIELDS: { [K in Type]: ReadonlyArray<NumKeys<GameEventOf<K
   trapExpired: [],
   landingImpact: ['fighterId'],
   matchEnd: ['winnerId'],
+  splash: ['fighterId'],
 };
 
 /**
@@ -77,6 +78,7 @@ export const EVENT_NON_ID_NUMERIC_FIELDS: { [K in Type]: ReadonlyArray<NumKeys<G
   trapExpired: ['trapId'],
   landingImpact: ['radius', 'damage', 'height'],
   matchEnd: [],
+  splash: ['strength'],
 };
 
 function cloneFighter(f: FighterState): FighterState {

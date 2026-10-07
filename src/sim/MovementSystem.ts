@@ -6,8 +6,10 @@
  */
 
 import type { Fighter, Sim, CrateRuntime } from './Fighter';
-import { MOVE, ARENA } from '../config/balance';
-import { WALL_RADIUS } from '../config/arena';
+import { MOVE } from '../config/balance';
+import { TERRAIN } from '../config/terrain';
+import type { ArenaDef } from '../config/arenas';
+import { arenaGroundHeight } from '../config/arenas';
 import { GLIDE_HEIGHT, RUN_TURN_RATE, FIGHTER_PUSH_FRACTION, FIGHTER_PUSH_HEIGHT } from './simTuning';
 import { COMBO } from '../config/balance';
 import { rotateToward, dirToYaw, clamp } from '../core/math';
@@ -16,10 +18,9 @@ import { speedMult, fearFleeYaw } from './StatusEffects';
 /** Soar altitude controller gain (1/s): target climb speed = gain × altitude error, capped. */
 const SOAR_ALT_GAIN = 4;
 
-/** Ground height under (x,z): the dais top where applicable, else 0 (§7.8). */
-export function groundHeightAt(x: number, z: number): number {
-  const d = Math.sqrt(x * x + z * z);
-  return d <= 4 ? ARENA.daisY : ARENA.groundY;
+/** Ground height under (x,z) in `arena`: the dais top where the arena has one and (x,z) is on it, else 0 (§7.8). */
+export function groundHeightAt(x: number, z: number, arena: ArenaDef): number {
+  return arenaGroundHeight(arena, x, z);
 }
 
 /** Result of a push-out resolution pass. */
@@ -48,6 +49,7 @@ export function resolveObstacles(sim: Sim, f: Fighter, ignoreObstacles: boolean)
     const ob = sim.staticObstacles[i];
     if (ob.shape === 'circle') {
       if (ob.walkable) continue; // dais: step-up, not a blocker
+      if (ob.jumpable && y >= ob.height) continue; // (no shipped circle is jumpable; trees/pillars always block)
       pushOutCircle(f, ob.x, ob.z, ob.radius + r);
     } else if (ob.shape === 'segment') {
       if (ob.jumpable && y >= ob.height) continue; // jumped/glided over
@@ -126,9 +128,9 @@ function pushOutAabb(f: Fighter, cx: number, cz: number, hx: number, hz: number,
   return true;
 }
 
-/** Clamp a fighter inside the arena wall (circle r=30). Returns true if clamped. */
+/** Clamp a fighter inside its arena's wall (circle of `arena.wallRadius`, 30 m in both arenas). Returns true if clamped. */
 export function clampToWall(f: Fighter): boolean {
-  const maxR = WALL_RADIUS - f.def.radius;
+  const maxR = f.arena.wallRadius - f.def.radius;
   const d = Math.sqrt(f.state.pos.x * f.state.pos.x + f.state.pos.z * f.state.pos.z);
   if (d <= maxR) return false;
   const s = maxR / d;
@@ -176,7 +178,8 @@ export function locomote(sim: Sim, f: Fighter, dt: number): void {
   }
 
   const disabled = f.isDisabled();
-  const baseSpeed = f.def.speed * speedMult(f);
+  // v1.8: terrain (moss / shallow water) scales ORDINARY run speed only; `terrainSpeedMult` is exactly 1 off terrain.
+  const baseSpeed = f.def.speed * speedMult(f) * f.terrainSpeedMult;
 
   // Desired horizontal velocity.
   let dvx = 0;
@@ -241,12 +244,13 @@ export function locomote(sim: Sim, f: Fighter, dt: number): void {
     f.rootTimer <= 0 &&
     f.landRecoverT <= 0
   ) {
-    s.vel.y = MOVE.jumpVelocity;
+    // v1.8: a jump out of water / moss is a small hop (see TERRAIN.wetJumpMult); exactly the normal jump everywhere else.
+    s.vel.y = f.terrainSpeedMult < 1 ? MOVE.jumpVelocity * TERRAIN.wetJumpMult : MOVE.jumpVelocity;
     s.airborne = true;
   }
 
   // Vertical integration.
-  const gy = groundHeightAt(s.pos.x, s.pos.z);
+  const gy = groundHeightAt(s.pos.x, s.pos.z, sim.arena);
   if (s.airborne || s.pos.y > gy + 1e-4) {
     s.airborne = true;
     s.vel.y -= MOVE.gravity * dt;
@@ -303,7 +307,7 @@ function maybeStartGlide(f: Fighter): void {
   if (f.state.airborne && f.intent.jump && f.glideCd <= 0 && f.state.vel.y <= MOVE.jumpVelocity * 0.4) {
     f.state.glideT = glide.duration;
     f.flightT = 0;
-    f.soarPeak = Math.max(0, f.state.pos.y - groundHeightAt(f.state.pos.x, f.state.pos.z));
+    f.soarPeak = Math.max(0, f.state.pos.y - groundHeightAt(f.state.pos.x, f.state.pos.z, f.arena));
   }
 }
 
@@ -363,7 +367,7 @@ function updateGlide(sim: Sim, f: Fighter, dt: number): void {
   s.airborne = true;
   const soar = f.def.perks.soar;
   if (soar !== undefined) {
-    const gy = groundHeightAt(s.pos.x, s.pos.z);
+    const gy = groundHeightAt(s.pos.x, s.pos.z, sim.arena);
     const alt = s.pos.y - gy;
     const want = f.flightT < soar.climbDelay ? soar.glideHeight : soar.maxHeight;
     const vyTarget = clamp((want - alt) * SOAR_ALT_GAIN, -soar.climbRate, soar.climbRate);

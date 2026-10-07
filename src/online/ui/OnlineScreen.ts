@@ -11,6 +11,7 @@
 import type { Screen } from '../../core/ScreenManager';
 import { el, button, clear, append } from '../../ui/dom';
 import {
+  loadArena,
   loadBrawlSetup,
   loadDifficulty,
   loadOnlineAnimal,
@@ -365,7 +366,7 @@ export class OnlineScreen implements Screen {
       animal: loadOnlineAnimal(),
       mode: this.mode,
       settings: {
-        br: { botLevel: loadDifficulty() },
+        br: { botLevel: loadDifficulty(), arena: loadArena() },
         cl: { stage: brawl.stage, stocks: brawl.stocks, timeLimitS: brawl.timeMin * 60 },
       },
     };

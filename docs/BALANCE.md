@@ -1,5 +1,143 @@
 # Gladiator Kingdom — Balance Report (v1.3 ultimates on top of v1.2 WP-N and v1.1 WP-J)
 
+## v1.8 jungle (WP-J2): terrain-aware bots, hop rule, jungle balance
+
+Plan: `docs/JUNGLE-PLAN.md`. Arena data in `src/config/arenas.ts` (`JUNGLE_ARENA`), terrain numbers in `src/config/terrain.ts`, the swim attribute in `src/config/animals.ts`, bot terrain code in `src/ai/TerrainSense.ts` (hooks in `BotBrain` / `Perception`). Raw sweeps: `ARENA=jungle npm run balance` (new jungle telemetry: water %, moss %, over-the-pool "hop" %, damage dealt from the water, in-pool damage exchange; new `FROM=` env replays a tail of the seeds).
+
+### What changed
+
+| Area | Change | Why |
+|---|---|---|
+| **Bots read terrain** (jungle only: `arena.terrain.length > 0`, otherwise every call is a no-op) | `TerrainSense`: **path cost** (the exact shortest path round a disc, taken when `chord x weight x (cost - 1)` beats the detour; the cost is the animal's OWN water multiplier or the moss 0.65, so a crocodile at 1.05 per metre swims straight through and a giraffe at 3.1 walks round); **exit planning** from inside a zone (cheapest rim point toward the goal); **soft wall** (Veteran / Apex do not WALK INTO water, if they are poor swimmers, or moss, whoever they are, to start a fight: they slide along the edge for 2.5 s / 3.5 s of patience, then commit for 6 s; a movement special such as a leap or pounce is held back too); **flight** (L3+: a fast swimmer flees THROUGH the pool away from a slow swimmer, everyone else routes round); **never idle** in slow terrain when hurt or with nothing to fight; **dry rally ring + patrol** for the no-contact wander (the jungle's centre is the pool, so the old "drift to (0,0)" would park bots in the water; a ring without patrol stalled two bots hidden from each other by a trunk, so they walk the ring in opposite directions until somebody is in view); **target bias** (L3+: poor swimmers dislike a target in the pool, fast swimmers like a slow swimmer in it); **bots never press jump in water**. | Bots wandered through terrain blindly: at L4 they spent 13-27 % of their life swimming (giraffe 27 %, gorilla 23 %, mole 21 %, lion 19 %) and 7-16 % on moss. |
+| Level ladder (`TERRAIN_AI`) | L1 Cub: ignores terrain (only the dry rally ring). L2 Fighter: half-weight detours, leaves slow terrain when idle or hurt. L3 Veteran: full detours, soft wall 2.5 s, smart flight, target bias 0.25. L4 Apex: weight 1.15, soft wall 3.5 s, bias 0.4. | "L1 mostly ignorant, L4 clever". A giraffe sent across the pool to a target on the far side (9 s window): wet 5.3 / 1.9 / 0.7 / 0.7 s at L1 / L2 / L3 / L4, first hit at 7.9 / 6.0 / 5.0 / 5.1 s. |
+| **Sim: anti hop-chain rule** (`TERRAIN.wetJumpMult = 0.55`, `MovementSystem.locomote`) | A jump launched while `terrainSpeedMult < 1` (water, moss or its linger) leaves at 55 % speed: apex 0.37 m, below the 0.6 m grounded line, so the fighter keeps wading through the hop. Dry jumps and the whole colosseum are unchanged. | Held-jump spam bypassed the slow: a normal 1.2 m hop is 70 % above the grounded line, where terrain does nothing (table below: giraffe 6.3 s walking vs 3.2 s spamming Space across the pool). Bots never do it on purpose (0 hops measured), a player can mash the key. After the rule every animal gains at most 2 %. |
+| **Sim: orphaned-grab release** (`World.step` 2a, terrain arenas only) | A held fighter whose holder lost its ability to an interruption is released on the next tick. | A rhino staggered in the middle of its Lockdown carry kept its victim `grabbed` for ever (`Fighter.interrupt` only keeps `isGrab` abilities): jungle L3 seed 3396 timed out with a croc frozen at 1183 HP for 260 s (1 timeout in 400). The same bug exists in the colosseum (with the fix ungated the N=20 colosseum sweep changed in a few Cub matches), so the release is gated to terrain arenas to keep the colosseum byte-identical; deleting `this.terrain.active &&` in that loop fixes it there too (architect's call). |
+| Tooling | `scripts/identity-hash.ts` (per-tick FNV chain of every snapshot and bot intent, any arena); sweep terrain readout; `FROM=`. | Identity proof below. |
+
+Hop-chain test (`tests/sim/terrain.hop.test.ts`): time to run 16 m along z = 4 (10.2 m of it in the pool), walking vs tapping jump every 0.72 s:
+
+| Animal | walk | spam before | gain | spam after | gain |
+|---|---|---|---|---|---|
+| lion | 4.10 s | 2.90 s | x1.41 | 4.03 s | x1.02 |
+| gorilla | 6.02 s | 3.35 s | x1.80 | 5.98 s | x1.01 |
+| crocodile | 3.02 s | 2.97 s | x1.02 | 3.02 s | x1.00 |
+| hippo | 3.17 s | 2.97 s | x1.07 | 3.17 s | x1.00 |
+| rhino | 6.37 s | 3.82 s | x1.67 | 6.37 s | x1.00 |
+| panther | 3.35 s | 2.65 s | x1.26 | 3.30 s | x1.02 |
+| python | 3.65 s | 3.22 s | x1.13 | 3.65 s | x1.00 |
+| giraffe | 6.32 s | 3.23 s | x1.95 | 6.25 s | x1.01 |
+| mole | 4.42 s | 3.25 s | x1.36 | 4.42 s | x1.00 |
+
+The eagle glides and flyers are unaffected by design. Moss: x1.28 before, at most x1.15 after.
+
+### Swim and moss numbers (the J1b starting values: the sweeps needed no retune)
+
+| Animal | `swim` | water multiplier (x own land speed) | Class for the bots |
+|---|---|---|---|
+| crocodile | 0.93 | 0.95 | good (>= 0.70) |
+| hippo | 0.80 | 0.86 | good |
+| python | 0.65 | 0.76 | good |
+| panther | 0.43 | 0.60 | mid |
+| mole | 0.36 | 0.55 | mid |
+| lion | 0.29 | 0.50 | mid |
+| eagle | 0.21 | 0.45 | poor (< 0.45 is poor; on foot) |
+| rhino | 0.14 | 0.40 | poor |
+| gorilla | 0.08 | 0.36 | poor |
+| giraffe | 0.03 | 0.32 | poor |
+
+Moss: slow 35 % (x0.65), 0.4 s linger, every animal alike. Pool: r 6.5 at (0, 0), depth 0.55 m, shoreline hysteresis 0.15 m. Water multiplier = 0.30 + 0.70 x swim (strict ordering, all inside [0.30, 1.00]). Geometry unchanged (the J1a layout tests are green); `wetJumpMult` 0.55 is the only new number.
+
+Does the pool favour the good swimmers? Duels started IN the pool (1.6 m either side of its centre) versus on dry ground at the same spacing, L4 Apex bots, N = 30 per cell, win % of the row animal, land / pool:
+
+| | giraffe | gorilla | rhino | lion | panther | mole |
+|---|---|---|---|---|---|---|
+| crocodile | 83 / 100 | 40 / 57 | 50 / 53 | 60 / 70 | 80 / 83 | 100 / 100 |
+| hippo | 37 / 100 | 40 / 57 | 13 / 13 | 7 / 13 | 47 / 60 | 10 / 37 |
+| python | 97 / 100 | 60 / 73 | 17 / 47 | 47 / 37 | 37 / 60 | 80 / 97 |
+
+The three good swimmers win 49 % (L4) and 54 % (L3) of the nine pairings against the poor swimmers on land, and 67 % and 67 % in the pool: +13 to +18 points, the design intent, and nobody becomes unplayable (the giraffe was already the weakest duelist on land). Bot-vs-bot FFA shows it only mildly because Veteran / Apex bots avoid starting fights in the water: in-pool damage dealt / taken (L4, N = 300) is python 1.49, panther 1.35, lion 1.00, hippo 0.96, crocodile 0.91, gorilla 0.71, rhino 0.63.
+
+### Jungle results (`ARENA=jungle`, shuffled seats, traps on)
+
+**Before** (J1b code, bots blind to terrain), N = 60: win % per level, and the share of life at L4 in the water / on moss:
+
+| Animal | L1 | L2 | L3 | L4 | water L4 | moss L4 |
+|---|---|---|---|---|---|---|
+| lion | 8 | 5 | 15 | 7 | 19 % | 11 % |
+| gorilla | 8 | 15 | 20 | 2 | 23 % | 10 % |
+| crocodile | 12 | 20 | 12 | 17 | 13 % | 12 % |
+| hippo | 13 | 22 | 7 | 7 | 16 % | 16 % |
+| rhino | 12 | 5 | 8 | 7 | 14 % | 14 % |
+| eagle | 5 | 8 | 3 | 13 | 17 % | 7 % |
+| panther | 23 | 7 | 3 | 10 | 16 % | 9 % |
+| python | 10 | 5 | 15 | 15 | 17 % | 12 % |
+| giraffe | 7 | 10 | 5 | 7 | 27 % | 11 % |
+| mole | 2 | 3 | 12 | 17 | 21 % | 7 % |
+| avg match | 41 s | 42 s | 71 s | 90 s | | |
+| ults / fighter / match | 0.42 | 0.90 | 0.82 | 1.09 | | |
+
+**After** (final code), N = 60, same seeds (the N = 400 table below is the reliable one):
+
+| Animal | L1 | L2 | L3 | L4 | water L4 | moss L4 |
+|---|---|---|---|---|---|---|
+| lion | 8 | 2 | 8 | 5 | 10.3 % | 2.7 % |
+| gorilla | 10 | 20 | 13 | 3 | 5.1 % | 3.2 % |
+| crocodile | 13 | 20 | 7 | 15 | 13.5 % | 3.8 % |
+| hippo | 12 | 17 | 10 | 10 | 12.2 % | 7.1 % |
+| rhino | 10 | 7 | 3 | 2 | 9.0 % | 7.3 % |
+| eagle | 5 | 10 | 8 | 18 | 3.1 % | 1.9 % |
+| panther | 22 | 2 | 5 | 12 | 10.5 % | 2.3 % |
+| python | 12 | 7 | 15 | 18 | 12.6 % | 2.8 % |
+| giraffe | 7 | 13 | 13 | 7 | 7.4 % | 2.9 % |
+| mole | 2 | 3 | 17 | 10 | 9.8 % | 1.6 % |
+| avg match | 41 s | 42 s | 76 s | 89 s | | |
+
+**Final, N = 400 per level**, win % / average place, 0 timeouts at every level:
+
+| Animal | L1 | L2 | L3 | L4 | water % L1 / L2 / L3 / L4 | moss % L4 |
+|---|---|---|---|---|---|---|
+| lion | 7 / 6.04 | 6 / 6.14 | 6 / 6.26 | 8 / 5.96 | 2.3 / 6.3 / 6.1 / 9.5 | 3.1 |
+| gorilla | 9 / 5.26 | 10 / 5.47 | 9 / 5.43 | 7 / 5.59 | 2.0 / 8.8 / 5.0 / 5.9 | 3.5 |
+| crocodile | 21 / 4.45 | 20 / 4.53 | 10 / 5.12 | 13 / 4.72 | 2.3 / 7.4 / 8.7 / 13.4 | 4.2 |
+| hippo | 20 / 3.65 | 15 / 4.97 | 11 / 4.87 | 7 / 5.04 | 2.9 / 8.9 / 10.0 / 11.5 | 6.2 |
+| rhino | 11 / 4.52 | 11 / 5.24 | 6 / 5.79 | 4 / 6.18 | 2.3 / 8.0 / 5.9 / 7.3 | 6.2 |
+| eagle | 5 / 6.97 | 10 / 4.97 | 12 / 4.92 | 14 / 4.36 | 1.0 / 8.2 / 3.6 / 4.0 | 2.2 |
+| panther | 13 / 5.41 | 7 / 6.08 | 13 / 5.75 | 12 / 5.74 | 2.0 / 6.8 / 7.3 / 10.3 | 3.3 |
+| python | 6 / 6.15 | 11 / 5.72 | 14 / 5.82 | 16 / 5.42 | 1.5 / 7.1 / 8.0 / 11.6 | 3.0 |
+| giraffe | 5 / 5.89 | 7 / 5.56 | 9 / 5.67 | 8 / 6.20 | 1.2 / 9.6 / 6.6 / 8.3 | 4.4 |
+| mole | 5 / 6.66 | 4 / 6.32 | 11 / 5.37 | 13 / 5.80 | 1.4 / 5.1 / 6.5 / 9.9 | 2.1 |
+| **avg match** (colosseum v1.3: 44 / 41 / 89 / 93 s) | 41 s | 43 s | 74 s | 88 s | | |
+| **ults / fighter / match** (colosseum 0.57 / 0.99 / 1.04 / 1.17) | 0.42 | 0.90 | 0.84 | 1.13 | | |
+| **trap share of damage / trap deaths** | 0.9 % / 0.4 % | 0.3 % / 0.2 % | 0.2 % / 0.1 % | 0.3 % / 0.4 % | | |
+
+COMPARE (same seeds, traps off vs on, N = 100, L3 / L4): traps deal 0.2 % / 0.3 % of all damage and 0.1 % / 0.2 % of deaths; the largest placement shift is 0.60 / 0.79 (about 1.4 paired standard errors at N = 100) and no animal moves consistently.
+
+### Against the targets
+
+- **L3 / L4 win rates 4-18 %:** met at N = 400 (L3 6-14 %, L4 4-16 %). Edges: rhino L4 4 % (the colosseum's L4 rhino is 5-8 %; it is the weakest jungle animal: slow in the water and 6 % of its life on moss) and python L4 16 % (18-19 % in the N = 60 / 200 samples, inside the band at N = 400). The N = 60 table has two cells outside (rhino L3 3 % and L4 2 %) and eagle L4 at the 18 % ceiling: inside the +-4-point noise of that sample size, and inside the band at N = 400.
+- **L1 / L2 at most about 30 %:** top cells crocodile 21 % / 20 %, hippo 20 % (L1), panther 13 %.
+- **0 timeouts:** 0 in 4 x 400 FFA matches after the orphaned-grab release (1 before: seed 3396, L3). The N = 10 jungle duel matrices count 1-2 "timeouts" per level; those are mutual-KO draws (no winner), and eagle hit-and-run duels cut by a 120 s cap, which the colosseum duel matrix has too (1 at L3).
+- **About 1 ultimate per fighter per match:** 0.84 (L3) / 1.13 (L4). L1 0.42 and L2 0.90 are the jungle's own numbers (the blind-bot baseline was identical: 0.42 / 0.90); L1 is below the colosseum's 0.57 because trunks cut the Cubs' line of sight and matches are 7 % shorter.
+- **Average match within 30 % of the colosseum:** -7 % / +5 % / -17 % / -5 % against the v1.3 report.
+- **Traps at most about 6 % of damage and 3 % of deaths:** 0.2-0.9 % and 0.1-0.4 %.
+- **At most about 12 % of life in the water at L4 except crocodile / hippo / python:** lion 9.5, gorilla 5.9, rhino 7.3, eagle 4.0, panther 10.3, giraffe 8.3, mole 9.9 %; crocodile 13.4, hippo 11.5, python 11.6 %. Moss at most 6.2 %.
+- **Out of band:** nothing at N = 400. L2 spends 5-10 % of its life in the pool by design (half-weight detours). Duel cells are N = 10 per pair (+-15 points) and were only checked for pathologies.
+
+The level split inherited from v1.1 remains: hippo 20 % at L1 and 7 % at L4, crocodile 21 % and 13 %, python 6 % and 16 %, giraffe 5 % and 8 %.
+
+### Identity proof (the colosseum is byte-identical to before WP-J2)
+
+1. `scripts/identity-hash.ts` (a per-tick FNV-1a chain over `JSON.stringify(world.snapshot())` plus every bot intent; L1-L4 x 3 seeds, 12 full matches): before the WP-J2 edits and after the last one, all 12 per-match hashes and the chain `cd997f25` are identical.
+2. `N=20 LEVELS=1,2,3,4 TRACE=1 npm run balance` on the colosseum: identical output before and after, byte for byte (only the wall-time suffix differs).
+3. The unchanged AI / sim / online suites. Everything terrain-related is behind `arena.terrain.length > 0`, `TerrainSense.active` or `terrainSpeedMult < 1`; the orphaned-grab release is gated on `terrain.active` for this reason (ungated, it changed a few Cub matches, which is how the colosseum copy of the bug showed up).
+
+### Not verified / notes
+
+- No visual or in-browser check (bots and sim only; renderer and audio belong to WP-J3 / J4). Online BR: `hostDriver` and `SimDriver` already hand `world.arena` to `BotManager`; only the headless path was run.
+- The pool "ambush" (a fast swimmer camping in the water to lure a slow one in) is NOT implemented: good swimmers use the pool by pathing straight through it, preferring slow swimmers that stand in it and fleeing through it, but they do not wait in it.
+- The soft wall treats moss like water for Veteran / Apex (the same hold for any animal) although moss slows everybody equally; it costs little (moss at most 6 % of life) and keeps L3 / L4 from starting fights on it.
+- Duel matrices and the in-pool exchange table are small samples (10 and 30 per cell) and only indicative.
+
 ## v1.3: ten redesigned ultimates
 
 All ten ultimates were redesigned in v1.3 (one module, config, bot script, rig pose, VFX and audio file per animal; design notes in `docs/ultimates/<animal>.md`, raw sweeps in `docs/ultimates/<animal>-balance.txt`). Each animal's numbers live only in `src/config/ultimates/<animal>.ts`. Cost stays 100 charge. Targets: L3/L4 win rate about 4–18 %, L1/L2 at most about 30 %, 0 timeouts, about 1 ult per fighter per match.

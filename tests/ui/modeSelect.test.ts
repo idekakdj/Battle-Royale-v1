@@ -72,7 +72,7 @@ describe('mode card content', () => {
   it('has one card per mode with the agreed copy', () => {
     expect(GAME_MODES).toEqual(['battleRoyale', 'championsLeague']);
     expect(MODE_INFO.battleRoyale.name).toBe('Battle Royale');
-    expect(MODE_INFO.battleRoyale.blurb).toBe('10 gladiators, one winner. Fight through the colosseum against bots on four difficulty levels.');
+    expect(MODE_INFO.battleRoyale.blurb).toBe('10 gladiators, one winner. Fight through the colosseum or the jungle against bots on four difficulty levels.');
     expect(MODE_INFO.battleRoyale.tags).toEqual(['Free-for-all', '3D arena', 'Ultimates']);
     expect(MODE_INFO.championsLeague.name).toBe('Champions League');
     expect(MODE_INFO.championsLeague.blurb).toBe("Platform fighter. Build up rivals' damage and launch them off the stage.");

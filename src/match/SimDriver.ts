@@ -16,9 +16,10 @@
  */
 
 import { EventBus } from '../core/EventBus';
-import type { Difficulty, FighterIntent, GameEvent, AnimalId, RosterEntry, WorldSnapshot } from '../core/types';
+import type { ArenaId, Difficulty, FighterIntent, GameEvent, AnimalId, RosterEntry, WorldSnapshot } from '../core/types';
 import { World } from '../sim/World';
 import { BotManager } from '../ai/BotManager';
+import { getArena } from '../config/arenas';
 import { seatRoster } from './seating';
 
 /** One frame's worth of state delivered by a pull-style driver (the online client). */
@@ -38,6 +39,8 @@ export interface SimDriver {
   readonly stepsSim: boolean;
   /** False online: Esc opens the menu but the match keeps running. */
   readonly pausable: boolean;
+  /** v1.8: the arena this match is played on (absent = 'colosseum'). The controller builds the matching scene from it. */
+  readonly arena?: ArenaId;
   /** Roster in controller id order (id 0 = the local player). */
   readonly roster: readonly RosterEntry[];
   /** Display name per controller id; `null` = show the animal name (bots, offline). */
@@ -61,6 +64,8 @@ export interface LocalSimConfig {
   animal: AnimalId;
   difficulty: Difficulty;
   seed: number;
+  /** v1.8: the map (absent = 'colosseum': exactly the pre-1.8 match). */
+  arena?: ArenaId;
 }
 
 /** The offline sim: the player at fighter 0, nine seeded bots, one shared bus. */
@@ -68,22 +73,33 @@ export class LocalSimDriver implements SimDriver {
   readonly kind = 'local' as const;
   readonly stepsSim = true;
   readonly pausable = true;
+  readonly arena: ArenaId;
   readonly roster: readonly RosterEntry[];
   readonly names: readonly (string | null)[];
   readonly bus = new EventBus();
 
-  private readonly world: World;
+  /** The live simulation (QA / tests: `window.__gkBr.world`). */
+  readonly world: World;
   private readonly bots: BotManager;
   private snap: WorldSnapshot;
 
   constructor(cfg: LocalSimConfig) {
     // Roster: player's pick at index 0, the other nine seated by a seeded shuffle (fresh neighbours every match / REMATCH).
-    const roster = seatRoster(cfg.animal, cfg.seed);
+    const arenaDef = getArena(cfg.arena);
+    this.arena = arenaDef.id;
+    const roster = seatRoster(cfg.animal, cfg.seed, arenaDef);
     this.roster = roster;
     this.names = roster.map(() => null);
-    this.world = new World({ roster, difficulty: cfg.difficulty }, cfg.seed, this.bus);
+    // `arena` is only put in the config for a non-default map: a colosseum match builds EXACTLY the pre-1.8 `MatchConfig`.
+    this.world = new World(
+      cfg.arena !== undefined && cfg.arena !== 'colosseum'
+        ? { roster, difficulty: cfg.difficulty, arena: cfg.arena }
+        : { roster, difficulty: cfg.difficulty },
+      cfg.seed,
+      this.bus,
+    );
     // BotManager MUST share the bus and exist before the first step.
-    this.bots = new BotManager(this.bus, cfg.difficulty, cfg.seed);
+    this.bots = new BotManager(this.bus, cfg.difficulty, cfg.seed, this.world.arena);
     this.snap = this.world.snapshot();
   }
 

@@ -175,7 +175,7 @@ function charge(sim: Sim, f: Fighter, rt: AbilityRuntime, st: Stampede, dt: numb
   }
 
   const cr = chargeStep(sim, f, step, false);
-  s.pos.y = groundHeightAt(s.pos.x, s.pos.z);
+  s.pos.y = groundHeightAt(s.pos.x, s.pos.z, sim.arena);
   s.vel.x = rt.dirX * speed;
   s.vel.z = rt.dirZ * speed;
 
@@ -278,7 +278,7 @@ function carry(sim: Sim, f: Fighter, rt: AbilityRuntime, st: Stampede, dt: numbe
   const res = resolveObstacles(sim, t, false);
   const hitWall = clampToWall(t);
   const opposed = res.corrX * rt.dirX + res.corrZ * rt.dirZ;
-  v.pos.y = groundHeightAt(v.pos.x, v.pos.z) + K.hoistAlt * smooth(clamp01(st.carryT / K.hoistS));
+  v.pos.y = groundHeightAt(v.pos.x, v.pos.z, sim.arena) + K.hoistAlt * smooth(clamp01(st.carryT / K.hoistS));
   v.vel.x = f.state.vel.x;
   v.vel.z = f.state.vel.z;
   v.vel.y = 0;
@@ -300,7 +300,7 @@ function drop(sim: Sim, f: Fighter, st: Stampede): void {
   t.state.vel.x = 0;
   t.state.vel.z = 0;
   t.state.vel.y = 0;
-  if (t.state.pos.y > groundHeightAt(t.state.pos.x, t.state.pos.z) + 1e-3) t.state.airborne = true;
+  if (t.state.pos.y > groundHeightAt(t.state.pos.x, t.state.pos.z, sim.arena) + 1e-3) t.state.airborne = true;
 }
 
 /** Slammed into geometry with a victim on the horn: crush damage + stun, then the charge ends. */
@@ -312,7 +312,7 @@ function crush(sim: Sim, f: Fighter, rt: AbilityRuntime, st: Stampede): void {
     dealDamage(sim, f, t, spec.bonusDamage ?? K.crushDamage, { blockable: false, heavy: true, reaction: 'none', isBasic: false });
     if (t.state.alive && spec.bonusEffects !== undefined) for (const e of spec.bonusEffects) applyEffect(sim, f, t, e);
   }
-  const pos = t !== undefined ? { x: t.state.pos.x, y: groundHeightAt(t.state.pos.x, t.state.pos.z), z: t.state.pos.z } : undefined;
+  const pos = t !== undefined ? { x: t.state.pos.x, y: groundHeightAt(t.state.pos.x, t.state.pos.z, sim.arena), z: t.state.pos.z } : undefined;
   drop(sim, f, st);
   rt.didHit = true;
   emitUltimateStage(sim, f, rt, 3, pos);
@@ -335,7 +335,7 @@ function skid(sim: Sim, f: Fighter, rt: AbilityRuntime, st: Stampede, dt: number
   const speed = st.skidSpeed * (1 - u) * (1 - u);
   st.speed = speed;
   chargeStep(sim, f, speed * dt, false);
-  f.state.pos.y = groundHeightAt(f.state.pos.x, f.state.pos.z);
+  f.state.pos.y = groundHeightAt(f.state.pos.x, f.state.pos.z, sim.arena);
   f.state.vel.x = rt.dirX * speed;
   f.state.vel.z = rt.dirZ * speed;
   contacts(sim, f, rt, st, false); // still a battering ram while it slides (sweeps only)

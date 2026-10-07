@@ -12,7 +12,8 @@
  */
 
 import { ANIMALS } from '../../config/animals';
-import type { Difficulty, RosterEntry } from '../../core/types';
+import type { ArenaId, Difficulty, MatchConfig, RosterEntry } from '../../core/types';
+import { isArenaId } from '../../config/arenas';
 import type { MatchResults, ResultsStanding } from '../../ui/Results';
 import type { OnlineSlotInfo, OnlineStart } from '../types';
 import { swapId, swapList } from './idSwap';
@@ -24,6 +25,21 @@ export const MAX_NAME_CHARS = 16;
 /** Slots in fighter-id order (the contract says index = id; sort defensively). */
 export function orderedSlots(start: OnlineStart): OnlineSlotInfo[] {
   return [...start.slots].sort((a, b) => a.slot - b.slot);
+}
+
+/** The map of an online match: the host's pick from the start message (`br.arena`), the colosseum when absent / unknown. */
+export function startArena(start: OnlineStart): ArenaId {
+  const a = start.br?.arena;
+  return isArenaId(a) ? a : 'colosseum';
+}
+
+/**
+ * The `World` config of an online Battle Royale match (host sim and the client's never-stepped spawn-pose world). `arena` is put
+ * in only for a non-default map, so a colosseum room builds exactly the pre-1.8 config.
+ */
+export function netMatchConfig(start: OnlineStart, roster: RosterEntry[], difficulty: Difficulty): MatchConfig {
+  const arena = startArena(start);
+  return arena === 'colosseum' ? { roster, difficulty } : { roster, difficulty, arena };
 }
 
 /**

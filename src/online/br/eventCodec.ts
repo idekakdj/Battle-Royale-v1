@@ -52,6 +52,10 @@ const step3 = (r: ByteReader): 0 | 1 | 2 => {
 };
 const f32 = readFiniteF32;
 
+/** Splash strength 0..1 is sent as one byte. */
+const STRENGTH_STEPS = 255;
+const qStrength = (v: number): number => (v === v ? Math.max(0, Math.min(STRENGTH_STEPS, Math.round(v * STRENGTH_STEPS))) : 0);
+
 /** Every GameEvent variant has exactly one codec; a missing key is a type error. */
 export const EVENT_CODECS: { [K in Type]: EventCodec<K> } = {
   hit: {
@@ -321,6 +325,17 @@ export const EVENT_CODECS: { [K in Type]: EventCodec<K> } = {
     write: (w, e) => writeOptId(w, e.winnerId),
     read: (r) => ({ type: 'matchEnd', winnerId: readOptId(r) }),
   },
+  // v1.8 jungle: a fighter crossed the pool's waterline. fighter · pos · u8 entering · u8 strength×255 (error ≤ 1/510).
+  splash: {
+    tag: 22,
+    write: (w, e) => {
+      writeOptId(w, e.fighterId);
+      writeVec3(w, e.pos);
+      w.u8(e.entering ? 1 : 0);
+      w.u8(qStrength(e.strength));
+    },
+    read: (r) => ({ type: 'splash', fighterId: readOptId(r), pos: readVec3(r), entering: bool(r), strength: r.u8() / STRENGTH_STEPS }),
+  },
 };
 
 /** All variant names, in tag order (derived from the exhaustive table). */
@@ -395,5 +410,7 @@ export function decodeEventBatch(bytes: Uint8Array): EventBatch | null {
 
 /** Quantisation tolerance of event positions (m). */
 export const EVENT_POS_TOLERANCE = 0.5 / Q.POS + 1e-9;
+/** Quantisation tolerance of the splash event's strength (one byte over 0..1). */
+export const EVENT_STRENGTH_TOLERANCE = 0.5 / STRENGTH_STEPS + 1e-9;
 /** Quantisation tolerance of event yaw angles (rad). */
 export const EVENT_ANGLE_TOLERANCE = (Math.PI * 2) / Q.ANGLE + 1e-9;

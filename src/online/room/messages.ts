@@ -21,7 +21,8 @@
 
 import { ANIMAL_IDS } from '../../config/animals';
 import { STAGE_IDS, type StageId } from '../../brawl/types';
-import type { AnimalId, Difficulty } from '../../core/types';
+import type { AnimalId, ArenaId, Difficulty } from '../../core/types';
+import { ARENA_IDS } from '../../core/types';
 import type { OnlineMode, OnlineSlotInfo, OnlineStart } from '../types';
 import { ROOM_LIMITS, type RoomSettings, type RoomVersions } from './types';
 
@@ -128,6 +129,11 @@ export function parseVersions(v: unknown): RoomVersions | null {
   return { protocol: r.protocol, appVersion: app, fingerprints: { battleRoyale: br, championsLeague: cl } };
 }
 
+/** A wire arena id: one of `ARENA_IDS`, else `fallback` (an unknown map from a newer/older build never crashes a peer). */
+function parseArenaId(v: unknown, fallback: ArenaId): ArenaId {
+  return typeof v === 'string' && (ARENA_IDS as readonly string[]).includes(v) ? (v as ArenaId) : fallback;
+}
+
 export function parseSettings(v: unknown, base: RoomSettings): RoomSettings {
   const r = asRecord(v);
   if (r === null) return base;
@@ -137,6 +143,7 @@ export function parseSettings(v: unknown, base: RoomSettings): RoomSettings {
     br: {
       botLevel: clampInt(br?.botLevel, 1, 4, base.br.botLevel) as Difficulty,
       fillBots: typeof br?.fillBots === 'boolean' ? br.fillBots : base.br.fillBots,
+      arena: parseArenaId(br?.arena, base.br.arena),
     },
     cl: {
       stage: (STAGE_IDS as readonly unknown[]).includes(cl?.stage) ? (cl?.stage as StageId) : base.cl.stage,
@@ -237,7 +244,7 @@ export function parseStart(v: unknown): WireStart | null {
   }
   const out: WireStart = { mode: o.mode, seed: o.seed >>> 0, slots, hostPeerId };
   const br = asRecord(o.br);
-  if (br !== null) out.br = { difficulty: clampInt(br.difficulty, 1, 4, 2) as Difficulty };
+  if (br !== null) out.br = { difficulty: clampInt(br.difficulty, 1, 4, 2) as Difficulty, arena: parseArenaId(br.arena, 'colosseum') };
   const cl = asRecord(o.cl);
   if (cl !== null) {
     const stage: StageId = (STAGE_IDS as readonly unknown[]).includes(cl.stage) ? (cl.stage as StageId) : 'brokenColosseum';

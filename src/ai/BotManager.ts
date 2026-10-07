@@ -2,7 +2,7 @@
  * BotManager — WP-C public entry point (BLUEPRINT §10 / §14).
  *
  * WP-I usage per tick:
- *   const bots = new BotManager(bus, difficulty, seed);  // same bus as World
+ *   const bots = new BotManager(bus, difficulty, seed, world.arena);  // same bus as World; arena = the match's arena
  *   bots.update(world.snapshot(), FIXED_DT);             // once per tick
  *   for (const id of botIds) world.setIntent(id, bots.getIntent(id));
  *
@@ -15,7 +15,8 @@
  * events are stamped `now + reactionMs` before release (see Perception).
  */
 
-import type { Difficulty, FighterIntent, WorldSnapshot } from '../core/types';
+import type { ArenaId, Difficulty, FighterIntent, WorldSnapshot } from '../core/types';
+import { COLOSSEUM_ARENA, getArena, type ArenaDef } from '../config/arenas';
 import type { EventBus } from '../core/EventBus';
 import { BOT_PROFILES } from '../config/botProfiles';
 import { mulberry32, type Rng } from '../core/math';
@@ -36,6 +37,8 @@ const NEUTRAL_INTENT: Readonly<FighterIntent> = {
 
 export class BotManager {
   private readonly difficulty: Difficulty;
+  /** v1.8: the arena every brain steers/sees in (default the colosseum). */
+  readonly arena: ArenaDef;
   private readonly rootRng: Rng;
   private readonly brains: (BotBrain | null)[] = [];
   private readonly overrides = new Map<number, Difficulty>();
@@ -48,8 +51,10 @@ export class BotManager {
   private lastDt = 1 / 60;
   private initialized = false;
 
-  constructor(bus: EventBus, difficulty: Difficulty, seed: number) {
+  /** `arena`: an {@link ArenaDef} (normally `world.arena`) or an arena id; omitted = the colosseum. */
+  constructor(bus: EventBus, difficulty: Difficulty, seed: number, arena?: ArenaDef | ArenaId) {
     this.difficulty = difficulty;
+    this.arena = arena === undefined ? COLOSSEUM_ARENA : typeof arena === 'string' ? getArena(arena) : arena;
     this.rootRng = mulberry32(seed);
     bus.onAny((ev) => {
       if (!this.initialized) return; // pre-match events (countdown emits none)
@@ -89,7 +94,7 @@ export class BotManager {
           this.brains.push(null);
         } else {
           const d = this.overrides.get(i) ?? this.difficulty;
-          this.brains.push(new BotBrain(i, f.animal, BOT_PROFILES[d], childSeed));
+          this.brains.push(new BotBrain(i, f.animal, BOT_PROFILES[d], childSeed, this.arena));
         }
       }
       this.initialized = true;

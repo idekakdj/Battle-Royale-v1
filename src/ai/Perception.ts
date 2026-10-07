@@ -9,32 +9,28 @@
  *    live (proprioception is instant for human players too).
  *  - events: queued here with a release timestamp of `now + reactionMs`.
  *
- * Line of sight is a 2D ray against the 6 stone pillars only (crates and low
- * walls do not block sight, §10); both fighters are always inside the wall so
+ * Line of sight is a 2D ray against the arena's tall round blockers only (the 6 stone
+ * pillars / the jungle tree trunks; crates and low walls do not block sight, §10); both fighters are always inside the wall so
  * the wall never occludes. Stealthed panthers are lost (last-known position is
  * frozen) until they attack. Untargetable fighters (burrowed mole, soaring
  * eagle) cannot be targeted but their last-known position is remembered.
  */
 
 import type { AnimalId, FighterAction, FighterState, GameEvent, WorldSnapshot } from '../core/types';
-import { PILLARS } from '../config/arena';
+import type { ArenaDef } from '../config/arenas';
+import { COLOSSEUM_ARENA } from '../config/arenas';
 import { groundY } from './Steering';
 import { DangerZones } from './dangerZones';
 
-/** Flattened pillar circles for the LOS test (radius² precomputed). */
-const LOS_PILLARS: readonly { x: number; z: number; rSq: number }[] = PILLARS.map((p) => ({
-  x: p.x,
-  z: p.z,
-  rSq: p.radius * p.radius,
-}));
-
-/** True when the segment (ax,az)→(bx,bz) is not occluded by any pillar. */
-export function hasLineOfSight(ax: number, az: number, bx: number, bz: number): boolean {
+/** True when the segment (ax,az)→(bx,bz) is not occluded by any pillar / tree trunk of `arena` (default: the colosseum). */
+export function hasLineOfSight(ax: number, az: number, bx: number, bz: number, arena: ArenaDef = COLOSSEUM_ARENA): boolean {
   const dx = bx - ax;
   const dz = bz - az;
   const lenSq = dx * dx + dz * dz;
-  for (let i = 0; i < LOS_PILLARS.length; i++) {
-    const p = LOS_PILLARS[i];
+  const blockers = arena.circles;
+  for (let i = 0; i < blockers.length; i++) {
+    const p = blockers[i];
+    const rSq = p.radius * p.radius;
     let t = 0;
     if (lenSq > 1e-9) {
       t = ((p.x - ax) * dx + (p.z - az) * dz) / lenSq;
@@ -43,7 +39,7 @@ export function hasLineOfSight(ax: number, az: number, bx: number, bz: number): 
     }
     const cx = ax + dx * t - p.x;
     const cz = az + dz * t - p.z;
-    if (cx * cx + cz * cz <= p.rSq) return false;
+    if (cx * cx + cz * cz <= rSq) return false;
   }
   return true;
 }
@@ -83,6 +79,9 @@ export interface TrackedEnemy {
   dist: number;
   /** v1.2: metres above the ground (a soaring eagle is out of ground reach). */
   alt: number;
+  /** v1.8: last-seen terrain flags (wading in the pool / standing on moss); always false in arenas without terrain. */
+  inWater: boolean;
+  onMoss: boolean;
   lastSeen: number;
   /** Stealth reveal window (set when the stealthed fighter attacks). */
   revealedUntil: number;
@@ -111,16 +110,20 @@ export class Perception {
    * v1.3 danger zones built from released `ultimateTarget`/`ultimateStage`/`telegraph` events of OTHER
    * fighters whose ultimate spec opts in (`targeting.dodge`); empty for today's ultimates.
    */
-  readonly zones = new DangerZones();
+  readonly zones: DangerZones;
+  /** v1.8: the arena the bot fights in (line of sight, ground height, landing sanity). */
+  readonly arena: ArenaDef;
 
   private readonly animalOf = (id: number): AnimalId | undefined => this.enemies[id]?.animal;
 
   private queue: QueuedEvent[] = [];
   private qHead = 0;
 
-  constructor(selfId: number, reactionS: number) {
+  constructor(selfId: number, reactionS: number, arena: ArenaDef = COLOSSEUM_ARENA) {
     this.selfId = selfId;
     this.reactionS = reactionS;
+    this.arena = arena;
+    this.zones = new DangerZones(arena);
   }
 
   /** Buffer an event; the brain sees it once `now >= at` (reaction delay). */
@@ -173,6 +176,8 @@ export class Perception {
           rooted: false,
           dist: 0,
           alt: 0,
+          inWater: false,
+          onMoss: false,
           lastSeen: -1e9,
           revealedUntil: -1e9,
         });
@@ -218,7 +223,7 @@ export class Perception {
         }
       }
       const hidden = (stealthed && now > t.revealedUntil) || untargetable;
-      const seen = !hidden && hasLineOfSight(sx, sz, f.pos.x, f.pos.z);
+      const seen = !hidden && hasLineOfSight(sx, sz, f.pos.x, f.pos.z, this.arena);
 
       t.targetable = !untargetable && !hidden && f.alive;
       t.visible = seen;
@@ -227,7 +232,9 @@ export class Perception {
         const prevT = t.actionT;
         t.x = f.pos.x;
         t.z = f.pos.z;
-        t.alt = f.pos.y - groundY(f.pos.x, f.pos.z);
+        t.alt = f.pos.y - groundY(f.pos.x, f.pos.z, this.arena);
+        t.inWater = f.inWater === true;
+        t.onMoss = f.onMoss === true;
         t.velX = f.vel.x;
         t.velZ = f.vel.z;
         t.yaw = f.yaw;

@@ -193,6 +193,20 @@ describe('swapIds(snapshot)', () => {
     expect(swapIds(out, A, 99)).toEqual(s);
   });
 
+  it('v1.8 terrain flags travel with their fighter through the swap (and absent stays absent)', () => {
+    const s = snapshotWith(A);
+    s.fighters[A].inWater = true;
+    s.fighters[B].onMoss = true;
+    const out = swapIds(s, A, B);
+    // the swap exchanges the two slots, so the flagged fighters now sit at the other index but keep their flags
+    expect(out.fighters[B].id).toBe(B);
+    expect(out.fighters[B].inWater).toBe(true);
+    expect(out.fighters[A].onMoss).toBe(true);
+    expect(out.fighters[0].inWater).toBeUndefined();
+    expect('inWater' in out.fighters[0]).toBe(false);
+    expect(swapIds(out, A, B)).toEqual(s);
+  });
+
   it('keeps an absent ultTargetId absent and an absent projectiles list absent', () => {
     const s = snapshotWith(A);
     delete s.projectiles;
@@ -263,6 +277,13 @@ describe('swapEventIds', () => {
       fields.forEach((f) => expect(sw[f]).toBe(swapId(ev[f] as number, A, B)));
       expect(swapEventIds(sw as unknown as GameEvent, A, B)).toEqual(ev);
     }
+  });
+
+  it('v1.8 splash: fighterId is remapped, strength / entering / pos are not', () => {
+    const ev: GameEvent = { type: 'splash', fighterId: A, pos: { x: 1, y: 0.55, z: 2 }, entering: true, strength: 0.7 };
+    expect(swapEventIds(ev, A, B)).toEqual({ type: 'splash', fighterId: B, pos: { x: 1, y: 0.55, z: 2 }, entering: true, strength: 0.7 });
+    expect(swapEventIds(swapEventIds(ev, A, B), A, B)).toEqual(ev);
+    expect(swapEventIds(ev, B, OTHER)).toEqual(ev); // an unrelated pair leaves it alone
   });
 
   it('death.placement and crate/trap ids are not fighter ids', () => {

@@ -208,12 +208,12 @@ function leap(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): void {
   const frac = Math.min(1, rt.accum / LEAP_DURATION);
   f.state.pos.x = lerp(rt.sx, rt.px, frac);
   f.state.pos.z = lerp(rt.sz, rt.pz, frac);
-  const gy = groundHeightAt(f.state.pos.x, f.state.pos.z);
+  const gy = groundHeightAt(f.state.pos.x, f.state.pos.z, sim.arena);
   f.state.pos.y = gy + LEAP_PEAK * Math.sin(Math.PI * frac);
   f.state.airborne = true;
   clampToWall(f);
   if (frac >= 1) {
-    f.state.pos.y = groundHeightAt(f.state.pos.x, f.state.pos.z);
+    f.state.pos.y = groundHeightAt(f.state.pos.x, f.state.pos.z, sim.arena);
     f.state.airborne = false;
     if (f.def.id === 'lion') {
       hitArea(sim, f, {

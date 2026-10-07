@@ -107,7 +107,7 @@ function attach(sim: Sim, f: Fighter, v: Fighter, rt: AbilityRuntime): void {
   s.pos.z = v.state.pos.z - rt.dirZ * off;
   resolveObstacles(sim, f, false);
   clampToWall(f);
-  s.pos.y = groundHeightAt(s.pos.x, s.pos.z);
+  s.pos.y = groundHeightAt(s.pos.x, s.pos.z, sim.arena);
   s.yaw = dirToYaw(rt.dirX, rt.dirZ);
   s.vel.x = 0;
   s.vel.z = 0;
@@ -158,7 +158,7 @@ export const lionUltimate: UltimateImpl = {
     rt.accum = 0;
     rt.sx = f.state.pos.x;
     rt.sz = f.state.pos.z;
-    emitUltimateStage(sim, f, rt, H.stage.leap, { x: rt.px, y: groundHeightAt(rt.px, rt.pz), z: rt.pz });
+    emitUltimateStage(sim, f, rt, H.stage.leap, { x: rt.px, y: groundHeightAt(rt.px, rt.pz, sim.arena), z: rt.pz });
   },
 
   activeTick(sim, f, rt, dt) {
@@ -188,7 +188,7 @@ function leapTick(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): void {
   clampToWall(f);
   const run = dist2(rt.sx, rt.sz, rt.px, rt.pz);
   const peak = Math.min(H.leapPeakMax, H.leapPeakBase + H.leapPeakPerM * run);
-  const gy = groundHeightAt(s.pos.x, s.pos.z);
+  const gy = groundHeightAt(s.pos.x, s.pos.z, sim.arena);
   s.pos.y = gy + peak * 4 * frac * (1 - frac);
   s.airborne = frac < 1;
   s.vel.x = (s.pos.x - ox) / dt;
@@ -207,7 +207,7 @@ function touchdown(sim: Sim, f: Fighter, rt: AbilityRuntime): void {
   s.pos.z = rt.pz;
   resolveObstacles(sim, f, false);
   clampToWall(f);
-  s.pos.y = groundHeightAt(s.pos.x, s.pos.z);
+  s.pos.y = groundHeightAt(s.pos.x, s.pos.z, sim.arena);
   s.airborne = false;
   s.vel.x = 0;
   s.vel.y = 0;

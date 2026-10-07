@@ -267,6 +267,21 @@ export class LionRig extends BaseRig {
     this.tail2.ry = v[LC.tail2Ry];
   }
 
+  /** Dog-paddle (v1.8): head and mane held high, front paws reaching and stroking, hind legs kicking short, tail trailing. */
+  protected override poseSwim(speed: number, t: number, mv: number): void {
+    super.poseSwim(speed, t, mv);
+    const ph = this.swimPhase;
+    this.neck.rx = -0.06 - 0.05 * mv + Math.sin(ph) * 0.03;
+    this.jaw.rx = 0.03 + Math.max(0, Math.sin(ph * 2 + 1)) * 0.05 * mv; // panting
+    this.mane.s = 1.03 + Math.sin(t * 2.3) * 0.015; // the mane floats out
+    if (this.tail) {
+      this.tail.rx = -0.55;
+      this.tail.ry = Math.sin(ph * 0.5 + 0.6) * 0.3;
+    }
+    this.tail2.rx = -0.3;
+    this.tail2.ry = Math.sin(ph * 0.5 + 1.5) * 0.4;
+  }
+
   protected poseBlock(t: number): void {
     this.body.py = -0.12;
     this.body.rx = 0.08 + Math.sin(t * 2) * 0.015;

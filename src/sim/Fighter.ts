@@ -10,6 +10,8 @@
 import type { AnimalId, FighterIntent, FighterState, GameEvent, Vec3 } from '../core/types';
 import type { AnimalDef, AbilitySpec } from '../config/animals';
 import type { Obstacle } from '../config/arena';
+import type { ArenaDef } from '../config/arenas';
+import { COLOSSEUM_ARENA } from '../config/arenas';
 import type { EventBus } from '../core/EventBus';
 import type { Rng } from '../core/math';
 import { MOVE } from '../config/balance';
@@ -75,6 +77,8 @@ export interface AbilityRuntime {
 export interface Sim {
   readonly fighters: Fighter[];
   readonly crates: CrateRuntime[];
+  /** v1.8: the arena being played (walls, colliders, pads, spawns, terrain, trap rules). */
+  readonly arena: ArenaDef;
   readonly staticObstacles: readonly Obstacle[];
   readonly bus: EventBus;
   readonly rng: Rng;
@@ -233,9 +237,40 @@ export class Fighter {
   // (charges/dashes/leaps/grabs) so MovementSystem skips normal locomotion.
   movementOwned = false;
 
-  constructor(id: number, animal: AnimalId, def: AnimalDef, isPlayer: boolean, pos: Vec3, yaw: number) {
+  // ── v1.8 terrain (written ONLY by TerrainSystem; all stay at their neutral values in the colosseum) ──
+  /** Grounded and centre inside a water disc (hysteresis at the shoreline). Snapshots carry it as `FighterState.inWater`. */
+  inWater = false;
+  /** Grounded and body overlapping a moss patch. Snapshots carry it as `FighterState.onMoss`. */
+  onMoss = false;
+  /** Index (in the arena's terrain list) of the water disc the fighter is in, −1 when none. */
+  waterZone = -1;
+  /** Seconds the moss slow still clings after leaving a patch. */
+  mossLingerT = 0;
+  /**
+   * Multiplier on ORDINARY run/walk speed from terrain: water multiplier (per-animal `swim`) × moss factor; exactly 1 off terrain.
+   * Read by MovementSystem.locomote ONLY — abilities, ultimates, knockback and flight keep their own speeds.
+   */
+  terrainSpeedMult = 1;
+  /** Position the terrain system saw last tick (NaN until its first look) — splash strength uses the real displacement, so dashes / leaps (which leave `vel` at 0) splash too. */
+  terrainPrevX = Number.NaN;
+  terrainPrevY = Number.NaN;
+  terrainPrevZ = Number.NaN;
+
+  /** v1.8: the arena this fighter fights in (World passes its own; defaults to the colosseum for bare test fixtures). */
+  readonly arena: ArenaDef;
+
+  constructor(
+    id: number,
+    animal: AnimalId,
+    def: AnimalDef,
+    isPlayer: boolean,
+    pos: Vec3,
+    yaw: number,
+    arena: ArenaDef = COLOSSEUM_ARENA,
+  ) {
     this.id = id;
     this.def = def;
+    this.arena = arena;
     this.state = makeState(id, animal, def, isPlayer, pos, yaw);
   }
 

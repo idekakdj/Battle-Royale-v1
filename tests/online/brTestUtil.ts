@@ -10,6 +10,7 @@ import { BotManager } from '../../src/ai/BotManager';
 import { ANIMAL_IDS } from '../../src/config/animals';
 import type {
   AnimalId,
+  ArenaId,
   Difficulty,
   FighterIntent,
   FighterState,
@@ -19,6 +20,7 @@ import type {
   WorldSnapshot,
 } from '../../src/core/types';
 import { TOLERANCE, angleDiff } from '../../src/online/br/tables';
+import { mulberry32 } from '../../src/core/math';
 
 export const DT = 1 / 60;
 
@@ -30,18 +32,20 @@ export interface Recording {
   roster: MatchConfig['roster'];
 }
 
-export function tenAnimalConfig(difficulty: Difficulty): MatchConfig {
-  return { roster: (ANIMAL_IDS as AnimalId[]).map((a) => ({ animal: a, isPlayer: false })), difficulty };
+export function tenAnimalConfig(difficulty: Difficulty, arena?: ArenaId): MatchConfig {
+  const cfg: MatchConfig = { roster: (ANIMAL_IDS as AnimalId[]).map((a) => ({ animal: a, isPlayer: false })), difficulty };
+  if (arena !== undefined) cfg.arena = arena;
+  return cfg;
 }
 
 /** Plays `fightSeconds` of fight time (after the 3 s countdown) with bot brains; records every tick. */
-export function recordMatch(seed: number, difficulty: Difficulty, fightSeconds: number): Recording {
-  const cfg = tenAnimalConfig(difficulty);
+export function recordMatch(seed: number, difficulty: Difficulty, fightSeconds: number, arena?: ArenaId): Recording {
+  const cfg = tenAnimalConfig(difficulty, arena);
   const bus = new EventBus();
   let current: GameEvent[] = [];
   bus.onAny((e) => current.push(e));
   const world = new World(cfg, seed, bus);
-  const bots = new BotManager(bus, difficulty, seed);
+  const bots = new BotManager(bus, difficulty, seed, world.arena);
   const snapshots: WorldSnapshot[] = [];
   const events: GameEvent[][] = [];
   const ticks = Math.ceil((3 + fightSeconds) * 60) + 2;
@@ -54,6 +58,60 @@ export function recordMatch(seed: number, difficulty: Difficulty, fightSeconds: 
     snapshots.push(world.snapshot());
     events.push(current);
     if (world.matchOver) break;
+  }
+  return { snapshots, events, roster: cfg.roster };
+}
+
+/**
+ * v1.8 wading stress: ten fighters on the jungle driven by seeded random intents that keep heading for the pool, so
+ * `inWater` / `onMoss` / `splash` are present in the recording whatever the bots would do. Nobody dies (hp refilled), so the
+ * snapshots always carry ten live fighters.
+ */
+export function recordJungleWander(seed: number, fightSeconds: number): Recording {
+  const cfg = tenAnimalConfig(4, 'jungle');
+  const bus = new EventBus();
+  let current: GameEvent[] = [];
+  bus.onAny((e) => current.push(e));
+  const world = new World(cfg, seed, bus);
+  const rng = mulberry32(seed ^ 0x51ed);
+  const dir = cfg.roster.map(() => ({ x: 0, z: 0, until: 0, toPool: false }));
+  const snapshots: WorldSnapshot[] = [];
+  const events: GameEvent[][] = [];
+  const ticks = Math.ceil((3 + fightSeconds) * 60) + 2;
+  for (let t = 0; t < ticks; t++) {
+    for (let id = 0; id < cfg.roster.length; id++) {
+      const f = world.fighters[id];
+      f.state.hp = f.state.maxHp;
+      const d = dir[id];
+      if (t >= d.until) {
+        d.until = t + 20 + Math.floor(rng() * 80);
+        d.toPool = rng() < 0.6;
+        const a = rng() * Math.PI * 2;
+        d.x = Math.cos(a);
+        d.z = Math.sin(a);
+      }
+      let mx = d.x;
+      let mz = d.z;
+      if (d.toPool) {
+        const l = Math.hypot(f.state.pos.x, f.state.pos.z) || 1;
+        mx = -f.state.pos.x / l;
+        mz = -f.state.pos.z / l;
+      }
+      world.setIntent(id, {
+        moveX: mx,
+        moveZ: mz,
+        aimYaw: Math.atan2(mx, mz),
+        attack: rng() < 0.06,
+        block: rng() < 0.03,
+        special: rng() < 0.02,
+        ultimate: false,
+        jump: rng() < 0.03,
+      });
+    }
+    current = [];
+    world.step(DT);
+    snapshots.push(world.snapshot());
+    events.push(current);
   }
   return { snapshots, events, roster: cfg.roster };
 }
@@ -122,6 +180,8 @@ export function fighterMismatches(o: FighterState, d: FighterState): string[] {
   eq('ultPhase', o.ultPhase, d.ultPhase);
   eq('ultStage', o.ultStage, d.ultStage);
   eq('ultTargetId', o.ultTargetId, d.ultTargetId);
+  eq('inWater', o.inWater, d.inWater);
+  eq('onMoss', o.onMoss, d.onMoss);
   return bad;
 }
 
@@ -231,5 +291,6 @@ export const SAMPLES: { [K in GameEvent['type']]: GameEventOf<K> } = {
   trapExpired: { type: 'trapExpired', trapId: 1, kind: 'fire', pos: P },
   landingImpact: { type: 'landingImpact', fighterId: 5, pos: Q, radius: 6, damage: 140.5, height: 11.75 },
   matchEnd: { type: 'matchEnd', winnerId: 4 },
+  splash: { type: 'splash', fighterId: 8, pos: { x: 1.5, y: 0.55, z: -2.25 }, entering: true, strength: 0.6 },
 };
 

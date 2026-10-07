@@ -22,7 +22,8 @@ import {
   TRAP_MAX_RADIUS,
   TRAP_PLACEMENT,
 } from '../config/traps';
-import { PILLARS, FALLEN_COLUMNS, CRATES, DAIS, PICKUP_PADS } from '../config/arena';
+import type { ArenaDef } from '../config/arenas';
+import { COLOSSEUM_ARENA } from '../config/arenas';
 import { PICKUPS } from '../config/balance';
 import { groundHeightAt } from './MovementSystem';
 
@@ -66,45 +67,85 @@ function segDist(px: number, pz: number, ax: number, az: number, bx: number, bz:
   return Math.sqrt(dx * dx + dz * dz);
 }
 
-/** Distance from (x,z) to the nearest obstacle SURFACE (pillars, columns, crates, dais). */
-export function obstacleSurfaceDist(x: number, z: number): number {
+/**
+ * Distance from (x,z) to the nearest obstacle SURFACE of `arena` (round blockers — pillars/trees —, columns/logs,
+ * crates, and the dais when the arena has one). Negative inside an obstacle.
+ */
+export function obstacleSurfaceDist(x: number, z: number, arena: ArenaDef = COLOSSEUM_ARENA): number {
   let best = Infinity;
-  for (let i = 0; i < PILLARS.length; i++) {
-    const p = PILLARS[i];
-    best = Math.min(best, Math.hypot(x - p.x, z - p.z) - p.radius);
+  const solids = arena.solids; // circles, then segments, then crates (min is order-independent)
+  for (let i = 0; i < solids.length; i++) {
+    const ob = solids[i];
+    if (ob.shape === 'circle') {
+      best = Math.min(best, Math.hypot(x - ob.x, z - ob.z) - ob.radius);
+    } else if (ob.shape === 'segment') {
+      best = Math.min(best, segDist(x, z, ob.ax, ob.az, ob.bx, ob.bz) - ob.thickness * 0.5);
+    } else {
+      const dx = Math.max(0, Math.abs(x - ob.x) - ob.halfX);
+      const dz = Math.max(0, Math.abs(z - ob.z) - ob.halfZ);
+      best = Math.min(best, Math.sqrt(dx * dx + dz * dz));
+    }
   }
-  for (let i = 0; i < FALLEN_COLUMNS.length; i++) {
-    const c = FALLEN_COLUMNS[i];
-    best = Math.min(best, segDist(x, z, c.ax, c.az, c.bx, c.bz) - c.thickness * 0.5);
-  }
-  for (let i = 0; i < CRATES.length; i++) {
-    const c = CRATES[i];
-    const dx = Math.max(0, Math.abs(x - c.x) - c.halfX);
-    const dz = Math.max(0, Math.abs(z - c.z) - c.halfZ);
-    best = Math.min(best, Math.sqrt(dx * dx + dz * dz));
-  }
-  best = Math.min(best, Math.hypot(x - DAIS.x, z - DAIS.z) - DAIS.radius);
+  const dais = arena.dais;
+  if (dais !== undefined) best = Math.min(best, Math.hypot(x - dais.x, z - dais.z) - dais.radius);
   return best;
 }
 
-/** True if a trap disc of {@link TRAP_MAX_RADIUS} at (x,z) satisfies every clearance rule. */
+/** The placement numbers for `arena`: the global {@link TRAP_PLACEMENT} with the arena's overrides applied. */
+export function trapPlacementFor(arena: ArenaDef): {
+  minRadius: number;
+  maxRadius: number;
+  obstacleClear: number;
+  pickupClear: number;
+  spawnClear: number;
+  trapClear: number;
+} {
+  const o = arena.trapRules.overrides;
+  const P = TRAP_PLACEMENT;
+  return {
+    minRadius: o.minRadius ?? P.minRadius,
+    maxRadius: o.maxRadius ?? P.maxRadius,
+    obstacleClear: o.obstacleClear ?? P.obstacleClear,
+    pickupClear: o.pickupClear ?? P.pickupClear,
+    spawnClear: o.spawnClear ?? P.spawnClear,
+    trapClear: o.trapClear ?? P.trapClear,
+  };
+}
+
+/**
+ * True if a trap disc of {@link TRAP_MAX_RADIUS} at (x,z) satisfies every clearance rule of `arena`: inside the
+ * placement ring; `obstacleClear` from every solid (and the dais); `pickupClear` from pad circles; `spawnClear` from
+ * spawn points; `trapClear` from other traps; wholly outside every terrain zone (water / moss, `terrainClear` gap)
+ * and every extra exclusion disc of the arena.
+ */
 export function trapSiteValid(
   x: number,
   z: number,
   spawns: readonly { x: number; z: number }[],
   others: readonly { pos: { x: number; z: number } }[],
+  arena: ArenaDef = COLOSSEUM_ARENA,
 ): boolean {
   const R = TRAP_MAX_RADIUS;
-  const P = TRAP_PLACEMENT;
+  const P = trapPlacementFor(arena);
   const d = Math.hypot(x, z);
   if (d < P.minRadius - EPS || d > P.maxRadius + EPS) return false;
-  if (obstacleSurfaceDist(x, z) - R < P.obstacleClear) return false;
-  for (let i = 0; i < PICKUP_PADS.length; i++) {
-    const p = PICKUP_PADS[i];
+  if (obstacleSurfaceDist(x, z, arena) - R < P.obstacleClear) return false;
+  const pads = arena.pickupPads;
+  for (let i = 0; i < pads.length; i++) {
+    const p = pads[i];
     if (Math.hypot(x - p.x, z - p.z) - PICKUPS.radius - R < P.pickupClear) return false;
   }
   for (let i = 0; i < spawns.length; i++) {
     if (Math.hypot(x - spawns[i].x, z - spawns[i].z) - R < P.spawnClear) return false;
+  }
+  const terrain = arena.terrain;
+  for (let i = 0; i < terrain.length; i++) {
+    const t = terrain[i];
+    if (Math.hypot(x - t.x, z - t.z) - t.radius - R < arena.trapRules.terrainClear) return false;
+  }
+  const ex = arena.trapRules.exclusions;
+  for (let i = 0; i < ex.length; i++) {
+    if (Math.hypot(x - ex[i].x, z - ex[i].z) - ex[i].radius - R < P.obstacleClear) return false;
   }
   for (let i = 0; i < others.length; i++) {
     if (Math.hypot(x - others[i].pos.x, z - others[i].pos.z) - 2 * R < P.trapClear) return false;
@@ -123,19 +164,21 @@ export function placeTraps(
   difficulty: Difficulty,
   spawns: readonly { x: number; z: number }[],
   fighterCount: number,
+  arena: ArenaDef = COLOSSEUM_ARENA,
 ): TrapRuntime[] {
   const want = TRAP_COUNT_BY_DIFFICULTY[difficulty] ?? 0;
   const out: TrapRuntime[] = [];
   if (want <= 0) return out;
   const rng = mulberry32((seed ^ TRAP_PLACEMENT.seedSalt) >>> 0);
-  const r0 = TRAP_PLACEMENT.minRadius;
-  const r1 = TRAP_PLACEMENT.maxRadius;
+  const place = trapPlacementFor(arena);
+  const r0 = place.minRadius;
+  const r1 = place.maxRadius;
   for (let attempt = 0; attempt < TRAP_PLACEMENT.maxAttempts && out.length < want; attempt++) {
     const r = Math.sqrt(r0 * r0 + rng() * (r1 * r1 - r0 * r0));
     const th = rng() * Math.PI * 2;
     const x = Math.round(r * Math.cos(th) * 1e4) / 1e4;
     const z = Math.round(r * Math.sin(th) * 1e4) / 1e4;
-    if (!trapSiteValid(x, z, spawns, out)) continue;
+    if (!trapSiteValid(x, z, spawns, out, arena)) continue;
     out.push(makeTrap(out.length, 'fire', x, z, fighterCount));
   }
   // Kinds: random per trap, then guarantee both kinds appear.
@@ -157,7 +200,7 @@ export function placeTraps(
 // ── Tick ─────────────────────────────────────────────────────────────────────
 
 function altitude(f: Fighter): number {
-  return f.state.pos.y - groundHeightAt(f.state.pos.x, f.state.pos.z);
+  return f.state.pos.y - groundHeightAt(f.state.pos.x, f.state.pos.z, f.arena);
 }
 
 function inside(t: TrapRuntime, f: Fighter): boolean {

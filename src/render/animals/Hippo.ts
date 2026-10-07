@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { ANIMALS } from '../../config/animals';
 import type { FighterState } from '../../core/types';
 import { BaseRig, type Joint, attackCurve, ramp, smooth01, easeInCubic, easeOutCubic, IMPACT } from './Animator';
+import { SWIM_BOB_W } from './swim';
 import {
   makeMat,
   part,
@@ -279,6 +280,18 @@ export class HippoRig extends BaseRig {
     this.legs[2].rx = -0.1 * decay;
     this.legs[3].rx = -0.1 * decay;
     if (this.tail) this.tail.ry = Math.sin(t * 6) * 0.3 * decay;
+  }
+
+  /** Bobbing (v1.8): a slow heave and roll, plod-paddling legs, jaw shut, the propeller tail churning. */
+  protected override poseSwim(speed: number, t: number, mv: number): void {
+    super.poseSwim(speed, t, mv);
+    const w = t * SWIM_BOB_W;
+    this.body.py = Math.sin(w) * this.swim.bob + Math.sin(this.swimPhase * 2) * 0.012 * mv;
+    this.body.rx = Math.sin(w * 0.5 + 0.7) * 0.035 - this.swim.pitch * mv;
+    this.body.rz = Math.sin(w * 0.5) * 0.03 + Math.sin(this.swimPhase) * 0.04 * mv;
+    this.head.rx = -0.1 + Math.sin(w + 0.4) * 0.03;
+    this.jaw.rx = 0.03 + Math.max(0, Math.sin(t * 0.9)) * 0.1; // a lazy blow
+    if (this.tail) this.tail.ry = Math.sin(t * 5.5) * 0.7 * (0.4 + 0.6 * mv);
   }
 
   protected poseBlock(t: number): void {

@@ -17,6 +17,24 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.8.0] - 2026-10-07
+
+### Added
+- **Jungle Clearing, a new Battle Royale map.** A lush jungle clearing with giant mossy trees, fallen logs to jump, wicker crates, the usual pickups and the difficulty-based traps, plus a shallow pool in the middle. Pick it on the Battle Royale setup screen (the new **Map** row, or press **M**); your choice is remembered, and in online Battle Royale rooms the host picks the map.
+  - **Trees are obstacles:** the trunks block movement (and fighters can't run through them); the canopy stays out of the way of the camera, and a trunk that gets between the camera and you fades out.
+  - **Moss patches** slow anyone running over them by 35%.
+  - **The pool** is a shallow pond (about 0.55 m deep, so nobody is ever fully under water) where animals wade and swim. Swim speed depends on the animal: the Crocodile is almost as fast as on land (95%), then Hippo 86%, Python 76%, Panther 60%, Mole 55%, Lion 50%, Eagle 45%, Rhino 40%, Gorilla 36% and Giraffe 32% of their normal speed. Pounces, charges, dashes and ultimates keep their own speed, a jump out of the water is only a small hop, and the Mole can't burrow while in the water.
+  - **New animations:** every animal has its own swimming style (the Crocodile sculls with its tail, the Hippo bobs, the Python undulates, the Giraffe wades with high steps, the Eagle paddles with its wings, and so on) and its own way of **attacking while swimming**, with a splash on every strike. Swimmers leave a wake, and entering or leaving the water makes a splash.
+  - **A new tag** under your health bar tells you when you're slowed: "Swimming · 95 % speed" or "Mossy ground · 65 % speed".
+  - **Jungle atmosphere:** shafts of light through the canopy, mist, fireflies, ferns and reeds, an animated pool with lily pads, and a jungle ambience with water sounds.
+  - **Bots know the jungle:** they route around trees, avoid starting fights in the water or on moss (unless they are good swimmers), and fast swimmers like the Crocodile and Hippo use the pool to their advantage.
+
+### Fixed
+- If a Rhino was staggered in the middle of its Lockdown Charge carry, its victim could stay "grabbed" forever (and, in rare cases, freeze a match). The victim is now released.
+
+### Changed
+- Online: this update changes the game rules and the network format, so everyone in an online room needs to be on version 1.8.
+
 ## [1.7.0] - 2026-10-06
 
 ### Changed
@@ -191,7 +209,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.5.0...v1.5.1

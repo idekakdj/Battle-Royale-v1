@@ -13,7 +13,7 @@ import { BrNetHost, type BrNetHostOptions } from '../../src/online/br/BrNetHost'
 import { BrNetClient, type BrNetClientOptions, type BrSample } from '../../src/online/br/BrNetClient';
 import type { Link, OnlineSlotInfo, OnlineStart, Transport } from '../../src/online/types';
 import { ANIMAL_IDS } from '../../src/config/animals';
-import type { AnimalId, FighterIntent, GameEvent, WorldSnapshot } from '../../src/core/types';
+import type { AnimalId, ArenaId, FighterIntent, GameEvent, WorldSnapshot } from '../../src/core/types';
 import { DT, neutral, rng } from './brTestUtil';
 
 export const TICK_MS = 1000 / 60;
@@ -42,6 +42,8 @@ export interface SessionOptions {
   clients?: number; // remote humans (1..4)
   seed?: number;
   seconds?: number; // of wall/sim time to run (including the 3 s countdown)
+  /** v1.8: the arena the host World / bots play on (default: the colosseum). */
+  arena?: ArenaId;
   snapshotHz?: number;
   hostOpts?: Partial<BrNetHostOptions>;
   clientOpts?: Partial<BrNetClientOptions>;
@@ -154,8 +156,8 @@ export async function runSession(opts: SessionOptions = {}): Promise<Session> {
   // BotManager only builds brains for roster entries with isPlayer=false, so remote humans are NOT flagged isPlayer: a brain
   // exists for the takeover when a peer leaves (the host overrides its output while host.remoteIntent(slot) is non-null).
   // The host's own slot 0 is bot-driven here so fights stay busy.
-  const world = new World({ roster: animals.map((a) => ({ animal: a, isPlayer: false })), difficulty: 4 }, seed, bus);
-  const bots = new BotManager(bus, 4, seed);
+  const world = new World({ roster: animals.map((a) => ({ animal: a, isPlayer: false })), difficulty: 4, arena: opts.arena }, seed, bus);
+  const bots = new BotManager(bus, 4, seed, world.arena);
   const now = (): number => net.now;
   const host = new BrNetHost({ channel: hostMachine.channel, start: mkStart(0), now, snapshotHz: opts.snapshotHz, ...opts.hostOpts });
   const clients = clientMachines.map(
