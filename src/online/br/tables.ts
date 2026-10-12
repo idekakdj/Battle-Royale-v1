@@ -13,6 +13,7 @@ import type {
   FighterAction,
   PickupState,
   ProjectileState,
+  SerpentPhase,
   TrapKind,
   TrapPhase,
   UltTargetKind,
@@ -57,6 +58,8 @@ export const ULT_PHASE_TABLE = ['windup', 'active', 'recovery'] as const;
 export const ULT_TARGET_KIND_TABLE = ['lock', 'line', 'ground', 'self'] as const;
 export const PROJECTILE_KIND_TABLE = ['boulder'] as const;
 export const TELEGRAPH_KIND_TABLE = ['special', 'ultimate'] as const;
+/** v1.9 sea-serpent phases (2 bits on the wire). */
+export const SERPENT_PHASE_TABLE = ['warn', 'strike', 'hold', 'retreat'] as const;
 
 // Compile-time exhaustiveness (each line fails to compile if the table and the union diverge).
 export const TABLES_OK: [
@@ -70,7 +73,8 @@ export const TABLES_OK: [
   AssertCovers<UltTargetKind, typeof ULT_TARGET_KIND_TABLE>,
   AssertCovers<ProjectileState['kind'], typeof PROJECTILE_KIND_TABLE>,
   AssertCovers<'special' | 'ultimate', typeof TELEGRAPH_KIND_TABLE>,
-] = [true, true, true, true, true, true, true, true, true, true];
+  AssertCovers<SerpentPhase, typeof SERPENT_PHASE_TABLE>,
+] = [true, true, true, true, true, true, true, true, true, true, true];
 
 /** Index of `v` in `table`; throws on an unknown member (encoder side: programmer error). */
 export function encEnum<T extends string>(table: readonly T[], v: T): number {
@@ -145,6 +149,19 @@ export function angleToU16(a: number): number {
 /** u16 → radians in [0, 2π). */
 export function u16ToAngle(u: number): number {
   return (u / Q.ANGLE) * TWO_PI;
+}
+
+/** v1.9: a DEGREE angle (any magnitude) wrapped to u16 over one turn (error <= 360 / 65536 / 2 = 0.0027 deg). */
+export function angleDegToU16(deg: number): number {
+  if (!(deg === deg) || deg === Infinity || deg === -Infinity) return 0;
+  let t = (deg / 360) % 1;
+  if (t < 0) t += 1;
+  return Math.round(t * Q.ANGLE) & 0xffff;
+}
+
+/** u16 -> degrees in [0, 360). */
+export function u16ToAngleDeg(u: number): number {
+  return (u / Q.ANGLE) * 360;
 }
 
 /** Smallest signed difference a − b wrapped into (−π, π]. */

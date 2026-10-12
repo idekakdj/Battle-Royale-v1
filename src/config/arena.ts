@@ -21,6 +21,8 @@ export interface CircleObstacle {
   walkable: boolean;
   /** Low enough to clear with a jump. */
   jumpable: boolean;
+  /** v1.9 (Ocean Dome): ground height under the solid; its top is `baseY + height`. Absent (= 0) in every other arena. */
+  baseY?: number;
 }
 
 /** Capsule-like low wall between two endpoints (fallen columns). */
@@ -33,6 +35,8 @@ export interface SegmentObstacle {
   thickness: number;
   height: number;
   jumpable: boolean;
+  /** v1.9: ground height under the wall; its top is `baseY + height` (absent = 0). */
+  baseY?: number;
 }
 
 /** Axis-aligned box collider (crates). */
@@ -45,6 +49,8 @@ export interface AabbObstacle {
   height: number;
   destructible: boolean;
   hp: number;
+  /** v1.9: ground height under the crate; its top is `baseY + height` (absent = 0). */
+  baseY?: number;
 }
 
 export type Obstacle = CircleObstacle | SegmentObstacle | AabbObstacle;

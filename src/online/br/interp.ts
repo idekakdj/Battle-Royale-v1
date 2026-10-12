@@ -4,13 +4,13 @@
  * `lerpSnapshots(a, b, alpha, teleported)` builds the "view" snapshot a renderer should draw between two host snapshots:
  *   - continuous fields (position, velocity, yaw — shortest arc —, hp, guard, ult charge, cooldowns, bars, clocks) are blended;
  *   - discrete fields (action, alive, combo, buffs, ult phase/stage/target, grab links, kill counters, pickups, crates,
- *     matchOver, winnerId …) come from the EARLIER snapshot `a`;
+ *     matchOver, winnerId …) come from the EARLIER snapshot `a`; the v1.9 sea serpent's phase too, but its `t`/`headR` glide;
  *   - a fighter that teleported between the two snapshots (a `blink` event with a known host time, or a jump farther than a
  *     plausible stride) is NOT interpolated: it stays at its `a` pose until the jump instant (the blink's host time, else the end
  *     of the interval) and is at its `b` pose from then on, so a blink never slides across the arena.
  */
 
-import type { FighterState, ProjectileState, TrapState, Vec3, WorldSnapshot } from '../../core/types';
+import type { FighterState, ProjectileState, SerpentState, TrapState, Vec3, WorldSnapshot } from '../../core/types';
 import { lerpAngle } from './tables';
 
 /** Distance (m) between two consecutive snapshots above which a move is treated as a teleport, scaled by elapsed time. */
@@ -153,7 +153,30 @@ export function lerpSnapshots(a: WorldSnapshot, b: WorldSnapshot, alphaIn: numbe
   if (a.projectiles !== undefined || b.projectiles !== undefined) {
     out.projectiles = lerpProjectiles(a.projectiles ?? [], b.projectiles ?? [], alpha, b.time - a.time);
   }
+  const serpent = lerpSerpent(a.serpent, b.serpent, alpha, b.time - a.time);
+  if (serpent !== undefined) out.serpent = serpent;
   return out;
+}
+
+/**
+ * v1.9 sea serpent between two snapshots (30 Hz = 33 ms apart; the strike lasts only 0.55 s, so the head must glide smoothly).
+ * Both have it: the earlier snapshot's phase with a continuous clock, `headR` and `t` lerped (a phase change inside the interval
+ * keeps the earlier phase — the matching event arrives on time anyway). Only one has it (the event began / ended inside the
+ * interval): that one, with its clock shifted to the render instant.
+ */
+function lerpSerpent(a: SerpentState | undefined, b: SerpentState | undefined, alpha: number, spanS: number): SerpentState | undefined {
+  if (a !== undefined && b !== undefined) {
+    const samePhase = a.phase === b.phase;
+    return {
+      phase: a.phase,
+      angleDeg: a.angleDeg,
+      t: samePhase ? lerp(a.t, b.t, alpha) : a.t + spanS * alpha,
+      headR: lerp(a.headR, b.headR, alpha),
+    };
+  }
+  if (a !== undefined) return { ...a, t: a.t + spanS * alpha };
+  if (b !== undefined) return { ...b, t: Math.max(0, b.t - spanS * (1 - alpha)) };
+  return undefined;
 }
 
 function lerpProjectiles(pa: readonly ProjectileState[], pb: readonly ProjectileState[], alpha: number, spanS: number): ProjectileState[] {
@@ -211,5 +234,6 @@ export function extrapolateSnapshot(s: WorldSnapshot, dtS: number): WorldSnapsho
       vel: { ...p.vel },
     }));
   }
+  if (s.serpent !== undefined) out.serpent = { ...s.serpent, t: s.serpent.t + dtS }; // never aliases; the clock keeps running
   return out;
 }

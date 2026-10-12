@@ -21,13 +21,16 @@ import {
   TELEGRAPH_KIND_TABLE,
   TRAP_KIND_TABLE,
   ULT_TARGET_KIND_TABLE,
+  angleDegToU16,
   angleToU16,
   decEnum,
   encEnum,
+  qU16,
   readFiniteF32,
   readOptId,
   readVec3,
   u16ToAngle,
+  u16ToAngleDeg,
   writeOptId,
   writeVec3,
 } from './tables';
@@ -51,6 +54,9 @@ const step3 = (r: ByteReader): 0 | 1 | 2 => {
   return v as 0 | 1 | 2;
 };
 const f32 = readFiniteF32;
+
+/** `death` cause byte: 1 = sea serpent (v1.9). */
+const DEATH_CAUSE_SERPENT = 1;
 
 /** Splash strength 0..1 is sent as one byte. */
 const STRENGTH_STEPS = 255;
@@ -94,14 +100,25 @@ export const EVENT_CODECS: { [K in Type]: EventCodec<K> } = {
     },
     read: (r) => ({ type: 'guardBreak', targetId: readOptId(r), pos: readVec3(r) }),
   },
+  // v1.9: a trailing cause byte (0 = none/trap, 1 = sea serpent); the decoded event has NO `cause` key when it is 0.
   death: {
     tag: 4,
     write: (w, e) => {
       writeOptId(w, e.targetId);
       writeOptId(w, e.killerId);
       w.u8(Math.max(0, Math.min(255, e.placement)));
+      w.u8(e.cause === 'serpent' ? DEATH_CAUSE_SERPENT : 0);
     },
-    read: (r) => ({ type: 'death', targetId: readOptId(r), killerId: readOptId(r), placement: r.u8() }),
+    read: (r) => {
+      const targetId = readOptId(r);
+      const killerId = readOptId(r);
+      const placement = r.u8();
+      const c = r.u8();
+      if (c > DEATH_CAUSE_SERPENT) throw new RangeError('bad death cause');
+      return c === DEATH_CAUSE_SERPENT
+        ? { type: 'death', targetId, killerId, placement, cause: 'serpent' }
+        : { type: 'death', targetId, killerId, placement };
+    },
   },
   ultimate: {
     tag: 5,
@@ -336,6 +353,37 @@ export const EVENT_CODECS: { [K in Type]: EventCodec<K> } = {
     },
     read: (r) => ({ type: 'splash', fighterId: readOptId(r), pos: readVec3(r), entering: bool(r), strength: r.u8() / STRENGTH_STEPS }),
   },
+  // v1.9 Ocean Dome sea serpent. warning: u16 angle (360 deg / 65536) · u16 warnS in ms (7 B incl. tag).
+  serpentWarning: {
+    tag: 23,
+    write: (w, e) => {
+      w.u16(angleDegToU16(e.angleDeg));
+      w.u16(qU16(e.warnS, Q.TIME));
+    },
+    read: (r) => ({ type: 'serpentWarning', angleDeg: u16ToAngleDeg(r.u16()), warnS: r.u16() / Q.TIME }),
+  },
+  // strike: u16 angle (3 B incl. tag).
+  serpentStrike: {
+    tag: 24,
+    write: (w, e) => w.u16(angleDegToU16(e.angleDeg)),
+    read: (r) => ({ type: 'serpentStrike', angleDeg: u16ToAngleDeg(r.u16()) }),
+  },
+  // hit: fighter · u16 damage (hp removed, whole points) · pos (11 B incl. tag).
+  serpentHit: {
+    tag: 25,
+    write: (w, e) => {
+      writeOptId(w, e.fighterId);
+      w.u16(qU16(e.damage, 1));
+      writeVec3(w, e.pos);
+    },
+    read: (r) => ({ type: 'serpentHit', fighterId: readOptId(r), damage: r.u16(), pos: readVec3(r) }),
+  },
+  // end: tag only.
+  serpentEnd: {
+    tag: 26,
+    write: () => undefined,
+    read: () => ({ type: 'serpentEnd' }),
+  },
 };
 
 /** All variant names, in tag order (derived from the exhaustive table). */
@@ -414,3 +462,5 @@ export const EVENT_POS_TOLERANCE = 0.5 / Q.POS + 1e-9;
 export const EVENT_STRENGTH_TOLERANCE = 0.5 / STRENGTH_STEPS + 1e-9;
 /** Quantisation tolerance of event yaw angles (rad). */
 export const EVENT_ANGLE_TOLERANCE = (Math.PI * 2) / Q.ANGLE + 1e-9;
+/** Quantisation tolerance of the serpent events' strike angle (degrees). */
+export const EVENT_ANGLE_DEG_TOLERANCE = 360 / Q.ANGLE + 1e-9;

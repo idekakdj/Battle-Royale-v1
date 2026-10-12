@@ -14,7 +14,7 @@
  * Pure data + helpers: no three / DOM imports, so it is node-safe.
  */
 
-import { COLOSSEUM_ARENA, type ArenaDef, type TerrainZoneDef } from '../config/arenas';
+import { COLOSSEUM_ARENA, arenaGroundHeight, type ArenaDef, type TerrainZoneDef } from '../config/arenas';
 
 // ── The current arena ────────────────────────────────────────────────────────
 
@@ -149,3 +149,26 @@ export function resetWaterActivity(): void {
   waterActivity.count = 0;
   waterActivity.stamp = 0;
 }
+
+// ── Elevations + arena shake (v1.9 Ocean Dome, WP-O3) ────────────────────────
+
+/**
+ * Visual ground height (m) under (x, z) for render-side placement (dust, decals, shadows blobs ...): the arena's heightfield
+ * height on an arena that HAS one (the Ocean Dome), and exactly 0 everywhere else. The colosseum's dais is deliberately NOT
+ * included (the v1.7 effects always sat at y = 0 there), so the old arenas render byte-identically.
+ */
+export function renderGroundHeight(x: number, z: number): number {
+  return current.heightfield === undefined ? 0 : arenaGroundHeight(current, x, z);
+}
+
+/** True when the current arena has raised terrain (cheap early-out for terrain-height-aware code). */
+export function renderArenaHasHeightfield(): boolean {
+  return current.heightfield !== undefined;
+}
+
+/**
+ * Extra camera shake (m) the arena scenery asks for this frame (the Ocean Dome shudders while the sea serpent coils and thrashes).
+ * Written by the arena scene's `update`, read by `CameraRig` (added to the Effects shake before the rig's own 0.15 m cap).
+ * Always 0 on the colosseum and the jungle.
+ */
+export const arenaShake = { amount: 0 };

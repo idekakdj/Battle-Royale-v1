@@ -52,6 +52,7 @@ function snapshotWith(v: number): WorldSnapshot {
     crates: [{ id: 4, pos: { x: 3, y: 0, z: 4 }, hp: 100, alive: true }],
     traps: [{ id: 6, kind: 'fire', pos: { x: 5, y: 0, z: 6 }, radius: 2, phase: 'active', timeLeft: 3, triggeredBy: v }],
     projectiles: [{ id: 8, kind: 'boulder', pos: { x: 1, y: 2, z: 3 }, vel: { x: 4, y: 5, z: 6 }, radius: 0.6, ownerId: v }],
+    serpent: { phase: 'strike', angleDeg: 123.5, t: 0.25, headR: 12.5 }, // v1.9: carries no fighter ids, must survive the copy
     bloodlustMult: 1.25,
     matchOver: true,
     winnerId: v,
@@ -113,6 +114,8 @@ describe('swapIds(snapshot)', () => {
       expect(sw.winnerId).toBe(swapId(v, A, B));
       // everything that is not an id is identical
       expect({ ...sw, fighters: 0, traps: 0, projectiles: 0, winnerId: 0 }).toEqual({ ...orig, fighters: 0, traps: 0, projectiles: 0, winnerId: 0 });
+      expect(sw.serpent).toEqual(orig.serpent); // v1.9: the event survives the swap unchanged ...
+      expect(sw.serpent).not.toBe(orig.serpent); // ... as a copy
       expect({ ...sw.traps[0], triggeredBy: 0 }).toEqual({ ...orig.traps[0], triggeredBy: 0 });
       expect({ ...(sw.projectiles?.[0] as object), ownerId: 0 }).toEqual({ ...(orig.projectiles?.[0] as object), ownerId: 0 });
       // its own inverse
@@ -150,6 +153,9 @@ describe('swapIds(snapshot)', () => {
       'projectiles[].vel.y',
       'projectiles[].vel.z',
       'projectiles[].radius',
+      'serpent.angleDeg',
+      'serpent.t',
+      'serpent.headR',
       ...[
         'pos.x',
         'pos.y',
@@ -210,9 +216,11 @@ describe('swapIds(snapshot)', () => {
   it('keeps an absent ultTargetId absent and an absent projectiles list absent', () => {
     const s = snapshotWith(A);
     delete s.projectiles;
+    delete s.serpent;
     for (const f of s.fighters) delete f.ultTargetId;
     const out = swapIds(s, A, B);
     expect(out.projectiles).toBeUndefined();
+    expect('serpent' in out).toBe(false); // v1.9: an absent event stays absent
     expect('ultTargetId' in out.fighters[0]).toBe(false);
   });
 
@@ -284,6 +292,15 @@ describe('swapEventIds', () => {
     expect(swapEventIds(ev, A, B)).toEqual({ type: 'splash', fighterId: B, pos: { x: 1, y: 0.55, z: 2 }, entering: true, strength: 0.7 });
     expect(swapEventIds(swapEventIds(ev, A, B), A, B)).toEqual(ev);
     expect(swapEventIds(ev, B, OTHER)).toEqual(ev); // an unrelated pair leaves it alone
+  });
+
+  it('v1.9 serpentHit: fighterId is remapped; damage / pos are not; the other serpent events are untouched; death keeps its cause', () => {
+    const ev: GameEvent = { type: 'serpentHit', fighterId: A, damage: 300, pos: { x: 1, y: 2, z: 3 } };
+    expect(swapEventIds(ev, A, B)).toEqual({ type: 'serpentHit', fighterId: B, damage: 300, pos: { x: 1, y: 2, z: 3 } });
+    expect(swapEventIds(swapEventIds(ev, A, B), A, B)).toEqual(ev);
+    for (const e of [SAMPLES.serpentWarning, SAMPLES.serpentStrike, SAMPLES.serpentEnd]) expect(swapEventIds(e, A, B)).toEqual(e);
+    const d = swapEventIds({ type: 'death', targetId: A, killerId: -1, placement: 4, cause: 'serpent' }, A, B);
+    expect(d).toEqual({ type: 'death', targetId: B, killerId: -1, placement: 4, cause: 'serpent' });
   });
 
   it('death.placement and crate/trap ids are not fighter ids', () => {

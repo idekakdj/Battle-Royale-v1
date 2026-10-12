@@ -26,6 +26,12 @@ class FakeClassList {
   contains(name: string): boolean {
     return this.names().includes(name);
   }
+  add(...names: string[]): void {
+    for (const n of names) this.toggle(n, true);
+  }
+  remove(...names: string[]): void {
+    for (const n of names) this.toggle(n, false);
+  }
   toggle(name: string, force?: boolean): boolean {
     const has = this.contains(name);
     const on = force ?? !has;

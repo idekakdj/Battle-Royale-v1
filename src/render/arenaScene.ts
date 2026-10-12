@@ -6,8 +6,9 @@
  *
  * It (1) styles the shared light rig / fog / sky / colour grade for the arena (`SceneManager.setArena`, which also publishes
  * the arena to `render/arenaContext` so CameraRig, the first-person eye clamp, Effects and the audio ambience follow it),
+
  * (2) builds the matching scenery — the unchanged {@link Stadium} for the colosseum, `render/jungle/JungleScene` for the
- * jungle — and (3) adds its `root` to `sceneManager.scene`. Call it once per match, BEFORE the first rendered frame (CameraRig /
+ * jungle, `render/ocean/OceanScene` for the Ocean Dome — and (3) adds its `root` to `sceneManager.scene`. Call it once per match, BEFORE the first rendered frame (CameraRig /
  * Effects read the arena lazily, so the order against them does not matter). Pass nothing / `undefined` for the colosseum.
  *
  * Both scenes implement {@link ArenaScene}, which is exactly the surface MatchController already uses on `Stadium`
@@ -16,11 +17,12 @@
  */
 
 import type * as THREE from 'three';
-import type { ArenaId, PickupState } from '../core/types';
+import type { ArenaId, GameEvent, PickupState, WorldSnapshot } from '../core/types';
 import { getArena, type ArenaDef } from '../config/arenas';
 import type { SceneManager } from './SceneManager';
 import { Stadium } from './Stadium';
 import { JungleScene } from './jungle/JungleScene';
+import { OceanScene } from './ocean/OceanScene';
 
 export type PickupKind = PickupState['kind'];
 
@@ -43,6 +45,14 @@ export interface ArenaScene {
   setPickupVisible(padIndex: number, kind: PickupKind, visible: boolean): void;
   /** The focused fighter's ground position (pickup labels; the jungle also uses it for the trunk fade). */
   setPickupFocus(x: number, z: number): void;
+  /**
+   * v1.9 (Ocean Dome): the freshest sim snapshot, called once per rendered frame BEFORE `update` (optional: the colosseum and the
+   * jungle ignore it). The ocean scene reads `snapshot.serpent` (the persistent state of the sea-serpent set piece, so rollback / a
+   * late join cannot desync the visuals). `alpha` = the render interpolation between the last two sim ticks (1 = the snapshot itself).
+   */
+  setSnapshot?(snapshot: WorldSnapshot, alpha?: number): void;
+  /** v1.9: forward a gameplay event (`serpentWarning` / `serpentStrike` / `serpentHit` / `serpentEnd`) to the scene's one-shot FX. */
+  onEvent?(event: GameEvent): void;
   dispose(): void;
 }
 
@@ -53,7 +63,8 @@ export interface ArenaScene {
 export function createArenaScene(sceneManager: SceneManager, arena?: ArenaDef | ArenaId): ArenaScene {
   const def = typeof arena === 'string' || arena === undefined ? getArena(arena) : arena;
   sceneManager.setArena(def);
-  const scene: ArenaScene = def.id === 'jungle' ? new JungleScene(sceneManager, def) : new Stadium();
+  const scene: ArenaScene =
+    def.id === 'jungle' ? new JungleScene(sceneManager, def) : def.id === 'ocean' ? new OceanScene(sceneManager, def) : new Stadium();
   sceneManager.scene.add(scene.root);
   return scene;
 }

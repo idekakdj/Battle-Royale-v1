@@ -67,6 +67,12 @@ const TRAP_GLYPHS: Record<TrapKind | 'any', string> = {
     <path ${F} d="M4 45 L10 30 L16 45 Z M16 45 L24 26 L32 45 Z M32 45 L38 30 L44 45 Z"/>`,
 };
 
+/** v1.9 kill-feed glyph for a death by the Ocean Dome's sea serpent: an S-coil with a wedge head and a forked tongue. */
+const SERPENT_GLYPH = `<path ${S} d="M7 43 C7 31 38 37 38 25 C38 15 15 19 18 11"/>
+  <path ${F} d="M7 5 L26 4 L20 19 Z"/>
+  <circle fill="rgba(0,0,0,0.65)" cx="17" cy="10" r="2"/>
+  <path ${S_THIN} d="M26 9 L32 5 M26 9 L32 13"/>`;
+
 function svg(body: string, cls: string): string {
   return `<svg class="${cls}" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${body}</svg>`;
 }
@@ -77,6 +83,10 @@ export function buffIconSvg(kind: BuffKind, cls = 'gk-hud__buff-svg'): string {
 
 export function pickupIconSvg(kind: PickupKind, cls = 'gk-hud__toast-svg'): string {
   return svg(PICKUP_GLYPHS[kind], cls);
+}
+
+export function serpentGlyphSvg(cls = 'gk-hud__kf-head'): string {
+  return svg(SERPENT_GLYPH, cls);
 }
 
 export function trapGlyphSvg(kind: TrapKind | undefined, cls = 'gk-hud__kf-head'): string {

@@ -23,7 +23,7 @@ import {
   TRAP_PLACEMENT,
 } from '../config/traps';
 import type { ArenaDef } from '../config/arenas';
-import { COLOSSEUM_ARENA } from '../config/arenas';
+import { COLOSSEUM_ARENA, arenaGroundHeight, arenaIsLevel } from '../config/arenas';
 import { PICKUPS } from '../config/balance';
 import { groundHeightAt } from './MovementSystem';
 
@@ -39,6 +39,8 @@ export type TrapDamageFn = (target: Fighter, amount: number) => number;
 const EPS = 1e-6;
 /** A fighter counts as standing on the sand (can trigger a plate) below this altitude (m). */
 const GROUNDED_ALT = 0.3;
+/** v1.9 (heightfield arenas): a trap disc keeps this much extra flat ground around it, so it is never on a ramp or at a cliff edge. */
+export const TRAP_LEVEL_MARGIN = 0.25;
 
 /** Build one trap (also used by tests to place a trap at a known spot). */
 export function makeTrap(id: number, kind: TrapKind, x: number, z: number, fighterCount: number): TrapRuntime {
@@ -129,6 +131,7 @@ export function trapSiteValid(
   const P = trapPlacementFor(arena);
   const d = Math.hypot(x, z);
   if (d < P.minRadius - EPS || d > P.maxRadius + EPS) return false;
+  if (arena.heightfield !== undefined && !arenaIsLevel(arena, x, z, R + TRAP_LEVEL_MARGIN)) return false; // v1.9: wholly on one flat level
   if (obstacleSurfaceDist(x, z, arena) - R < P.obstacleClear) return false;
   const pads = arena.pickupPads;
   for (let i = 0; i < pads.length; i++) {
@@ -179,7 +182,9 @@ export function placeTraps(
     const x = Math.round(r * Math.cos(th) * 1e4) / 1e4;
     const z = Math.round(r * Math.sin(th) * 1e4) / 1e4;
     if (!trapSiteValid(x, z, spawns, out, arena)) continue;
-    out.push(makeTrap(out.length, 'fire', x, z, fighterCount));
+    const trap = makeTrap(out.length, 'fire', x, z, fighterCount);
+    trap.pos.y = arenaGroundHeight(arena, x, z); // v1.9: a trap sits on the ground height of its level (0 on the flat arenas)
+    out.push(trap);
   }
   // Kinds: random per trap, then guarantee both kinds appear.
   let fire = 0;

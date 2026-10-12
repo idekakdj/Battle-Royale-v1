@@ -17,6 +17,20 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.9.0] - 2026-10-12
+
+### Added
+- **Ocean Dome, a third Battle Royale map.** A glass dome on the sea floor, with the open ocean all around it. Pick it on the Battle Royale setup screen (the **Map** row, or press **M**); your choice is remembered, and in online Battle Royale rooms the host picks the map.
+  - **Three elevations joined by ramps:** a sandy seabed ring, a raised terrace (1.5 m) and a plateau in the middle (3 m), connected by nine broad ramps. Walking up a ramp is easy; walking straight at a cliff is not (anyone can step up a small ledge, but a taller cliff needs a ramp or a jump), so the ramps decide where the fights happen. Pickup pads sit on every level, including the plateau, and the usual difficulty-based traps are placed on the right levels.
+  - **Cover:** coral, rocks and stone arches to hide behind, plus sea crates.
+  - **The ocean beyond the glass:** kelp forests, a reef, a far shipwreck, schools of fish, sharks, whales, manta rays, turtles and jellyfish drift past outside the dome, with caustic light and falling marine snow inside. An underwater soundscape with bubbles, whale song and sonar pings plays in the background.
+  - **The Sea Serpent.** Once a minute there is a 1-in-10 chance that a sea serpent attacks. A red warning strip appears across the floor from a random point on the dome edge to the centre, a klaxon sounds and the serpent coils up outside the glass. About 1.1 seconds later it smashes through the glass and sweeps to the centre in roughly half a second, hitting everyone caught in the strip for **300 damage** (true damage: blocking and armour do not help). It holds in the centre briefly, then withdraws and the glass re-forms. It is fast enough that you must react to the warning at once, but a fighter who starts moving straight off the strip always escapes, even the slowest animal. Soaring eagles and anyone more than 3 m above the ground are untouched. The serpent can kill, and the kill feed says so ("was eaten by the Sea Serpent").
+  - **Serpent HUD:** a "SEA SERPENT!" banner, a rim arrow pointing to where it will strike, and a "MOVE!" / "SAFE" chip that tells you whether you are standing in the strip.
+  - **Bots use the levels and fear the serpent:** they plan routes up and down the ramps (a path-finding grid), pick fights on their own level or come up to meet you, and dodge the serpent according to difficulty. Cub bots usually get caught (about a third dodge it), Fighters dodge about 60 %, Veterans about 83 % and Apex bots about 94 % of the time in isolated tests, less in the middle of a fight.
+
+### Changed
+- Online: this update changes the game rules and the network format, so everyone in an online room needs to be on version 1.9.
+
 ## [1.8.0] - 2026-10-07
 
 ### Added
@@ -209,7 +223,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.5.1...v1.6.0

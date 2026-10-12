@@ -36,7 +36,8 @@ import {
   loadBrawlSetup,
 } from './ui';
 import { MatchController } from './match/MatchController';
-import { parseBrParams } from './match/brParams';
+import { parseBrParams, serpentOptionsFor } from './match/brParams';
+import type { SerpentOptions } from './sim/SerpentSystem';
 import { mountFpsCounter } from './ui/FpsCounter';
 // v1.4 Champions League: the whole mode is loaded lazily (`await import('./brawl')`); only types are imported here.
 import type { BrawlSetupChoice } from './brawl/ui/setup';
@@ -143,6 +144,7 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearch
     arena: ArenaId = 'colosseum',
     seed: number = Date.now(),
     qa = false,
+    serpent?: SerpentOptions,
   ): void => {
     audio.stopMusic();
     screens.transition(
@@ -154,6 +156,7 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearch
         arena,
         seed,
         qa,
+        ...(serpent !== undefined ? { serpent } : {}),
         onMatchEnd: (results) => showResults(results),
         onQuitToLobby: () => showLobby(),
       }),
@@ -264,10 +267,18 @@ function runGame(canvas: HTMLCanvasElement, root: HTMLElement, params: URLSearch
   }
 
   // QA / power-user shortcut: `?br=1&arena=jungle&animal=croc&level=3[&seed=7]&qa=1` boots straight into a local Battle Royale
-  // match on that map (`&qa=1` also exposes `window.__gkBr = { world, controller }` in production builds).
+  // match on that map (`&qa=1` also exposes `window.__gkBr = { world, controller }` in production builds). v1.9: on the ocean
+  // `&serpent=1[&serpentAt=12]` forces a sea-serpent event at that many live seconds (see match/brParams.ts).
   const brShortcut = parseBrParams(params, { animal: loadAnimal(), difficulty: loadDifficulty() });
   if (brShortcut !== null) {
-    startMatch(brShortcut.animal, brShortcut.difficulty, brShortcut.arena, brShortcut.seed ?? Date.now(), brShortcut.qa);
+    startMatch(
+      brShortcut.animal,
+      brShortcut.difficulty,
+      brShortcut.arena,
+      brShortcut.seed ?? Date.now(),
+      brShortcut.qa,
+      serpentOptionsFor(brShortcut),
+    );
     return;
   }
 

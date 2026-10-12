@@ -3,7 +3,16 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { parseBrAnimal, parseBrArena, parseBrLevel, parseBrParams } from '../../src/match/brParams';
+import {
+  DEFAULT_SERPENT_AT_S,
+  MAX_SERPENT_AT_S,
+  parseBrAnimal,
+  parseBrArena,
+  parseBrLevel,
+  parseBrParams,
+  parseBrSerpentAt,
+  serpentOptionsFor,
+} from '../../src/match/brParams';
 
 const base = { animal: 'lion', difficulty: 2 } as const;
 const q = (s: string): URLSearchParams => new URLSearchParams(s);
@@ -61,6 +70,51 @@ describe('parseBrParams', () => {
     expect([1, 2, 3, 4].map((n) => parseBrLevel(String(n)))).toEqual([1, 2, 3, 4]);
     expect(parseBrLevel('4.0')).toBe(4);
     expect(parseBrLevel(null)).toBeNull();
+  });
+
+  it('arena=ocean boots the Ocean Dome (v1.9), case-insensitively', () => {
+    expect(parseBrArena('ocean')).toBe('ocean');
+    expect(parseBrArena(' OCEAN ')).toBe('ocean');
+    expect(parseBrParams(q('br=1&arena=ocean&animal=lion&level=2&qa=1'), base)).toEqual({ animal: 'lion', difficulty: 2, arena: 'ocean', qa: true });
+  });
+
+  it('the serpent QA link: ?br=1&arena=ocean&serpent=1[&serpentAt=12][&seed=N]&qa=1', () => {
+    const r = parseBrParams(q('br=1&arena=ocean&serpent=1&qa=1'), base);
+    expect(r?.serpent).toEqual({ atS: DEFAULT_SERPENT_AT_S });
+    expect(DEFAULT_SERPENT_AT_S).toBe(12);
+    expect(parseBrParams(q('br=1&arena=ocean&serpent=1&serpentAt=5&seed=9&qa=1'), base)).toEqual({
+      animal: 'lion',
+      difficulty: 2,
+      arena: 'ocean',
+      seed: 9,
+      qa: true,
+      serpent: { atS: 5 },
+    });
+    expect(parseBrParams(q('br=1&arena=ocean&serpent=1&serpentAt=7.5'), base)?.serpent).toEqual({ atS: 7.5 });
+  });
+
+  it('serpent=1 is only honoured on arenas with the hazard; any other value is ignored; no key without it', () => {
+    for (const arena of ['colosseum', 'jungle']) {
+      expect(parseBrParams(q(`br=1&arena=${arena}&serpent=1&serpentAt=3`), base)).not.toHaveProperty('serpent');
+    }
+    for (const v of ['0', 'true', 'yes', '', '2']) expect(parseBrParams(q(`br=1&arena=ocean&serpent=${v}`), base)).not.toHaveProperty('serpent');
+    expect(parseBrParams(q('br=1&arena=ocean&serpentAt=3'), base)).not.toHaveProperty('serpent');
+    expect(parseBrParams(q('br=1&arena=ocean'), base)).toEqual({ animal: 'lion', difficulty: 2, arena: 'ocean', qa: false });
+    expect(parseBrParams(q('br=1&arena=swamp&serpent=1'), base)).not.toHaveProperty('serpent'); // unknown arena -> colosseum
+  });
+
+  it('serpentAt falls back to 12 for anything that is not a finite number in (0, 3600]', () => {
+    expect(parseBrSerpentAt('30')).toBe(30);
+    expect(parseBrSerpentAt('0.5')).toBe(0.5);
+    expect(parseBrSerpentAt(String(MAX_SERPENT_AT_S))).toBe(MAX_SERPENT_AT_S);
+    for (const bad of [null, '', ' ', 'abc', '0', '-4', '3601', '1e9', 'Infinity', 'NaN']) expect(parseBrSerpentAt(bad)).toBe(DEFAULT_SERPENT_AT_S);
+    expect(parseBrParams(q('br=1&arena=ocean&serpent=1&serpentAt=soon'), base)?.serpent).toEqual({ atS: 12 });
+  });
+
+  it('serpentOptionsFor builds the World option: a certain roll at serpentAt live seconds (undefined = the real rules)', () => {
+    expect(serpentOptionsFor({})).toBeUndefined();
+    expect(serpentOptionsFor({ serpent: { atS: 12 } })).toEqual({ chance: 1, firstAtS: 12 });
+    expect(serpentOptionsFor({ serpent: { atS: 3.5 } })).toEqual({ chance: 1, firstAtS: 3.5 });
   });
 
   it('seed: a non-negative 32-bit integer is passed through, anything else is dropped', () => {

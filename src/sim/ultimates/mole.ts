@@ -21,7 +21,7 @@ import { clamp01, dirToYaw } from '../../core/math';
 import { MOLE_VORTEX as K } from '../../config/ultimates/mole';
 import type { AbilityRuntime, Fighter, Sim } from '../Fighter';
 import { altitudeOf, withinGroundReach } from '../hitbox';
-import { clampToWall, groundHeightAt, resolveObstacles } from '../MovementSystem';
+import { clampToWall, groundHeightAt, pushOutOfCliffs, resolveObstacles } from '../MovementSystem';
 import { dealDamage } from '../CombatSystem';
 import { AOE_HEIGHT, emitCastEvents, emitUltimateStage, emitUltimateTarget, hitArea, toRecovery, ultOpts } from './common';
 import type { UltimateImpl } from './types';
@@ -98,6 +98,7 @@ export const moleUltimate: UltimateImpl = {
       s.pos.x = rt.sx + (sk.ex - rt.sx) * u;
       s.pos.z = rt.sz + (sk.ez - rt.sz) * u;
       clampToWall(f); // underground: no pillars, but never outside the arena
+      if (f.arena.heightfield !== undefined) pushOutOfCliffs(f.arena, f); // v1.9: ... and never through a cliff
       s.pos.y = groundHeightAt(s.pos.x, s.pos.z, f.arena);
       const inv = dt > 1e-6 ? 1 / dt : 0;
       s.vel.x = (s.pos.x - ox) * inv;

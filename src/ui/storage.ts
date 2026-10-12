@@ -4,7 +4,7 @@
  *  - `gk-animal`     → last-selected gladiator (lobby default)
  *  - `gk-difficulty` → last-selected difficulty tier
  *  - `gk-mode`       → last-chosen game mode on the PLAY mode-select screen (v1.5.1)
- *  - `gk-arena`      → last-chosen Battle Royale map (colosseum | jungle; v1.8)
+ *  - `gk-arena`      → last-chosen Battle Royale map (colosseum | jungle | ocean; v1.8 / v1.9)
  *
  * All reads are defensive: corrupt/missing/blocked storage falls back to sane
  * defaults so the UI never throws on boot.
@@ -168,7 +168,7 @@ export function saveDifficulty(difficulty: Difficulty): void {
   writeRaw(DIFFICULTY_KEY, String(difficulty));
 }
 
-// ── v1.8 Battle Royale map (Colosseum | Jungle Clearing) ───────────────────────────────────────────────────────
+// ── v1.8 Battle Royale map (Colosseum | Jungle Clearing | v1.9 Ocean Dome) ───────────────────────────────────────────────────────
 
 /** The pre-selected map when nothing (valid) is stored yet — the original arena. */
 export const DEFAULT_ARENA: ArenaId = 'colosseum';

@@ -75,7 +75,7 @@ function smooth01(t: number): number {
 export class PickupBeacons {
   readonly root = new THREE.Group();
 
-  private readonly pads: readonly { x: number; z: number }[];
+  private readonly pads: readonly { x: number; z: number; y?: number }[];
   private readonly icons: THREE.InstancedMesh[] = [];
   private readonly ring: THREE.InstancedMesh;
   private readonly column: THREE.InstancedMesh;
@@ -91,6 +91,7 @@ export class PickupBeacons {
     uTime: { value: number };
     uPx: { value: number };
     uPad: { value: THREE.Vector4[] };
+    uPadY: { value: number[] };
   };
 
   /** -1 = empty pad; else kind index currently shown (or shrinking away). */
@@ -107,7 +108,8 @@ export class PickupBeacons {
   private readonly focus = new THREE.Vector2();
   private tier: QualityTier = 'high';
 
-  constructor(pads: readonly { x: number; z: number }[]) {
+  /** `pads[i].y` (optional, default 0) = the height of the pad's ground: the Ocean Dome's pads sit on three different levels. */
+  constructor(pads: readonly { x: number; z: number; y?: number }[]) {
     this.pads = pads;
     const n = pads.length;
     this.kind = new Int8Array(n).fill(-1);
@@ -189,7 +191,7 @@ export class PickupBeacons {
     sGeo.setAttribute('aSeed', new THREE.Float32BufferAttribute(aSeed, 1));
     const padU: THREE.Vector4[] = [];
     for (let i = 0; i < Math.max(1, n); i++) padU.push(new THREE.Vector4(0, 0, 0, 0));
-    this.sparkU = { uTime: { value: 0 }, uPx: { value: 600 }, uPad: { value: padU } };
+    this.sparkU = { uTime: { value: 0 }, uPx: { value: 600 }, uPad: { value: padU }, uPadY: { value: pads.length > 0 ? pads.map((q) => q.y ?? 0) : [0] } };
     const sMat = new THREE.ShaderMaterial({
       uniforms: this.sparkU,
       vertexShader: sparkVS(n),
@@ -217,7 +219,7 @@ export class PickupBeacons {
       this.materials.push(mat);
       const sp = new THREE.Sprite(mat);
       sp.scale.set(1.5, 0.47, 1);
-      sp.position.set(pads[i].x, LABEL_Y, pads[i].z);
+      sp.position.set(pads[i].x, LABEL_Y + (pads[i].y ?? 0), pads[i].z);
       sp.visible = false;
       sp.renderOrder = 5;
       this.root.add(sp);
@@ -311,6 +313,7 @@ export class PickupBeacons {
       const k = this.kind[i];
       const lk = this.lastKind[i];
       const pad = pads[i];
+      const py = pad.y ?? 0;
       if (k >= 0) this.appear[i] = Math.min(1, this.appear[i] + dt * 2.6);
       else this.appear[i] = Math.max(0, this.appear[i] - dt * 7);
       const a = this.appear[i];
@@ -324,7 +327,7 @@ export class PickupBeacons {
         yaw += Math.sin(time * 1.25 + i * 0.7) * 0.42;
         const s = (k >= 0 ? easeOutBack(a) : a) * ICON_SCALE;
         _q.setFromAxisAngle(_up, yaw);
-        _p.set(pad.x, ICON_Y + bob, pad.z);
+        _p.set(pad.x, ICON_Y + bob + py, pad.z);
         _s.set(s, s, s);
         _m.compose(_p, _q, _s);
         for (let kk = 0; kk < KINDS; kk++) this.icons[kk].setMatrixAt(i, kk === lk ? _m : ZERO);
@@ -336,17 +339,17 @@ export class PickupBeacons {
         // Ground ring (grows in) + column (rises in).
         const rs = smooth01(a);
         _q.setFromAxisAngle(_up, time * 0.6 + i);
-        _p.set(pad.x, 0.118, pad.z);
+        _p.set(pad.x, 0.118 + py, pad.z);
         _s.set(rs, 1, rs);
         _m.compose(_p, _q, _s);
         this.ring.setMatrixAt(i, _m);
         _q.identity();
-        _p.set(pad.x, 0, pad.z);
+        _p.set(pad.x, py, pad.z);
         _s.set(1, rs, 1);
         _m.compose(_p, _q, _s);
         this.column.setMatrixAt(i, _m);
         padU[i].set(pad.x, pad.z, rs, lk);
-        this.labels[i].position.y = LABEL_Y + bob;
+        this.labels[i].position.y = LABEL_Y + bob + py;
       } else {
         for (let kk = 0; kk < KINDS; kk++) this.icons[kk].setMatrixAt(i, ZERO);
         this.ring.setMatrixAt(i, ZERO);
@@ -450,6 +453,7 @@ attribute float aSeed;
 uniform float uTime;
 uniform float uPx;
 uniform vec4 uPad[${Math.max(1, pads)}];
+uniform float uPadY[${Math.max(1, pads)}];
 varying vec3 vCol;
 varying float vA;
 varying float vKind;
@@ -460,7 +464,7 @@ void main() {
   float h = fract(uTime * speed + aSeed * 7.13);
   float ang = aSeed * 43.7 + uTime * (kind < 1.5 ? 0.5 : 1.3);
   float rad = 0.3 + fract(aSeed * 13.1) * 0.8;
-  vec3 p = vec3(pad.x + cos(ang) * rad, 0.25 + h * 3.3, pad.y + sin(ang) * rad);
+  vec3 p = vec3(pad.x + cos(ang) * rad, 0.25 + h * 3.3 + uPadY[int(aPad + 0.5)], pad.y + sin(ang) * rad);
   if (kind > 1.5) p.x += sin(uTime * 7.0 + aSeed * 20.0) * 0.07;
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;

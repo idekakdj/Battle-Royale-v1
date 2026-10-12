@@ -80,6 +80,8 @@ interface Slot {
   kind: TrapKind;
   x: number;
   z: number;
+  /** v1.9: height of the level the trap sits on (0 on every flat arena). */
+  y: number;
   radius: number;
   phase: TrapPhase;
   timeLeft: number;
@@ -103,6 +105,7 @@ function makeSlot(): Slot {
     kind: 'fire',
     x: 0,
     z: 0,
+    y: 0,
     radius: 1,
     phase: 'armed',
     timeLeft: 0,
@@ -180,6 +183,7 @@ export class TrapRenderer {
 
   // Decals (scorch + glow overlay share the per-trap aT attribute).
   private readonly aT: THREE.InstancedBufferAttribute;
+  private readonly aY: THREE.InstancedBufferAttribute;
   private readonly aScorch: THREE.InstancedBufferAttribute;
   private readonly aOverlay: THREE.InstancedBufferAttribute;
   private readonly scorchGeo: THREE.InstancedBufferGeometry;
@@ -253,6 +257,7 @@ export class TrapRenderer {
     this.aT = new THREE.InstancedBufferAttribute(new Float32Array(MAX_TRAPS * 4), 4);
     this.aScorch = new THREE.InstancedBufferAttribute(new Float32Array(MAX_TRAPS * 4), 4);
     this.aOverlay = new THREE.InstancedBufferAttribute(new Float32Array(MAX_TRAPS * 4), 4);
+    this.aY = new THREE.InstancedBufferAttribute(new Float32Array(MAX_TRAPS), 1);
     this.aScorch.setUsage(THREE.DynamicDrawUsage);
     this.aOverlay.setUsage(THREE.DynamicDrawUsage);
     const decalGeo = (aS: THREE.InstancedBufferAttribute): THREE.InstancedBufferGeometry => {
@@ -260,6 +265,7 @@ export class TrapRenderer {
       g.index = quad.index;
       g.setAttribute('position', quad.getAttribute('position'));
       g.setAttribute('aT', this.aT);
+      g.setAttribute('aY', this.aY);
       g.setAttribute('aS', aS);
       g.instanceCount = 0;
       return g;
@@ -515,7 +521,7 @@ export class TrapRenderer {
       const s = this.slots[i];
       const t = traps[i];
       if (s.id !== t.id || s.kind !== t.kind) return true;
-      if (Math.abs(s.x - t.pos.x) > 1e-3 || Math.abs(s.z - t.pos.z) > 1e-3 || Math.abs(s.radius - t.radius) > 1e-3) {
+      if (Math.abs(s.x - t.pos.x) > 1e-3 || Math.abs(s.z - t.pos.z) > 1e-3 || Math.abs(s.y - t.pos.y) > 1e-3 || Math.abs(s.radius - t.radius) > 1e-3) {
         return true;
       }
     }
@@ -537,6 +543,7 @@ export class TrapRenderer {
       s.kind = t.kind;
       s.x = t.pos.x;
       s.z = t.pos.z;
+      s.y = t.pos.y;
       s.radius = t.radius;
       s.phase = t.phase;
       s.timeLeft = t.timeLeft;
@@ -552,18 +559,19 @@ export class TrapRenderer {
       s.armedGlow = t.phase === 'armed' ? 1 : 0;
       s.scorch = t.phase === 'armed' ? 0 : 1;
 
-      _m.makeScale(t.radius, 1, t.radius).setPosition(t.pos.x, 0.006, t.pos.z);
+      _m.makeScale(t.radius, 1, t.radius).setPosition(t.pos.x, 0.006 + t.pos.y, t.pos.z);
       if (t.kind === 'fire') this.firePlates.setMatrixAt(nf++, _m);
       else this.spikePlates.setMatrixAt(ns++, _m);
 
       this.aT.setXYZW(i, t.pos.x, t.pos.z, t.radius, t.kind === 'fire' ? 1 : 0);
+      this.aY.setX(i, t.pos.y);
 
       const rnd = mulberry32(0xe3be ^ (t.id * 7919));
       for (let k = 0; k < EMBERS_MAX; k++) {
         const j = i * EMBERS_MAX + k;
         const a = rnd() * TAU;
         const r = Math.sqrt(rnd()) * t.radius * 0.8;
-        emberPos.setXYZ(j, t.pos.x + Math.cos(a) * r, 0.15, t.pos.z + Math.sin(a) * r);
+        emberPos.setXYZ(j, t.pos.x + Math.cos(a) * r, 0.15 + t.pos.y, t.pos.z + Math.sin(a) * r);
         emberSeed.setXYZW(j, Math.cos(a) * 0.4, Math.sin(a) * 0.4, rnd(), rnd());
       }
     }
@@ -572,6 +580,7 @@ export class TrapRenderer {
     emberSeed.needsUpdate = true;
     this.aAmp.needsUpdate = true;
     this.aT.needsUpdate = true;
+    this.aY.needsUpdate = true;
 
     this.firePlates.count = nf;
     this.spikePlates.count = ns;
@@ -597,7 +606,7 @@ export class TrapRenderer {
     s.timeLeft = TRAP_ACTIVE_SECONDS;
     if (this.fx !== null) {
       this.burstPos.x = s.x;
-      this.burstPos.y = 0;
+      this.burstPos.y = s.y;
       this.burstPos.z = s.z;
       this.fx.onTrapTrigger(s.kind, this.burstPos, s.radius, this.nearness(s));
     }
@@ -610,7 +619,7 @@ export class TrapRenderer {
     s.lastDanger = s.danger;
     if (this.fx !== null) {
       this.burstPos.x = s.x;
-      this.burstPos.y = 0;
+      this.burstPos.y = s.y;
       this.burstPos.z = s.z;
       this.fx.onTrapExpire(s.kind, this.burstPos, s.radius);
     }
@@ -707,7 +716,7 @@ export class TrapRenderer {
         const ph = layout[o + 3] + s.seed * 5;
         const breathe = 0.86 + 0.14 * Math.sin(time * 3.1 + ph * 5.3);
         fl[c * 4] = s.x + layout[o] * s.radius;
-        fl[c * 4 + 1] = 0.02;
+        fl[c * 4 + 1] = 0.02 + s.y;
         fl[c * 4 + 2] = s.z + layout[o + 1] * s.radius;
         fl[c * 4 + 3] = layout[o + 2] * rs * grow * breathe;
         info[c * 2] = ph;
@@ -760,7 +769,7 @@ export class TrapRenderer {
         const tremble = u > 0 ? Math.sin(time * 46 + h * 1.7) * 0.025 * u : 0;
         const y = (s.intensity - 1) * tall + tremble;
         if (y + tall < 0.02) continue;
-        _pos.set(s.x + hole.x * s.radius, y, s.z + hole.z * s.radius);
+        _pos.set(s.x + hole.x * s.radius, y + s.y, s.z + hole.z * s.radius);
         _q.set(this.spikeQuat[h * 4], this.spikeQuat[h * 4 + 1], this.spikeQuat[h * 4 + 2], this.spikeQuat[h * 4 + 3]);
         _scl.set(1, hs, 1);
         _m.compose(_pos, _q, _scl);
@@ -793,7 +802,7 @@ export class TrapRenderer {
     }
     const t = this.clock;
     const flick = 0.82 + 0.12 * Math.sin(t * 13 + best.seed * 7) + 0.08 * Math.sin(t * 29.3);
-    this.light.position.set(best.x, 1.3, best.z);
+    this.light.position.set(best.x, 1.3 + best.y, best.z);
     this.light.intensity = LIGHT_BASE * Math.min(1.4, best.intensity) * flick * (best.radius / 2);
   }
 }

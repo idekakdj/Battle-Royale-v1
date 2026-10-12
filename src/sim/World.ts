@@ -33,6 +33,7 @@ import { updateGuard, setBlocking, tryStartSwing, updateSwing, grantTakenCharge 
 import { startSpecial, startUlt, updateAbility } from './abilities1';
 import { createPickups, updatePickups } from './PickupSystem';
 import { placeTraps, updateTraps, snapshotTraps, type TrapRuntime } from './TrapSystem';
+import { SerpentSystem, type SerpentOptions } from './SerpentSystem'; // v1.9 Ocean Dome sea serpent
 import { ProjectileSystem } from './projectiles';
 import { GroundZoneSystem } from './groundZones'; // v1.3 hippo mud
 import { TerrainSystem, specialBlockedByTerrain } from './TerrainSystem'; // v1.8 moss + shallow pool
@@ -46,6 +47,11 @@ export interface WorldOptions {
    * balance sweep's no-trap baseline pass false.
    */
   traps?: boolean;
+  /**
+   * v1.9 sea-serpent overrides (tests / the QA shortcut): force events early or often. Only honoured on arenas with
+   * `hazards.serpent`; the defaults are the real rules of `config/serpent.ts`.
+   */
+  serpent?: SerpentOptions;
 }
 
 export class World implements Sim {
@@ -65,6 +71,8 @@ export class World implements Sim {
   private pickups: PickupState[];
   /** Arena traps (v1.2); empty when disabled or the difficulty places none. */
   traps: TrapRuntime[];
+  /** v1.9 sea-serpent event (Ocean Dome); null on arenas without `hazards.serpent`, which then never see it. */
+  readonly serpent: SerpentSystem | null;
   /** v1.3 projectile system (nothing spawns projectiles yet; gorilla Boulder Hurl will). */
   readonly projectiles = new ProjectileSystem();
   /** v1.3 hippo mud: persistent ground zones (Riverlord's Flood pools). */
@@ -102,11 +110,14 @@ export class World implements Sim {
       height: c.height,
       hp: c.hp,
       alive: true,
+      baseY: c.baseY ?? 0, // v1.9: crates on raised levels sit on their ground height
     }));
 
     this.pickups = createPickups(this.rng, this.arena);
     // Own RNG stream (seed ^ salt) — never perturbs this.rng (determinism).
     this.traps = opts.traps === false ? [] : placeTraps(seed, cfg.difficulty, spawns, n, this.arena);
+    // v1.9: own RNG stream (seed ^ salt) as well — the serpent never perturbs this.rng.
+    this.serpent = this.arena.hazards?.serpent === true ? new SerpentSystem(seed, this.arena, opts.serpent) : null;
   }
 
   // ── Public API (§5.1) ──────────────────────────────────────────────────────
@@ -246,6 +257,9 @@ export class World implements Sim {
     // 3b. Arena traps (after movement so plates see this tick's positions).
     if (this.traps.length > 0) updateTraps(this, this.traps, dt, this.trapDamageFn);
 
+    // 3c. v1.9 sea serpent (Ocean Dome): schedule roll + timeline + the strike's true damage (after movement and traps).
+    if (this.serpent !== null) this.serpent.step(this, dt, this.trapDamageFn);
+
     // 4. Pickups.
     updatePickups(this, this.pickups, dt);
 
@@ -255,6 +269,7 @@ export class World implements Sim {
       if (f.state.alive && f.state.hp <= 0) this.kill(f);
     }
     this.checkMatchEnd();
+    if (this.matchOver && this.serpent !== null) this.serpent.abort(this); // no frozen half-strike on the results screen
 
     // 6. Resolve visible action for the renderer/AI.
     for (let i = 0; i < fs.length; i++) this.resolveAction(fs[i], dt);
@@ -277,8 +292,8 @@ export class World implements Sim {
       active: p.active,
       respawnT: p.respawnT,
     }));
-    const crates = this.crates.map((c) => ({ id: c.id, pos: { x: c.x, y: 0, z: c.z }, hp: c.hp, alive: c.alive }));
-    return {
+    const crates = this.crates.map((c) => ({ id: c.id, pos: { x: c.x, y: c.baseY ?? 0, z: c.z }, hp: c.hp, alive: c.alive }));
+    const snap: WorldSnapshot = {
       time: this.countdownRemaining > 0 ? -this.countdownRemaining : this.time,
       fighters,
       pickups,
@@ -289,6 +304,20 @@ export class World implements Sim {
       matchOver: this.matchOver,
       winnerId: this.winnerId,
     };
+    // v1.9: present ONLY while a serpent event runs, so every other arena/moment keeps the exact pre-1.9 snapshot.
+    const serpent = this.serpent?.snapshot();
+    if (serpent !== undefined) snap.serpent = serpent;
+    return snap;
+  }
+
+  /**
+   * v1.9 test / QA hook: queue a sea-serpent event that starts (the WARN phase, `serpentWarning`) at the beginning of the NEXT
+   * `step`, ignoring the schedule and the chance (so its events are emitted inside a tick, like every other event, and nothing
+   * starts during the 3-2-1 countdown). `angleDeg` is the strike direction (default: drawn from the serpent's own RNG stream).
+   * Returns false when this arena has no serpent or an event is already running / queued.
+   */
+  debugTriggerSerpent(angleDeg?: number): boolean {
+    return this.serpent !== null && this.serpent.trigger(angleDeg);
   }
 
   /** Seconds remaining in the pre-fight countdown (0 once FIGHT begins). */
@@ -340,7 +369,7 @@ export class World implements Sim {
     if (crate.hp <= 0) {
       crate.hp = 0;
       crate.alive = false;
-      this.emit({ type: 'crateBreak', crateId: crate.id, pos: { x: crate.x, y: 0, z: crate.z } });
+      this.emit({ type: 'crateBreak', crateId: crate.id, pos: { x: crate.x, y: crate.baseY ?? 0, z: crate.z } });
     }
   }
 
@@ -382,6 +411,11 @@ export class World implements Sim {
     if (killerId >= 0 && killerId !== f.id) {
       const killer = this.fighters[killerId];
       if (killer !== undefined) killer.state.kills += 1;
+    }
+    // v1.9: a death the serpent's strike caused this very tick is tagged for the kill feed (killerId stays −1, like a trap).
+    if (killerId === -1 && this.serpent !== null && this.serpent.wasHitThisTick(f.id)) {
+      this.emit({ type: 'death', targetId: f.id, killerId, placement, cause: 'serpent' });
+      return;
     }
     this.emit({ type: 'death', targetId: f.id, killerId, placement });
   }

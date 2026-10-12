@@ -21,7 +21,7 @@ export const MODE_LABEL: Record<OnlineMode, string> = {
 
 export const MODE_BLURB: Record<OnlineMode, string> = {
   championsLeague: 'Platform fighter. 2–4 players, no bots. Knock rivals off the stage.',
-  battleRoyale: 'Free-for-all in the colosseum or the jungle. 2–4 players, bots fill the arena up to 10 fighters.',
+  battleRoyale: 'Free-for-all in the colosseum, the jungle or the ocean dome. 2–4 players, bots fill the arena up to 10 fighters.',
 };
 
 /** The rule line shown under the roster. */

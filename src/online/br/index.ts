@@ -67,6 +67,9 @@
  *
  * WIRE FACTS (for QA): kinds BR_INTENT (12 B, 60 Hz), BR_SNAPSHOT (avg ≈ 320 B, max ≈ 700 B for 10 fighters incl. keyframes and
  * the 4-byte wrapper), BR_EVENTS (reliable, seq-numbered, deduplicated), BR_RESULTS (reliable), BR_SYNC (500 ms ping/pong).
+ * v1.9 (protocol 3): the Ocean Dome's sea serpent rides along — snapshot header flag 64 + a 6-byte block (only while an event runs),
+ * events `serpentWarning` / `serpentStrike` / `serpentHit` / `serpentEnd` (tags 23-26) and a cause byte on `death`; the client view
+ * interpolates `serpent.t` / `headR`; `swapIds` copies the block, `swapEventIds` remaps `serpentHit.fighterId`.
  * Any change to a wire format ⇒ bump ONLINE_PROTOCOL_VERSION in ../types.ts (the room handshake enforces equality).
  */
 export * from './tables';

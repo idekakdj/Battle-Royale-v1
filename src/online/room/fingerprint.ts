@@ -6,7 +6,8 @@
  *   championsLeague  MOVESETS + STAGES + PHYS   (everything the rollback sim reads)
  *   battleRoyale     ANIMALS (incl. ultimates + the v1.8 `swim` attribute) + balance + traps + arena + ARENAS + terrain
  *                    (everything host AND client read; `arena` = the colosseum constants, `arenas` = the v1.8 registry incl.
- *                    the jungle's trees/logs/terrain zones, `terrain` = the v1.8 moss / water / splash tuning numbers)
+ *                    the jungle's trees/logs/terrain zones, `terrain` = the v1.8 moss / water / splash tuning numbers,
+ *                    `serpent` = the v1.9 sea-serpent event numbers)
  *
  * VERSION COMPATIBILITY RULE (v1.5.1+): two builds can play together when they have the same
  * `ONLINE_PROTOCOL_VERSION`, the same data fingerprint AND the same app major.minor (1.5.0 <-> 1.5.2 are compatible,
@@ -21,6 +22,7 @@ import * as balance from '../../config/balance';
 import * as traps from '../../config/traps';
 import * as arena from '../../config/arena';
 import * as terrain from '../../config/terrain';
+import * as serpent from '../../config/serpent';
 import { ARENAS } from '../../config/arenas';
 import { PHYS } from '../../brawl/config';
 import { MOVESETS, STAGES } from '../../brawl/data';
@@ -108,7 +110,15 @@ export function hex32(n: number): string {
 /** The tuning data a mode depends on (exported for tests / diagnostics). */
 export function fingerprintData(mode: OnlineMode): unknown {
   if (mode === 'championsLeague') return { movesets: MOVESETS, stages: STAGES, phys: PHYS };
-  return { animals: ANIMALS, balance: { ...balance }, traps: { ...traps }, arena: { ...arena }, arenas: ARENAS, terrain: { ...terrain } };
+  return {
+    animals: ANIMALS,
+    balance: { ...balance },
+    traps: { ...traps },
+    arena: { ...arena },
+    arenas: ARENAS,
+    terrain: { ...terrain },
+    serpent: { ...serpent }, // v1.9: the sea-serpent timeline / damage / strip numbers
+  };
 }
 
 /**

@@ -18,6 +18,8 @@
  * - v1.8 jungle: when the arena (`render/arenaContext.getRenderArena()`, set by `createArenaScene`) is the jungle,
  *   {@link startCrowd} starts the jungle ambience bed (`./jungle`) INSTEAD of the crowd murmur — there are no spectators —
  *   and the `splash` event, the water slosh loops and the moss squelch become audible. Colosseum audio is unchanged.
+ * - v1.9 Ocean Dome: on the ocean arena {@link startCrowd} starts the muffled underwater bed (`./ocean`) instead of the crowd, and the
+ *   `serpentWarning` / `serpentStrike` / `serpentHit` events play the sea-serpent sounds (nothing happens on the other arenas).
  */
 
 import type { AnimalId, PickupState, TrapKind, Vec3 } from '../core/types';
@@ -30,6 +32,7 @@ import { Crowd } from './crowd';
 import { Music } from './music';
 import { UltAudioRegistry, playDryClick, synth as ultSynth, type UltAudioApi } from './ults';
 import { JungleAudio } from './jungle';
+import { OceanAudio } from './ocean';
 import { getRenderArena, resetWaterActivity, terrainAudio } from '../render/arenaContext';
 
 /** Shape of the persisted `gk-settings` localStorage value (UI owns writes). */
@@ -93,6 +96,7 @@ export class AudioEngine {
   private musicMod: Music | null = null;
   private trapMod: TrapSfx | null = null;
   private jungleMod: JungleAudio | null = null;
+  private oceanMod: OceanAudio | null = null;
 
   // Listener for world-positioned SFX (set per frame by the match; until then
   // every positioned sound plays at full level, e.g. in the demos).
@@ -158,6 +162,8 @@ export class AudioEngine {
     this.trapMod = null;
     this.jungleMod?.stop();
     this.jungleMod = null;
+    this.oceanMod?.stop();
+    this.oceanMod = null;
     terrainAudio.mossStep = null;
     this.ultApiCache = null;
     this.ultAudio.dispose();
@@ -238,6 +244,13 @@ export class AudioEngine {
       bus.on('hit', () => this.jungleMod?.noteCombat(0.16)),
       bus.on('ultimate', () => this.jungleMod?.noteCombat(0.5)),
       bus.on('death', () => this.jungleMod?.noteCombat(0.6)),
+      // v1.9 Ocean Dome: combat ducking + the sea-serpent set piece (all no-ops outside the ocean arena).
+      bus.on('hit', () => this.oceanMod?.noteCombat(0.16)),
+      bus.on('ultimate', () => this.oceanMod?.noteCombat(0.5)),
+      bus.on('death', () => this.oceanMod?.noteCombat(0.6)),
+      bus.on('serpentWarning', () => this.serpentWarningSfx()),
+      bus.on('serpentStrike', () => this.serpentStrikeSfx()),
+      bus.on('serpentHit', (ev) => this.serpentHitSfx(ev.pos)),
     ];
   }
 
@@ -315,6 +328,29 @@ export class AudioEngine {
   splashSfx(pos: Vec3, strength: number, entering: boolean): void {
     if (this.ready() === null || this.jungleMod === null) return;
     this.jungleMod.splash(strength, entering, this.distanceGain(pos));
+  }
+
+  /** v1.9: the sea serpent's warning (klaxon + growl + rumble); only on the Ocean Dome. */
+  serpentWarningSfx(): void {
+    if (this.ready() === null || this.oceanMod === null || !this.oceanArena) return;
+    this.oceanMod.warning();
+  }
+
+  /** v1.9: the head bursts through the glass (shatter + crash + roar, then the hold thump and the retreat rumble). */
+  serpentStrikeSfx(): void {
+    if (this.ready() === null || this.oceanMod === null || !this.oceanArena) return;
+    this.oceanMod.strike();
+  }
+
+  /** v1.9: the head caught a fighter at `pos` (heavy crunch + thud, attenuated by distance). */
+  serpentHitSfx(pos: Vec3): void {
+    if (this.ready() === null || this.oceanMod === null || !this.oceanArena) return;
+    this.oceanMod.hit(Math.max(0.35, this.distanceGain(pos)));
+  }
+
+  /** True while the arena on screen is the Ocean Dome (no crowd, underwater ambience). */
+  private get oceanArena(): boolean {
+    return getRenderArena().id === 'ocean';
   }
 
   /** True while the arena on screen is the jungle (no crowd, jungle ambience). */
@@ -444,6 +480,10 @@ export class AudioEngine {
       this.jungleMod?.flush(); // no crowd in the jungle: the birds scatter instead
       return;
     }
+    if (this.oceanArena) {
+      this.oceanMod?.flush(); // no crowd in the Ocean Dome: a few bubbles rise instead
+      return;
+    }
     const crowd = this.crowdMod;
     if (crowd !== null && this.ready() !== null) {
       crowd.gasp();
@@ -456,6 +496,10 @@ export class AudioEngine {
   matchEndSfx(): void {
     if (this.jungleArena) {
       this.jungleMod?.flush();
+      return;
+    }
+    if (this.oceanArena) {
+      this.oceanMod?.flush();
       return;
     }
     const crowd = this.crowdMod;
@@ -477,6 +521,11 @@ export class AudioEngine {
       terrainAudio.mossStep = (x, z) => this.jungleMod?.squelch(this.distanceGain({ x, y: 0, z }));
       return;
     }
+    if (this.oceanArena) {
+      // v1.9: the Ocean Dome has no spectators either - the muffled underwater bed replaces the crowd murmur.
+      this.oceanMod?.start();
+      return;
+    }
     this.crowdMod?.start();
   }
 
@@ -484,6 +533,7 @@ export class AudioEngine {
   stopCrowd(): void {
     this.crowdMod?.stop();
     this.jungleMod?.stop();
+    this.oceanMod?.stop();
     terrainAudio.mossStep = null;
     resetWaterActivity();
   }
@@ -500,7 +550,7 @@ export class AudioEngine {
 
   /** Cheer swell — `big` for bloodlust steps / victory moments. */
   crowdCheer(big = false): void {
-    if (this.ready() === null || this.jungleArena) return;
+    if (this.ready() === null || this.jungleArena || this.oceanArena) return;
     this.crowdMod?.cheer(big);
   }
 
@@ -556,6 +606,7 @@ export class AudioEngine {
     this.musicMod = new Music(sc);
     this.trapMod = new TrapSfx(sc);
     this.jungleMod = new JungleAudio(sc, () => ({ has: this.hasListener, x: this.listenerX, z: this.listenerZ }));
+    this.oceanMod = new OceanAudio(sc, () => ({ has: this.hasListener, x: this.listenerX, z: this.listenerZ }));
     this.applyVolumes();
     return sc;
   }

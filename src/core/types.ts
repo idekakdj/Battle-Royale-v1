@@ -180,6 +180,30 @@ export interface TrapState {
   triggeredBy: number;
 }
 
+/**
+ * v1.9 sea-serpent event phases (Ocean Dome; docs/OCEAN-PLAN.md, numbers in config/serpent.ts).
+ *  warn    – the strip along the strike line is telegraphed; the serpent coils outside the dome (no damage).
+ *  strike  – the head travels from the dome edge to the centre; the swept strip hurts (300 true damage, once per fighter).
+ *  hold    – the head rests at the centre (harmless).
+ *  retreat – the head withdraws back out along the same line (harmless).
+ */
+export type SerpentPhase = 'warn' | 'strike' | 'hold' | 'retreat';
+
+/**
+ * v1.9 live state of the running sea-serpent event. Present in {@link WorldSnapshot.serpent} ONLY while an event runs.
+ * The strike line runs from the dome edge at `angleDeg` to the centre: direction vector (cos θ, sin θ) in (x, z), θ in
+ * [0, 360), the same convention as the ramps in `config/arenas.ts`.
+ */
+export interface SerpentState {
+  phase: SerpentPhase;
+  /** Direction of the strike line from the centre toward the edge point the serpent attacks from, degrees [0, 360). */
+  angleDeg: number;
+  /** Seconds into the current phase (0 at its first tick, < the phase's duration). */
+  t: number;
+  /** Head centre's distance from the arena centre (m): `wallRadius` while warning, wallRadius → 0 during the strike, 0 while holding, 0 → wallRadius on retreat. */
+  headR: number;
+}
+
 export interface WorldSnapshot {
   time: number;
   fighters: FighterState[];
@@ -189,6 +213,8 @@ export interface WorldSnapshot {
   traps: TrapState[];
   /** v1.3: projectiles in flight (absent/empty when none). */
   projectiles?: ProjectileState[];
+  /** v1.9: the sea-serpent event in progress (Ocean Dome only; absent when no event runs, so other arenas' snapshots are unchanged). */
+  serpent?: SerpentState;
   bloodlustMult: number;
   matchOver: boolean;
   winnerId: number;
@@ -198,7 +224,11 @@ export type GameEvent =
   | { type: 'hit'; attackerId: number; targetId: number; damage: number; pos: Vec3; heavy: boolean }
   | { type: 'blocked'; attackerId: number; targetId: number; damage: number; pos: Vec3 }
   | { type: 'guardBreak'; targetId: number; pos: Vec3 }
-  | { type: 'death'; targetId: number; killerId: number; placement: number }
+  /**
+   * A fighter died. `killerId` −1 = the environment (trap, serpent). v1.9: `cause` is present ONLY for a sea-serpent kill
+   * (`'serpent'`; killerId stays −1) so the kill feed can tell it from a trap kill (which stays "killerId −1, no cause").
+   */
+  | { type: 'death'; targetId: number; killerId: number; placement: number; cause?: 'serpent' }
   | { type: 'ultimate'; fighterId: number; animal: AnimalId }
   | { type: 'special'; fighterId: number; animal: AnimalId }
   | {
@@ -262,6 +292,21 @@ export type GameEvent =
    * horizontal + vertical speed (see `splashStrength` in config/terrain.ts). Cosmetic: splash VFX + sound.
    */
   | { type: 'splash'; fighterId: number; pos: Vec3; entering: boolean; strength: number }
+  /**
+   * v1.9 sea-serpent event (Ocean Dome): the WARN phase begins. The strip along angleDeg (centre → edge) is the danger zone;
+   * the strike lands `warnS` seconds from now. Fired once per event.
+   */
+  | { type: 'serpentWarning'; angleDeg: number; warnS: number }
+  /** v1.9: the head breaks through the dome edge at `angleDeg` and sweeps toward the centre (STRIKE begins). */
+  | { type: 'serpentStrike'; angleDeg: number }
+  /**
+   * v1.9: the swept strip hit one fighter (once per fighter per event). `damage` = hit points actually removed (≤ the
+   * config damage); true damage — never reduced by block / guard / armour — and it grants nobody ult charge or credit.
+   * `pos` = the fighter's position. A death caused by it follows as `death { killerId: −1, cause: 'serpent' }`.
+   */
+  | { type: 'serpentHit'; fighterId: number; damage: number; pos: Vec3 }
+  /** v1.9: the event is over (the head has withdrawn); the snapshot's `serpent` disappears. */
+  | { type: 'serpentEnd' }
   | { type: 'matchEnd'; winnerId: number };
 
 /** Narrows {@link GameEvent} to a single variant by its `type` tag. */
@@ -291,5 +336,5 @@ export interface MatchConfig {
 }
 
 /** v1.8: Battle Royale arenas. 'colosseum' is the original; 'jungle' adds trees, moss patches and a wading pool (docs/JUNGLE-PLAN.md). */
-export type ArenaId = 'colosseum' | 'jungle';
-export const ARENA_IDS: readonly ArenaId[] = ['colosseum', 'jungle'];
+export type ArenaId = 'colosseum' | 'jungle' | 'ocean';
+export const ARENA_IDS: readonly ArenaId[] = ['colosseum', 'jungle', 'ocean'];

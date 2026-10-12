@@ -36,7 +36,7 @@ import { DEG2RAD, TAU, clamp01 } from '../core/math';
 import { OVERLAY_LAYER } from './SceneManager';
 import { kickFov, setFxSink, getFxSink, type FxSink, type SlamKind } from './fxBus';
 import { tierProfile } from './quality';
-import { getRenderArena, mossZoneAt, renderArenaHasTerrain, terrainAudio, waterZoneAt } from './arenaContext';
+import { getRenderArena, mossZoneAt, renderArenaHasTerrain, renderGroundHeight, terrainAudio, waterZoneAt } from './arenaContext';
 import { WaterFx } from './waterFx';
 
 export type TelegraphKind = 'ring' | 'arc' | 'rect';
@@ -80,6 +80,8 @@ const _v = new THREE.Vector3();
 /** Footstep dust colours (linear-ish RGB; the colosseum value is the original 0.8/0.67/0.46). */
 const COLOSSEUM_DUST: readonly [number, number, number] = [0.79, 0.66, 0.44];
 const JUNGLE_DUST: readonly [number, number, number] = [0.5, 0.44, 0.3];
+/** v1.9 Ocean Dome: pale silty sand kicked up underwater. */
+const OCEAN_DUST: readonly [number, number, number] = [0.6, 0.72, 0.7];
 
 // ── Point-sprite shaders (per-particle size/alpha/color) ────────────────────
 const POINTS_VERTEX = /* glsl */ `
@@ -1285,6 +1287,19 @@ export class Effects implements FxSink {
           cr, cg, cb, 0.85, -1.6, 0.9,
         );
       }
+    } else if (getRenderArena().id === 'ocean') {
+      // No crowd in the Ocean Dome: a column of bubbles rises from the fallen fighter (the glass dome's air), pale and slow.
+      const bubbles = Math.max(10, Math.round(26 * tierProfile().fxScale));
+      for (let i = 0; i < bubbles; i++) {
+        const ang = Math.random() * TAU;
+        const rr = Math.random() * 1.6;
+        this.soft.spawn(
+          pos.x + Math.cos(ang) * rr, pos.y + 0.4 + Math.random() * 1.2, pos.z + Math.sin(ang) * rr,
+          (Math.random() - 0.5) * 0.8, 1.2 + Math.random() * 1.6, (Math.random() - 0.5) * 0.8,
+          1.6 + Math.random() * 1.0, 0.12, 0.22,
+          0.7, 0.92, 0.98, 0.55, 0.4, 1.4,
+        );
+      }
     } else {
       // Streamers: thrown from the stands toward the arena, fluttering down.
       for (let i = 0; i < 46; i++) {
@@ -1507,8 +1522,9 @@ export class Effects implements FxSink {
     const fx = tierProfile().fxScale;
     const near = clamp01(nearness);
     const k = clamp01(damage / 55);
-    _v.set(pos.x, 0, pos.z);
-    this.cracks.spawn(pos.x, 0, pos.z, radius * 0.75);
+    const gyL = renderGroundHeight(pos.x, pos.z); // v1.9: terrain height (0 on every arena without a heightfield)
+    _v.set(pos.x, gyL, pos.z);
+    this.cracks.spawn(pos.x, gyL, pos.z, radius * 0.75);
     this.dustRing(pos.x, pos.z, radius, 20);
     this.rings.spawn(_v, 0xf3e3c3, radius * 0.2, radius * 1.15, 0.5, 1.2, 0.85);
     this.rings.spawn(_v, 0xffffff, radius * 0.1, radius * 0.7, 0.24, 1.5, 0.55);
@@ -1597,7 +1613,7 @@ export class Effects implements FxSink {
 
   /** Ground-crack decal (fades after ~3 s). */
   crack(x: number, z: number, radius: number): void {
-    this.cracks.spawn(x, 0, z, radius);
+    this.cracks.spawn(x, renderGroundHeight(x, z), z, radius);
   }
 
   /** Outward dust ring along the ground. */
@@ -1647,8 +1663,9 @@ export class Effects implements FxSink {
     const fx = tierProfile().fxScale;
     const near = clamp01(nearness);
     const r = Math.max(1, radius);
-    _v.set(pos.x, 0, pos.z);
-    this.cracks.spawn(pos.x, 0, pos.z, r * 0.9);
+    const gyR = renderGroundHeight(pos.x, pos.z);
+    _v.set(pos.x, gyR, pos.z);
+    this.cracks.spawn(pos.x, gyR, pos.z, r * 0.9);
     this.dustRing(pos.x, pos.z, r, 20);
     this.rings.spawn(_v, 0xd9c7a0, r * 0.2, r * 1.1, 0.45, 1.2, 0.8);
     this.impactRings.spawn(_v, 0.4, 0xffe0a8, 0.4, r * 1.3, 0.25, 0.55, 1, 1.1);
@@ -1724,11 +1741,12 @@ export class Effects implements FxSink {
     }
     const n = scale > 0.8 ? 3 : 2;
     const dc = this.dustRgb();
+    const gy = renderGroundHeight(x, z);
     for (let i = 0; i < n; i++) {
       const ang = Math.random() * TAU;
       const sp = 0.3 + Math.random() * 0.5;
       this.soft.spawn(
-        x + Math.cos(ang) * 0.2, 0.08, z + Math.sin(ang) * 0.2,
+        x + Math.cos(ang) * 0.2, gy + 0.08, z + Math.sin(ang) * 0.2,
         Math.cos(ang) * sp, 0.25 + Math.random() * 0.4, Math.sin(ang) * sp,
         0.55 + Math.random() * 0.3, 0.2 * scale, 0.6 * scale,
         dc[0] + 0.01, dc[1] + 0.01, dc[2] + 0.02, 0.22, -0.6, 2.5,
@@ -1805,14 +1823,16 @@ export class Effects implements FxSink {
 
   /** Footstep / landing dust colour for the current arena (sand-tan on the colosseum, damp earth in the jungle). */
   private dustRgb(): readonly [number, number, number] {
-    return getRenderArena().id === 'jungle' ? JUNGLE_DUST : COLOSSEUM_DUST;
+    const id = getRenderArena().id;
+    return id === 'jungle' ? JUNGLE_DUST : id === 'ocean' ? OCEAN_DUST : COLOSSEUM_DUST;
   }
 
   slam(source: THREE.Object3D, x: number, z: number, radius: number, color: number, kind: SlamKind): void {
     if (source.parent !== this.scene) return;
-    if (kind === 'crack') this.cracks.spawn(x, 0, z, radius * 0.85);
+    const gy = renderGroundHeight(x, z);
+    if (kind === 'crack') this.cracks.spawn(x, gy, z, radius * 0.85);
     this.dustRing(x, z, radius, kind === 'crack' ? 16 : 12);
-    _v.set(x, 0, z);
+    _v.set(x, gy, z);
     this.rings.spawn(_v, color, radius * 0.3, radius * 1.15, 0.45, 1.3, 0.75);
     // Grit chunks.
     if (kind === 'crack') {
@@ -1820,7 +1840,7 @@ export class Effects implements FxSink {
         const ang = Math.random() * TAU;
         const sp = 1.5 + Math.random() * 2.5;
         this.soft.spawn(
-          x, 0.1, z,
+          x, gy + 0.1, z,
           Math.cos(ang) * sp, 3 + Math.random() * 3, Math.sin(ang) * sp,
           0.7, 0.12, 0.1,
           0.36, 0.26, 0.16, 0.9, -16, 0.5,
@@ -1834,11 +1854,12 @@ export class Effects implements FxSink {
   private dustRing(x: number, z: number, radius: number, count: number): void {
     const n = Math.max(4, Math.round(count * tierProfile().fxScale));
     const dc = this.dustRgb();
+    const gy = renderGroundHeight(x, z);
     for (let i = 0; i < n; i++) {
       const ang = (i / n) * TAU + Math.random() * 0.3;
       const sp = (1.2 + Math.random() * 0.8) * Math.max(0.6, radius);
       this.soft.spawn(
-        x + Math.cos(ang) * 0.3, 0.12, z + Math.sin(ang) * 0.3,
+        x + Math.cos(ang) * 0.3, gy + 0.12, z + Math.sin(ang) * 0.3,
         Math.cos(ang) * sp, 0.4 + Math.random() * 0.6, Math.sin(ang) * sp,
         0.8 + Math.random() * 0.4, 0.4, 1.2 + radius * 0.2,
         dc[0], dc[1], dc[2], 0.38, -0.8, 3.2,

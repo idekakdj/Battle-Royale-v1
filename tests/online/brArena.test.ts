@@ -69,11 +69,13 @@ describe('room settings: br.arena', () => {
 describe('room picker view model', () => {
   it('lists every arena in order with its ArenaDef copy; exactly one is selected', () => {
     const items = mapPickerItems('jungle');
-    expect(items.map((i) => i.id)).toEqual(['colosseum', 'jungle']);
-    expect(items.map((i) => i.selected)).toEqual([false, true]);
+    expect(items.map((i) => i.id)).toEqual(['colosseum', 'jungle', 'ocean']);
+    expect(items.map((i) => i.selected)).toEqual([false, true, false]);
     expect(items[1].name).toBe(ARENAS.jungle.name);
     expect(items[1].blurb).toBe(ARENAS.jungle.blurb);
-    expect(mapPickerItems('colosseum').map((i) => i.selected)).toEqual([true, false]);
+    expect(mapPickerItems('colosseum').map((i) => i.selected)).toEqual([true, false, false]);
+    expect(mapPickerItems('ocean').map((i) => i.selected)).toEqual([false, false, true]);
+    expect(items[2].name).toBe(ARENAS.ocean.name);
   });
 
   it('changing the map changes the settings key (the panel rebuilds)', async () => {

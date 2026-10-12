@@ -13,7 +13,8 @@
  *   crates   u16 (hp×4 | alive<<15)
  *   traps    u8 phase|hasTime · u8 triggeredBy+1 · [timeLeft]
  *   projectiles (when present/non-empty) varu n · each id/kind/pos/vel/radius/owner
- *   stats    (flag; keyframes, every 8th seq, match over) per fighter kills · damageDealt · damageBlocked · ultsUsed
+ *   serpent  (header flag 64; v1.9 Ocean Dome event, absent otherwise) u16 angle·360/65536 · u16 phase<<14 | t ms · u16 headR cm = 6 bytes
+ *   stats   (flag; keyframes, every 8th seq, match over) per fighter kills · damageDealt · damageBlocked · ultsUsed
  *
  * Absent optional data costs nothing (ult fields, buffs, grab links, glide/burrow clocks, cooldown timers, …).
  * Quantisation steps and tolerances: see `Q` / `TOLERANCE` in tables.ts. `decode` NEVER throws: corrupt, truncated or
@@ -26,6 +27,7 @@ import type {
   FighterState,
   PickupState,
   ProjectileState,
+  SerpentState,
   TrapKind,
   TrapState,
   Vec3,
@@ -39,10 +41,13 @@ import {
   PICKUP_KIND_TABLE,
   PROJECTILE_KIND_TABLE,
   Q,
+  SERPENT_PHASE_TABLE,
   TRAP_KIND_TABLE,
   TRAP_PHASE_TABLE,
   ULT_PHASE_TABLE,
+  angleDegToU16,
   angleToU16,
+  u16ToAngleDeg,
   decEnum,
   encEnum,
   qI16,
@@ -63,6 +68,8 @@ const H_MATCH_OVER = 4;
 const H_PROJ_DEFINED = 8;
 const H_PROJ_NONEMPTY = 16;
 const H_EXPLICIT_IDS = 32;
+const H_SERPENT = 64; // v1.9: a sea-serpent block follows the projectiles (6 bytes; absent most of the time)
+const H_UNKNOWN = 128; // reserved: a packet carrying it is rejected
 
 // ── Fighter flag bits ────────────────────────────────────────────────────────
 const F_ALIVE = 1;
@@ -88,6 +95,9 @@ const O_ULT_STAGE = 1 << 10;
 const O_ULT_TARGET = 1 << 11;
 const O_ON_MOSS = 1 << 12; // v1.8 terrain flag (FighterState.onMoss); a flag only, no payload
 const O_KNOWN = (1 << 13) - 1;
+
+/** The serpent block's phase clock is 14 bits of milliseconds (the phase sits in the top 2 bits): 16.383 s >> any phase. */
+const SERPENT_T_MAX = 0x3fff;
 
 const MAX_FIGHTERS = 64;
 const MAX_BUFFS = 32;
@@ -150,6 +160,7 @@ export function encodeSnapshot(s: WorldSnapshot, opts: EncodeOptions): Uint8Arra
   if (proj !== undefined) flags |= H_PROJ_DEFINED;
   if (projNonEmpty) flags |= H_PROJ_NONEMPTY;
   if (explicitIds) flags |= H_EXPLICIT_IDS;
+  if (s.serpent !== undefined) flags |= H_SERPENT;
   w.u8(flags);
   w.u8(nF).u8(s.pickups.length).u8(s.crates.length).u8(s.traps.length);
   w.u16(qU16(s.bloodlustMult, Q.SMALL));
@@ -187,6 +198,12 @@ export function encodeSnapshot(s: WorldSnapshot, opts: EncodeOptions): Uint8Arra
       w.u16(qU16(p.radius, Q.SMALL));
       writeOptId(w, p.ownerId);
     }
+  }
+  if (s.serpent !== undefined) {
+    const sp = s.serpent;
+    w.u16(angleDegToU16(sp.angleDeg));
+    w.u16((encEnum(SERPENT_PHASE_TABLE, sp.phase) << 14) | Math.min(SERPENT_T_MAX, qU16(sp.t, Q.TIME)));
+    w.u16(qU16(sp.headR, Q.POS));
   }
   if (stats) {
     for (let i = 0; i < nF; i++) {
@@ -330,7 +347,7 @@ export class SnapshotDecoder {
     const seq = r.u16();
     const timeMs = r.i32();
     const flags = r.u8();
-    if ((flags & 0xc0) !== 0) return null;
+    if ((flags & H_UNKNOWN) !== 0) return null;
     const nF = r.u8();
     const nP = r.u8();
     const nC = r.u8();
@@ -413,6 +430,12 @@ export class SnapshotDecoder {
         }
       }
     }
+    let serpent: SerpentState | undefined;
+    if ((flags & H_SERPENT) !== 0) {
+      const angleDeg = u16ToAngleDeg(r.u16());
+      const pt = r.u16();
+      serpent = { phase: decEnum(SERPENT_PHASE_TABLE, pt >> 14), angleDeg, t: (pt & SERPENT_T_MAX) / Q.TIME, headR: r.u16() / Q.POS };
+    }
     const newCarry: { kills: number; dmg: number; blk: number; ults: number }[] = [];
     if (hasStats) {
       for (let i = 0; i < nF; i++) {
@@ -453,6 +476,7 @@ export class SnapshotDecoder {
       winnerId,
     };
     if (projectiles !== undefined) snapshot.projectiles = projectiles;
+    if (serpent !== undefined) snapshot.serpent = serpent;
     return { seq, keyframe, snapshot };
   }
 }

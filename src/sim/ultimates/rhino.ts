@@ -275,6 +275,8 @@ function carry(sim: Sim, f: Fighter, rt: AbilityRuntime, st: Stampede, dt: numbe
   const v = t.state;
   v.pos.x = f.state.pos.x + rt.dirX * off;
   v.pos.z = f.state.pos.z + rt.dirZ * off;
+  // v1.9: the cliff rule measures the carried foe from the carrier's feet, not from the hoisted horn height (no carrying anyone up a cliff)
+  if (sim.arena.heightfield !== undefined) v.pos.y = f.state.pos.y;
   const res = resolveObstacles(sim, t, false);
   const hitWall = clampToWall(t);
   const opposed = res.corrX * rt.dirX + res.corrZ * rt.dirZ;

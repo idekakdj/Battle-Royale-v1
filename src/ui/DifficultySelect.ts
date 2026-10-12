@@ -1,13 +1,15 @@
 /**
- * Difficulty select screen (WP-F, BLUEPRINT §12) + the v1.8 Battle Royale MAP row.
+ * Difficulty select screen (WP-F, BLUEPRINT §12) + the Battle Royale MAP row (v1.8 colosseum | jungle, v1.9 + Ocean Dome).
  *
  * Four large cards driven entirely by `config/botProfiles.ts` — label, tagline, description, and the concrete behavior bullets
- * (§10). Under them a compact "Map" row (Colosseum | Jungle Clearing) with a thumbnail drawn from the real arena data and a
- * one-line blurb from the `ArenaDef`. START MATCH confirms and persists both choices (`gk-difficulty`, `gk-arena`).
+ * (§10). Under them a compact "Map" row (one card per `ARENA_IDS` entry: Colosseum | Jungle Clearing | Ocean Dome) with a
+ * thumbnail drawn from the real arena data and a one-line blurb from the `ArenaDef`. START MATCH confirms and persists both
+ * choices (`gk-difficulty`, `gk-arena`); REMATCH replays the same map (main.ts passes `results.arena`).
  *
- * Map keyboard: with a map card focused ←/→ (or ↑/↓) move + select it (roving, wrapping); `M` anywhere on the screen cycles the
- * map; Tab/Enter/Space work natively on the cards (they are buttons). The difficulty cards keep their `.gk-ds__card` /
- * `.gk-ds__start` classes (the packaged-app smoke test clicks them); the map cards use `.gk-ds__map`.
+ * Map keyboard: with a map card focused ←/→ (or ↑/↓) move + select it (roving, wrapping); Home / End jump to the first / last
+ * map; `M` anywhere on the screen cycles the map; Tab/Enter/Space work natively on the cards (they are buttons). The difficulty
+ * cards keep their `.gk-ds__card` / `.gk-ds__start` classes (the packaged-app smoke test clicks them); the map cards use
+ * `.gk-ds__map` (any number of them: the model below is generic over `ARENA_IDS`).
  */
 
 import type { Screen } from '../core/ScreenManager';

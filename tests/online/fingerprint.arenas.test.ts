@@ -8,16 +8,17 @@ import { describe, it, expect } from 'vitest';
 import { computeFingerprint, fingerprintData, fnv1a32, hex32, stableStringify } from '../../src/online/room/fingerprint';
 import { ARENAS, JUNGLE_ARENA } from '../../src/config/arenas';
 import * as arena from '../../src/config/arena';
+import * as serpentCfg from '../../src/config/serpent';
 
-type BrData = { animals: unknown; balance: unknown; traps: unknown; arena: unknown; arenas: typeof ARENAS; terrain: unknown };
+type BrData = { animals: unknown; balance: unknown; traps: unknown; arena: unknown; arenas: typeof ARENAS; terrain: unknown; serpent: Record<string, unknown> };
 
 describe('battleRoyale fingerprint covers the arena registry', () => {
   const data = fingerprintData('battleRoyale') as BrData;
 
   it('hashes the ARENAS registry as an additive key; the original inputs are still all there', () => {
-    expect(Object.keys(data).sort()).toEqual(['animals', 'arena', 'arenas', 'balance', 'terrain', 'traps']);
+    expect(Object.keys(data).sort()).toEqual(['animals', 'arena', 'arenas', 'balance', 'serpent', 'terrain', 'traps']);
     expect(data.arenas).toBe(ARENAS);
-    expect(Object.keys(data.arenas).sort()).toEqual(['colosseum', 'jungle']);
+    expect(Object.keys(data.arenas).sort()).toEqual(['colosseum', 'jungle', 'ocean']);
     expect(stableStringify(data.arena)).toBe(stableStringify({ ...arena }));
   });
 
@@ -57,6 +58,26 @@ describe('battleRoyale fingerprint covers the arena registry', () => {
     // dropping the registry entirely is also visible
     const { arenas: _drop, ...without } = data;
     expect(hash(stableStringify(without))).not.toBe(baseHash);
+  });
+
+  it('v1.9 hashes the sea-serpent numbers: changing any of them changes the fingerprint', () => {
+    expect(stableStringify(data.serpent)).toBe(stableStringify({ ...serpentCfg }));
+    expect((data.serpent as { SERPENT: Record<string, number> }).SERPENT.damage).toBe(300);
+    const hash = (text: string): string => hex32(fnv1a32(text));
+    const baseHash = hash(stableStringify(data));
+    const S = (data.serpent as { SERPENT: Record<string, number> }).SERPENT;
+    for (const key of ['intervalS', 'chance', 'warnS', 'strikeS', 'holdS', 'retreatS', 'stripHalfWidth', 'headRadius', 'damage', 'hazardHeight', 'seedSalt']) {
+      expect(typeof S[key], key).toBe('number');
+      const changed = { ...data, serpent: { ...data.serpent, SERPENT: { ...S, [key]: S[key] * 1.01 + 0.01 } } };
+      expect(hash(stableStringify(changed)), key).not.toBe(baseHash);
+    }
+    // the ocean arena's hazard flag is part of the registry hash too
+    const noSerpent = { ...data, arenas: { ...ARENAS, ocean: { ...ARENAS.ocean, hazards: { serpent: false } } } };
+    expect(hash(stableStringify(noSerpent))).not.toBe(baseHash);
+  });
+
+  it('Champions League is unaffected by the serpent numbers', () => {
+    expect(Object.keys(fingerprintData('championsLeague') as object)).not.toContain('serpent');
   });
 
   it('is plain data: no cycles (stableStringify would throw) and stable key order', () => {

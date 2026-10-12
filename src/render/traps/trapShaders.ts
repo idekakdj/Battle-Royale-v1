@@ -28,6 +28,7 @@ float tNoise(vec2 p) {
 export const DISC_VERTEX = /* glsl */ `
 attribute vec4 aT;
 attribute vec4 aS;
+attribute float aY;
 uniform float uExtent;
 uniform float uLift;
 varying vec2 vP;
@@ -38,7 +39,7 @@ void main() {
   vS = aS;
   vec2 p = position.xz * uExtent;
   vP = p;
-  vec3 w = vec3(aT.x + p.x * aT.z, uLift, aT.y + p.y * aT.z);
+  vec3 w = vec3(aT.x + p.x * aT.z, uLift + aY, aT.y + p.y * aT.z);
   gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
 }
 `;

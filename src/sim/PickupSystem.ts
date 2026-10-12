@@ -10,9 +10,12 @@ import type { Fighter, Sim } from './Fighter';
 import type { Rng } from '../core/math';
 import { PICKUPS } from '../config/balance';
 import type { ArenaDef } from '../config/arenas';
-import { COLOSSEUM_ARENA } from '../config/arenas';
+import { COLOSSEUM_ARENA, arenaGroundHeight } from '../config/arenas';
 import { addBuff } from './StatusEffects';
 import { withinGroundReach } from './hitbox';
+
+/** v1.9 (heightfield arenas): a pad only triggers for a fighter within this vertical distance of it (a different level never does). */
+const PAD_LEVEL_TOL = 1.4;
 
 function chooseKind(rng: Rng): PickupState['kind'] {
   const r = rng();
@@ -26,7 +29,7 @@ export function createPickups(rng: Rng, arena: ArenaDef = COLOSSEUM_ARENA): Pick
   return arena.pickupPads.map((p) => ({
     id: p.id,
     kind: chooseKind(rng),
-    pos: { x: p.x, y: 0, z: p.z },
+    pos: { x: p.x, y: arenaGroundHeight(arena, p.x, p.z), z: p.z }, // v1.9: pads on raised levels sit on their ground
     active: true,
     respawnT: 0,
   }));
@@ -62,6 +65,7 @@ export function updatePickups(sim: Sim, pickups: PickupState[], dt: number): voi
     for (let j = 0; j < sim.fighters.length; j++) {
       const f = sim.fighters[j];
       if (!f.state.alive || !withinGroundReach(f)) continue; // v1.2: soaring eagles fly over pads
+      if (sim.arena.heightfield !== undefined && Math.abs(f.state.pos.y - p.pos.y) > PAD_LEVEL_TOL) continue; // v1.9: other levels don't count
       const dx = f.state.pos.x - p.pos.x;
       const dz = f.state.pos.z - p.pos.z;
       if (Math.sqrt(dx * dx + dz * dz) <= PICKUPS.radius + f.def.radius) {

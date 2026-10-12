@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GameEvent } from '../../src/core/types';
 import {
+  EVENT_ANGLE_DEG_TOLERANCE,
   EVENT_ANGLE_TOLERANCE,
   EVENT_CODECS,
   EVENT_POS_TOLERANCE,
@@ -18,6 +19,11 @@ function eventMismatches(a: unknown, b: unknown, path = 'e'): string[] {
   if (typeof a === 'number' && typeof b === 'number') {
     if (path.endsWith('.yaw')) return Math.abs(angleDiff(a, b)) <= EVENT_ANGLE_TOLERANCE ? [] : [`${path}: ${a} vs ${b}`];
     if (path.endsWith('.strength')) return Math.abs(a - b) <= EVENT_STRENGTH_TOLERANCE ? [] : [`${path}: ${a} vs ${b}`];
+    if (path.endsWith('.angleDeg')) {
+      const d = Math.abs((((a - b) % 360) + 540) % 360 - 180); // wrap-aware: 359.9999 and 0 are the same direction
+      return d <= EVENT_ANGLE_DEG_TOLERANCE ? [] : [`${path}: ${a} vs ${b}`];
+    }
+    if (path.endsWith('.warnS')) return Math.abs(a - b) <= 0.0005 + 1e-9 ? [] : [`${path}: ${a} vs ${b}`];
     return Math.abs(a - b) <= Math.max(1e-6, Math.abs(a) * 1e-6) ? [] : [`${path}: ${a} vs ${b}`];
   }
   if (a !== null && b !== null && typeof a === 'object' && typeof b === 'object') {
@@ -63,6 +69,10 @@ function variantIndex(e: GameEvent): number {
     case 'landingImpact':
     case 'matchEnd':
     case 'splash':
+    case 'serpentWarning':
+    case 'serpentStrike':
+    case 'serpentHit':
+    case 'serpentEnd':
       return EVENT_CODECS[e.type].tag;
     default: {
       const unhandled: never = e;
@@ -81,7 +91,7 @@ describe('event codec', () => {
     expect([...EVENT_TYPES].sort()).toEqual(types);
     const tags = new Set(types.map((t) => EVENT_CODECS[t as GameEvent['type']].tag));
     expect(tags.size).toBe(types.length);
-    expect(types.length).toBe(22);
+    expect(types.length).toBe(26);
   });
 
   it.each(Object.keys(SAMPLES))('round-trips %s', (type) => {
@@ -166,6 +176,57 @@ describe('event codec', () => {
       n += evs.length;
     }
     expect(n).toBeGreaterThan(20);
+  });
+
+  it('v1.9 serpent events: exact payloads, byte sizes and angle wrap-around', () => {
+    const batchOf = (ev: GameEvent): GameEvent => {
+      const out = decodeEventBatch(encodeEventBatch({ firstSeq: 1, timeMs: 0, events: [ev] }));
+      expect(out?.events).toHaveLength(1);
+      return (out?.events[0]) as GameEvent;
+    };
+    // sizes: batch header = varu seq(1) + i32 time(4) + u8 count(1); then tag + fields
+    const size = (ev: GameEvent): number => encodeEventBatch({ firstSeq: 1, timeMs: 0, events: [ev] }).length - 6;
+    expect(size({ type: 'serpentWarning', angleDeg: 10, warnS: 1.3 })).toBe(1 + 2 + 2);
+    expect(size({ type: 'serpentStrike', angleDeg: 10 })).toBe(1 + 2);
+    expect(size({ type: 'serpentHit', fighterId: 3, damage: 300, pos: { x: 1, y: 0, z: 2 } })).toBe(1 + 1 + 2 + 6);
+    expect(size({ type: 'serpentEnd' })).toBe(1);
+
+    for (const angleDeg of [0, 0.004, 90, 211.37, 359.99, 359.9999, 360, -10, 725]) {
+      const w = batchOf({ type: 'serpentWarning', angleDeg, warnS: 1.3 }) as Extract<GameEvent, { type: 'serpentWarning' }>;
+      const want = ((angleDeg % 360) + 360) % 360;
+      const d = Math.abs((((w.angleDeg - want) % 360) + 540) % 360 - 180);
+      expect(d, `angle ${angleDeg}`).toBeLessThanOrEqual(EVENT_ANGLE_DEG_TOLERANCE);
+      expect(w.angleDeg).toBeGreaterThanOrEqual(0);
+      expect(w.angleDeg).toBeLessThan(360);
+      expect(w.warnS).toBeCloseTo(1.3, 3);
+    }
+    const hit = batchOf({ type: 'serpentHit', fighterId: 9, damage: 300, pos: { x: -12.5, y: 3.25, z: 7.75 } }) as Extract<GameEvent, { type: 'serpentHit' }>;
+    expect(hit.fighterId).toBe(9);
+    expect(hit.damage).toBe(300);
+    expect(hit.pos).toEqual({ x: -12.5, y: 3.25, z: 7.75 });
+    // a clamped / NaN damage never corrupts the stream
+    expect((batchOf({ type: 'serpentHit', fighterId: 1, damage: Number.NaN, pos: { x: 0, y: 0, z: 0 } }) as Extract<GameEvent, { type: 'serpentHit' }>).damage).toBe(0);
+    expect(batchOf({ type: 'serpentEnd' })).toEqual({ type: 'serpentEnd' });
+  });
+
+  it('v1.9 death cause: a serpent kill keeps killerId -1 and its cause; every other death has NO cause key', () => {
+    const batchOf = (ev: GameEvent): Extract<GameEvent, { type: 'death' }> => {
+      const out = decodeEventBatch(encodeEventBatch({ firstSeq: 1, timeMs: 0, events: [ev] }));
+      return out?.events[0] as Extract<GameEvent, { type: 'death' }>;
+    };
+    const serp = batchOf({ type: 'death', targetId: 4, killerId: -1, placement: 8, cause: 'serpent' });
+    expect(serp).toEqual({ type: 'death', targetId: 4, killerId: -1, placement: 8, cause: 'serpent' });
+    const trap = batchOf({ type: 'death', targetId: 4, killerId: -1, placement: 8 });
+    expect(trap).toEqual({ type: 'death', targetId: 4, killerId: -1, placement: 8 });
+    expect('cause' in trap).toBe(false);
+    const melee = batchOf({ type: 'death', targetId: 2, killerId: 5, placement: 3 });
+    expect('cause' in melee).toBe(false);
+    // a corrupt cause byte drops the packet
+    const ok = encodeEventBatch({ firstSeq: 1, timeMs: 0, events: [{ type: 'death', targetId: 4, killerId: -1, placement: 8 }] });
+    const bad = ok.slice();
+    bad[bad.length - 1] = 2;
+    expect(decodeEventBatch(ok)).not.toBeNull();
+    expect(decodeEventBatch(bad)).toBeNull();
   });
 
   it('splits oversized event lists into consecutive batches', () => {

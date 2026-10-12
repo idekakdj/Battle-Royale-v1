@@ -4,7 +4,7 @@
  * so tests can measure what a client actually renders against what the host really simulated.
  */
 
-import { World } from '../../src/sim/World';
+import { World, type WorldOptions } from '../../src/sim/World';
 import { EventBus } from '../../src/core/EventBus';
 import { BotManager } from '../../src/ai/BotManager';
 import { LinkChannel } from '../../src/online/channel';
@@ -44,6 +44,8 @@ export interface SessionOptions {
   seconds?: number; // of wall/sim time to run (including the 3 s countdown)
   /** v1.8: the arena the host World / bots play on (default: the colosseum). */
   arena?: ArenaId;
+  /** v1.9: extra World options (e.g. `{ serpent: {...} }` to force sea-serpent events on the ocean arena). */
+  worldOpts?: WorldOptions;
   snapshotHz?: number;
   hostOpts?: Partial<BrNetHostOptions>;
   clientOpts?: Partial<BrNetClientOptions>;
@@ -156,7 +158,7 @@ export async function runSession(opts: SessionOptions = {}): Promise<Session> {
   // BotManager only builds brains for roster entries with isPlayer=false, so remote humans are NOT flagged isPlayer: a brain
   // exists for the takeover when a peer leaves (the host overrides its output while host.remoteIntent(slot) is non-null).
   // The host's own slot 0 is bot-driven here so fights stay busy.
-  const world = new World({ roster: animals.map((a) => ({ animal: a, isPlayer: false })), difficulty: 4, arena: opts.arena }, seed, bus);
+  const world = new World({ roster: animals.map((a) => ({ animal: a, isPlayer: false })), difficulty: 4, arena: opts.arena }, seed, bus, opts.worldOpts);
   const bots = new BotManager(bus, 4, seed, world.arena);
   const now = (): number => net.now;
   const host = new BrNetHost({ channel: hostMachine.channel, start: mkStart(0), now, snapshotHz: opts.snapshotHz, ...opts.hostOpts });

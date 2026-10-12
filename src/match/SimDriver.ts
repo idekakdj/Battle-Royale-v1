@@ -18,6 +18,7 @@
 import { EventBus } from '../core/EventBus';
 import type { ArenaId, Difficulty, FighterIntent, GameEvent, AnimalId, RosterEntry, WorldSnapshot } from '../core/types';
 import { World } from '../sim/World';
+import type { SerpentOptions } from '../sim/SerpentSystem';
 import { BotManager } from '../ai/BotManager';
 import { getArena } from '../config/arenas';
 import { seatRoster } from './seating';
@@ -66,6 +67,11 @@ export interface LocalSimConfig {
   seed: number;
   /** v1.8: the map (absent = 'colosseum': exactly the pre-1.8 match). */
   arena?: ArenaId;
+  /**
+   * v1.9 QA (`?br=1&arena=ocean&serpent=1`): override the sea-serpent schedule (World option `serpent`). Only honoured on arenas
+   * with the hazard; absent = the real rules. Never used online (the host's rules are the only rules).
+   */
+  serpent?: SerpentOptions;
 }
 
 /** The offline sim: the player at fighter 0, nine seeded bots, one shared bus. */
@@ -97,6 +103,7 @@ export class LocalSimDriver implements SimDriver {
         : { roster, difficulty: cfg.difficulty },
       cfg.seed,
       this.bus,
+      cfg.serpent !== undefined ? { serpent: cfg.serpent } : undefined,
     );
     // BotManager MUST share the bus and exist before the first step.
     this.bots = new BotManager(this.bus, cfg.difficulty, cfg.seed, this.world.arena);

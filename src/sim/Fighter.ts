@@ -33,6 +33,8 @@ export interface CrateRuntime {
   height: number;
   hp: number;
   alive: boolean;
+  /** v1.9: ground height under the crate (its top is `baseY + height`); absent / 0 on flat arenas. */
+  baseY?: number;
 }
 
 /** Ability phase tags. */
@@ -236,6 +238,12 @@ export class Fighter {
   // True while some system fully owns this fighter's position this tick
   // (charges/dashes/leaps/grabs) so MovementSystem skips normal locomotion.
   movementOwned = false;
+
+  /**
+   * v1.9 (heightfield arenas): the highest feet height of the current airborne episode (the takeoff height or the jump apex; equal to `pos.y`
+   * while grounded). The cliff rule measures a falling fighter against it, so stepping off a ledge never shoves the body out of the wall it just left.
+   */
+  airPeakY = 0;
 
   // ── v1.8 terrain (written ONLY by TerrainSystem; all stay at their neutral values in the colosseum) ──
   /** Grounded and centre inside a water disc (hysteresis at the shoreline). Snapshots carry it as `FighterState.inWater`. */

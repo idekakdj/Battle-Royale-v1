@@ -4,6 +4,7 @@
  */
 
 import type { ArenaDef, ArenaObstacle, TerrainZoneDef } from '../../src/config/arenas';
+import { arenaCliffDistance, arenaWalkableStep } from '../../src/config/arenas';
 
 export function segDist(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
   const abx = bx - ax;
@@ -147,4 +148,130 @@ export function componentAt(fs: FreeSpace, x: number, z: number): number {
     }
   }
   return -1;
+}
+
+// ── v1.9: walking over a height field (ramps only; the cliff rule is the sim's) ─────────────────────────────────
+
+export interface WalkSpace {
+  step: number;
+  n: number;
+  half: number;
+  free: Uint8Array;
+  /** Cell index of the grid point nearest (x,z). */
+  cell(x: number, z: number): number;
+  /** Cell centre of cell `c`. */
+  pos(c: number): { x: number; z: number };
+  /** Walking distance (m) from the nearest free cell to (x0,z0) over the walk graph; Infinity = unreachable. */
+  distFrom(x0: number, z0: number): Float64Array;
+}
+
+/**
+ * Walk graph of a heightfield arena for a body of `radius`: a cell is walkable when it is inside the wall (minus the radius), clear
+ * of every solid (conservative: logs / arches / crates all block) and `arenaCliffDistance ≥ radius` (the sim's cliff rule, so the
+ * body can stand there). Two cells are joined (8-neighbourhood, a diagonal needs both orthogonal cells free) when
+ * `arenaWalkableStep` allows the move. Dijkstra gives walking distances.
+ */
+export function walkSpace(arena: ArenaDef, radius: number, step = 0.5): WalkSpace {
+  const half = arena.wallRadius;
+  const n = Math.ceil((half * 2) / step) + 1;
+  const free = new Uint8Array(n * n);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const x = -half + i * step;
+      const z = -half + j * step;
+      if (Math.hypot(x, z) > arena.wallRadius - radius) continue;
+      let ok = true;
+      for (const ob of arena.solids) {
+        if (surfaceDist(ob, x, z) < radius) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok && arenaCliffDistance(arena, x, z) < radius - 1e-9) ok = false;
+      if (ok) free[i * n + j] = 1;
+    }
+  }
+  const cell = (x: number, z: number): number => Math.round((x + half) / step) * n + Math.round((z + half) / step);
+  const pos = (c: number): { x: number; z: number } => ({ x: -half + Math.floor(c / n) * step, z: -half + (c % n) * step });
+  const distFrom = (x0: number, z0: number): Float64Array => {
+    const dist = new Float64Array(n * n).fill(Infinity);
+    // start: nearest free cell within 1.5 m
+    let start = -1;
+    let bestD = Infinity;
+    const c0 = cell(x0, z0);
+    const i0 = Math.floor(c0 / n);
+    const j0 = c0 % n;
+    for (let di = -3; di <= 3; di++) {
+      for (let dj = -3; dj <= 3; dj++) {
+        const i = i0 + di;
+        const j = j0 + dj;
+        if (i < 0 || j < 0 || i >= n || j >= n || !free[i * n + j]) continue;
+        const d = Math.hypot(-half + i * step - x0, -half + j * step - z0);
+        if (d < bestD) {
+          bestD = d;
+          start = i * n + j;
+        }
+      }
+    }
+    if (start < 0) return dist;
+    dist[start] = 0;
+    // binary heap of [d, cell]
+    const heap: number[][] = [[0, start]];
+    const push = (e: number[]): void => {
+      heap.push(e);
+      let k = heap.length - 1;
+      while (k > 0) {
+        const p = (k - 1) >> 1;
+        if (heap[p][0] <= heap[k][0]) break;
+        [heap[p], heap[k]] = [heap[k], heap[p]];
+        k = p;
+      }
+    };
+    const pop = (): number[] => {
+      const top = heap[0];
+      const last = heap.pop() as number[];
+      if (heap.length > 0) {
+        heap[0] = last;
+        let k = 0;
+        for (;;) {
+          const l = 2 * k + 1;
+          const r = l + 1;
+          let m = k;
+          if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+          if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+          if (m === k) break;
+          [heap[m], heap[k]] = [heap[k], heap[m]];
+          k = m;
+        }
+      }
+      return top;
+    };
+    while (heap.length > 0) {
+      const [d, c] = pop();
+      if (d > dist[c]) continue;
+      const ci = Math.floor(c / n);
+      const cj = c % n;
+      const cp = pos(c);
+      for (let di = -1; di <= 1; di++) {
+        for (let dj = -1; dj <= 1; dj++) {
+          if (di === 0 && dj === 0) continue;
+          const i = ci + di;
+          const j = cj + dj;
+          if (i < 0 || j < 0 || i >= n || j >= n) continue;
+          const q = i * n + j;
+          if (!free[q]) continue;
+          if (di !== 0 && dj !== 0 && (!free[(ci + di) * n + cj] || !free[ci * n + cj + dj])) continue;
+          const qp = pos(q);
+          if (!arenaWalkableStep(arena, cp.x, cp.z, qp.x, qp.z)) continue;
+          const nd = d + (di !== 0 && dj !== 0 ? Math.SQRT2 : 1) * step;
+          if (nd < dist[q]) {
+            dist[q] = nd;
+            push([nd, q]);
+          }
+        }
+      }
+    }
+    return dist;
+  };
+  return { step, n, half, free, cell, pos, distFrom };
 }

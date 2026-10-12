@@ -131,7 +131,37 @@ export const JUNGLE_LOOK: ArenaLook = {
   gradeLift: [0.004, 0.01, 0.006],
 };
 
-const ARENA_LOOKS: Readonly<Record<string, ArenaLook>> = { colosseum: COLOSSEUM_LOOK, jungle: JUNGLE_LOOK };
+/**
+ * The v1.9 Ocean Dome look: the floor of a glass dome on the sea bed. Inside the dome the air is clear (so the fog starts late and
+ * stays light - the ocean's own heavier "water fog" is applied by the ocean materials outside the glass), the light is a cool
+ * blue-green shaft from the surface far above, the sky mesh becomes the water column (bright cyan overhead, deep blue-green at the
+ * horizon, dark below), and the grade is cool, saturated and a little darker at the edges.
+ */
+export const OCEAN_LOOK: ArenaLook = {
+  fogColor: 0x0d5876,
+  fogNear: 46,
+  fogFar: 150,
+  hemiSky: 0x9fe6f2,
+  hemiGround: 0x1d4656,
+  hemiIntensity: 0.78,
+  sunColor: 0xc9f4ff,
+  sunIntensity: 1.2,
+  sun: { x: 18, y: 52, z: 10 },
+  exposure: 0.98,
+  skyTop: 0x2fb0cc,
+  skyHorizon: 0x0f6a86,
+  skyBottom: 0x04202f,
+  skySun: 0xb6f4ff,
+  cloudLit: 0x9fe6f2,
+  cloudShade: 0x1d6f86,
+  clouds: false,
+  gradeWarm: 0,
+  gradeSat: 1.16,
+  gradeVignette: 0.4,
+  gradeLift: [0.0, 0.01, 0.018],
+};
+
+const ARENA_LOOKS: Readonly<Record<string, ArenaLook>> = { colosseum: COLOSSEUM_LOOK, jungle: JUNGLE_LOOK, ocean: OCEAN_LOOK };
 
 const AUTO_FPS_MIN = 45;
 const AUTO_SLOW_SECONDS = 3;

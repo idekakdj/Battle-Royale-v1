@@ -33,8 +33,8 @@
 import * as THREE from 'three';
 import { DEG2RAD, clamp, wrapAngle } from '../core/math';
 import { fovKick } from './fxBus';
-import { getRenderArena } from './arenaContext';
-import type { ArenaDef } from '../config/arenas';
+import { arenaShake, getRenderArena, renderGroundHeight } from './arenaContext';
+import { arenaGroundHeight, type ArenaDef } from '../config/arenas';
 import type { FpEyeSample } from './animals/fp/types';
 import { UltCamOut } from './animals/fp/ultCam'; // v1.3 FP ult: ultimate camera director output
 import {
@@ -73,6 +73,13 @@ const BLEND_DUR = 0.5; // target-switch transition (§11.5)
 const CAM_PAD = 0.35; // sphere-cast radius
 const MIN_DIST = 0.9;
 const GROUND_MIN_Y = 0.28;
+// v1.9 Ocean Dome: raised terrain (ramps, terrace, plateau) - the boom stays this far above the ground under it.
+const TERRAIN_MARGIN = CAM_PAD + 0.14;
+const TERRAIN_STEP = 0.25;
+const TERRAIN_SIGHT_DROP = 0.9; // the camera must see the fighter this far below the pivot (mid-body)
+const TERRAIN_SIGHT_MARGIN = 0.22;
+const TERRAIN_SIGHT_SAMPLES = 7;
+const TERRAIN_TAU = 0.05; // eased pull-in when a cliff / plateau is between the player and the camera
 const MAX_SHAKE = 0.15; // §11.4 screenshake cap (m)
 
 // Wall squeeze assist.
@@ -93,7 +100,7 @@ const _target = new THREE.Vector3();
 const _pivot = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _camPos = new THREE.Vector3();
-const _hit = { hard: 0, soft: 0 };
+const _hit: { hard: number; soft: number; terrain?: number } = { hard: 0, soft: 0 };
 
 // First-person scratch.
 const FP_REL_TAU = 0.035; // eye-offset smoothing (s); root position is NOT smoothed
@@ -306,7 +313,8 @@ export class CameraRig {
     let sp = Math.sin(this.pitch);
     _dir.set(-sinYaw * cp, sp, -cosYaw * cp);
     this.collide(_pivot, _dir, desired);
-    const need = _hit.hard < desired ? 1 - _hit.hard / desired : 0;
+    const needAt = _hit.terrain !== undefined && _hit.terrain < _hit.hard ? _hit.terrain : _hit.hard; // v1.9: a cliff squeezes like a wall
+    const need = needAt < desired ? 1 - needAt / desired : 0;
     const sq = need > 0.1 ? Math.min(1, (need - 0.1) / 0.55) : 0;
     this.squeeze += (sq - this.squeeze) * (1 - Math.exp(-dt / SQUEEZE_TAU));
 
@@ -322,15 +330,20 @@ export class CameraRig {
     // Spring toward the desired distance; soft obstacles ease in, hard clamp.
     this.dist += (desired - this.dist) * (1 - Math.exp(-dt / DIST_TAU));
     if (this.dist > soft) this.dist += (soft - this.dist) * (1 - Math.exp(-dt / PULL_TAU));
+    const terrain = _hit.terrain;
+    if (terrain !== undefined && terrain < desired && this.dist > terrain) this.dist += (terrain - this.dist) * (1 - Math.exp(-dt / TERRAIN_TAU)); // v1.9
     if (this.dist > hard) this.dist = hard;
     if (this.dist < MIN_DIST) this.dist = MIN_DIST;
 
     _camPos.copy(_pivot).addScaledVector(_dir, this.dist);
-    if (_camPos.y < GROUND_MIN_Y) _camPos.y = GROUND_MIN_Y;
-    if (this.spectateMode && _camPos.y < SPECTATE_MIN_Y) _camPos.y = SPECTATE_MIN_Y;
+    // v1.9: the floor under the camera is the terrain height there (0 on every arena without a heightfield: identical numbers).
+    const groundBelow = renderGroundHeight(_camPos.x, _camPos.z);
+    if (_camPos.y < groundBelow + GROUND_MIN_Y) _camPos.y = groundBelow + GROUND_MIN_Y;
+    if (groundBelow > 0 && _camPos.y < groundBelow + TERRAIN_MARGIN) _camPos.y = groundBelow + TERRAIN_MARGIN;
+    if (this.spectateMode && _camPos.y < groundBelow + SPECTATE_MIN_Y) _camPos.y = groundBelow + SPECTATE_MIN_Y;
 
     // Screenshake (≤0.15 m), applied as a positional offset.
-    const rawShake = this.shakeSource !== null ? this.shakeSource() : 0;
+    const rawShake = (this.shakeSource !== null ? this.shakeSource() : 0) + arenaShake.amount; // v1.9: + the arena's own shudder (0 off-ocean)
     let shakeAmt = 0;
     if (rawShake > 0.0005) {
       const s = rawShake > MAX_SHAKE ? MAX_SHAKE : rawShake;
@@ -412,7 +425,8 @@ export class CameraRig {
     const sinY = Math.sin(this.yaw);
     const cosY = Math.cos(this.yaw);
     let y = smp.rootY + this.fpRelY + smp.bobY;
-    if (y < 0.14) y = 0.14;
+    const eyeFloor = renderGroundHeight(smp.rootX + _off.x, smp.rootZ + _off.z) + 0.14; // v1.9: the eye stays above the terrain (0.14 off-ocean)
+    if (y < eyeFloor) y = eyeFloor;
     _fpPos.set(
       smp.rootX + _off.x - cosY * smp.bobSide,
       y,
@@ -424,7 +438,8 @@ export class CameraRig {
       _fpPos.x += ul.slideX + sinY * ul.eyeF;
       _fpPos.y += ul.slideY + ul.eyeY;
       _fpPos.z += ul.slideZ + cosY * ul.eyeF;
-      if (_fpPos.y < 0.14) _fpPos.y = 0.14;
+      const eyeFloorU = renderGroundHeight(_fpPos.x, _fpPos.z) + 0.14;
+      if (_fpPos.y < eyeFloorU) _fpPos.y = eyeFloorU;
       const r = Math.hypot(_fpPos.x, _fpPos.z);
       const rMax = getRenderArena().wallRadius - 0.22;
       if (r > rMax) {
@@ -520,10 +535,11 @@ export function boomCast(
   ox: number, oy: number, oz: number,
   dx: number, dy: number, dz: number,
   maxDist: number,
-  out: { hard: number; soft: number },
+  out: { hard: number; soft: number; terrain?: number },
 ): void {
   let hard = maxDist;
   let soft = maxDist;
+  out.terrain = maxDist;
   const a = dx * dx + dz * dz;
 
   if (a > 1e-8) {
@@ -552,7 +568,7 @@ export function boomCast(
       if (disc2 <= 0) continue;
       const sq = Math.sqrt(disc2);
       const t0 = (-bb - sq) / (2 * a);
-      if (t0 > 0 && t0 < soft && oy + dy * t0 <= p.height + CAM_PAD + 0.35) {
+      if (t0 > 0 && t0 < soft && oy + dy * t0 <= (p.baseY ?? 0) + p.height + CAM_PAD + 0.35) {
         if (p.kind === 'tree') {
           const t1 = (-bb + sq) / (2 * a);
           if (!(maxDist > t0 && maxDist < t1)) continue;
@@ -569,6 +585,45 @@ export function boomCast(
   }
   out.hard = hard;
   out.soft = soft < hard ? soft : hard;
+
+  // v1.9 TERRAIN (arenas with a heightfield only; the colosseum and the jungle skip this block entirely): the boom must stay
+  // `TERRAIN_MARGIN` above the ground under every point of it, so a cliff / terrace / plateau between the player and the camera pulls
+  // it in (`out.terrain`, eased by the rig and also feeding the wall-style squeeze assist that lifts the camera over the edge).
+  if (arena.heightfield !== undefined) {
+    // The player's mid-body point the camera has to SEE (a cliff edge must not hide the fighter standing at its foot).
+    const tx = ox;
+    const ty = oy - TERRAIN_SIGHT_DROP;
+    const tz = oz;
+    const blockedAt = (px: number, py: number, pz: number, withSight: boolean): boolean => {
+      if (py < arenaGroundHeight(arena, px, pz) + TERRAIN_MARGIN) return true;
+      if (!withSight) return false;
+      for (let k = 1; k <= TERRAIN_SIGHT_SAMPLES; k++) {
+        const f = (k / (TERRAIN_SIGHT_SAMPLES + 1)) * 0.92;
+        const qx = px + (tx - px) * f;
+        const qz = pz + (tz - pz) * f;
+        if (py + (ty - py) * f < arenaGroundHeight(arena, qx, qz) + TERRAIN_SIGHT_MARGIN) return true;
+      }
+      return false;
+    };
+    let prevT = 0;
+    for (let t = TERRAIN_STEP; ; t += TERRAIN_STEP) {
+      const tt = t < maxDist ? t : maxDist;
+      if (blockedAt(ox + dx * tt, oy + dy * tt, oz + dz * tt, true)) {
+        // refine the crossing between the last clear sample and this one
+        let lo = prevT;
+        let hi = tt;
+        for (let k = 0; k < 6; k++) {
+          const mid = (lo + hi) / 2;
+          if (blockedAt(ox + dx * mid, oy + dy * mid, oz + dz * mid, true)) hi = mid;
+          else lo = mid;
+        }
+        out.terrain = lo;
+        break;
+      }
+      prevT = tt;
+      if (tt >= maxDist) break;
+    }
+  }
 }
 
 /** Distance along (dx,dz) at which a ray from inside a circle exits it (−1 if none). */

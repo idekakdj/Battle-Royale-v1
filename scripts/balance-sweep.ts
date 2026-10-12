@@ -11,6 +11,9 @@
  *   TRAPS=0 N=60 npm run balance             (v1.2: no arena traps — the baseline)
  *   COMPARE=1 N=60 npm run balance           (v1.2: same seeds without and with traps + placement deltas)
  *   ARENA=jungle N=30 npm run balance        (v1.8: play on the Jungle Clearing; default colosseum, output unchanged)
+ *   ARENA=ocean N=60 npm run balance         (v1.9: the Ocean Dome; adds the serpent readout: events, exposure, dodge rate, deaths)
+ *   SERPENT_EVERY=20 ARENA=ocean N=40 npm run balance   (v1.9: force a serpent event every 20 s of live match time instead of the real 10 %/min;
+ *                                            SERPENT_CHANCE=1 per roll by default, SERPENT_FIRST=10 first roll at 10 s; off by default)
  *
  * v1.2 trap readout per level: trap triggers / damage per match, average trap
  * damage per fighter per match, trap share of ALL damage (fighter damage incl.
@@ -31,6 +34,9 @@ import { ANIMAL_IDS } from '../src/config/animals';
 import { mulberry32 } from '../src/core/math';
 import { ARENA_IDS } from '../src/core/types';
 import { getArena } from '../src/config/arenas';
+import { SERPENT } from '../src/config/serpent';
+import { SERPENT_AI, stripDistance } from '../src/ai/SerpentSense';
+import { NAV_AI } from '../src/ai/Navigator';
 import type { AnimalId, ArenaId, Difficulty, MatchConfig } from '../src/core/types';
 
 const DT = 1 / 60;
@@ -58,6 +64,21 @@ const ARENA: ArenaId = ((): ArenaId => {
 
 /** True when the chosen arena has terrain zones (the jungle): the sweep adds the water / moss readout. */
 const ARENA_HAS_TERRAIN = getArena(ARENA).terrain.length > 0;
+
+/** v1.9 SERPENT_EVERY=s forces a sea-serpent roll every s seconds (chance SERPENT_CHANCE, default 1; first roll at SERPENT_FIRST, default s). 0 = the real rules. */
+const SERPENT_EVERY = Number(process.env.SERPENT_EVERY ?? 0);
+const SERPENT_CHANCE = Number(process.env.SERPENT_CHANCE ?? 1);
+const SERPENT_FIRST = Number(process.env.SERPENT_FIRST ?? SERPENT_EVERY);
+/** v1.9 stall readout (worst run of frames a moving-intent fighter stayed put): always on for elevated arenas, STALLS=1 elsewhere (the colosseum's output stays unchanged by default). */
+const STALLS = process.env.STALLS === '1' || getArena((process.env.ARENA ?? 'colosseum') as ArenaId).heightfield !== undefined;
+
+/** What-if tuning of the v1.9 bot knobs, e.g. NAV_TUNE='{"2":{"levelBias":0}}' SERPENT_TUNE='{"1":{"missChance":0.4}}' (dev only; unset = the shipped numbers). */
+for (const [env, table] of [['NAV_TUNE', NAV_AI], ['SERPENT_TUNE', SERPENT_AI]] as const) {
+  const raw = process.env[env];
+  if (raw === undefined) continue;
+  const t = JSON.parse(raw) as Record<string, Record<string, number | boolean>>;
+  for (const k of Object.keys(t)) Object.assign((table as Record<number, object>)[Number(k)], t[k]);
+}
 
 const A = ANIMAL_IDS as readonly AnimalId[];
 const IDX = new Map<AnimalId, number>(A.map((a, i) => [a, i]));
@@ -104,10 +125,19 @@ interface LevelExtras {
   deaths: number;
   slams: number;
   slamDmg: number;
+  /** v1.9 sea serpent: events, fighters standing in the telegraphed strip when it appeared, hits on them, hits on others (walked in), deaths it caused. */
+  serpEvents: number;
+  serpExposed: number;
+  serpHitExposed: number;
+  serpHitOther: number;
+  serpDeaths: number;
+  /** v1.9 stall hunt: the longest run of frames one fighter tried to move (|intent| > 0.5, run/idle) and stayed within 0.75 m, and how many runs reached 300 frames (5 s). */
+  worstStall: number;
+  stalls300: number;
 }
 
 function blankExtras(): LevelExtras {
-  return { trapTriggers: 0, trapDmg: 0, allDmg: 0, trapDeaths: 0, deaths: 0, slams: 0, slamDmg: 0 };
+  return { trapTriggers: 0, trapDmg: 0, allDmg: 0, trapDeaths: 0, deaths: 0, slams: 0, slamDmg: 0, serpEvents: 0, serpExposed: 0, serpHitExposed: 0, serpHitOther: 0, serpDeaths: 0, worstStall: 0, stalls300: 0 };
 }
 
 interface Outcome {
@@ -140,7 +170,10 @@ function play(
 ): Outcome {
   const cfg: MatchConfig = { roster: animals.map((a) => ({ animal: a, isPlayer: false })), difficulty: lvl, arena: ARENA };
   const bus = new EventBus();
-  const world = new World(cfg, seed, bus, { traps });
+  const world = new World(cfg, seed, bus, {
+    traps,
+    ...(SERPENT_EVERY > 0 ? { serpent: { intervalS: SERPENT_EVERY, chance: SERPENT_CHANCE, firstAtS: SERPENT_FIRST } } : {}),
+  });
   const mx = blankExtras();
   const bots = new BotManager(bus, lvl, seed, world.arena);
   let ended = false;
@@ -180,9 +213,32 @@ function play(
     mx.slams++;
     mx.slamDmg += e.damage;
   });
+  // v1.9 serpent exposure: who stands in the strip when the warning appears?
+  const exposed = new Array<boolean>(animals.length).fill(false);
+  bus.on('serpentWarning', (e) => {
+    mx.serpEvents++;
+    exposed.fill(false);
+    const rad = (e.angleDeg * Math.PI) / 180;
+    for (let i = 0; i < animals.length; i++) {
+      const f = world.fighters[i];
+      if (!f.state.alive) continue;
+      const d = stripDistance(f.state.pos.x, f.state.pos.z, Math.cos(rad), Math.sin(rad), world.arena.wallRadius);
+      if (d < SERPENT.headRadius + f.def.radius) {
+        exposed[i] = true;
+        mx.serpExposed++;
+      }
+    }
+  });
+  bus.on('serpentHit', (e) => {
+    if (exposed[e.fighterId]) mx.serpHitExposed++;
+    else mx.serpHitOther++;
+  });
   bus.on('death', (e) => {
     mx.deaths++;
-    if (e.killerId === -1) mx.trapDeaths++;
+    if (e.killerId === -1) {
+      if (e.cause === 'serpent') mx.serpDeaths++;
+      else mx.trapDeaths++;
+    }
     place[e.targetId] = e.placement;
     deathTime[e.targetId] = world.time;
     if (stats !== null && e.killerId >= 0 && e.killerId !== e.targetId) stats[IDX.get(animals[e.killerId]) as number].kills++;
@@ -199,10 +255,34 @@ function play(
   const poolZ = pool?.z ?? 0;
   const poolR = pool?.radius ?? 0;
   const wasFull = new Array<boolean>(animals.length).fill(false);
+  const stallX = new Float64Array(animals.length);
+  const stallZ = new Float64Array(animals.length);
+  const stallN = new Int32Array(animals.length);
+  for (let id = 0; id < animals.length; id++) {
+    stallX[id] = world.fighters[id].state.pos.x;
+    stallZ[id] = world.fighters[id].state.pos.z;
+  }
   for (let tick = 0; tick < maxTicks && !ended; tick++) {
     bots.update(world.snapshot(), DT);
     for (let id = 0; id < animals.length; id++) world.setIntent(id, bots.getIntent(id));
     world.step(DT);
+    if (STALLS && world.time > 0) {
+      for (let id = 0; id < animals.length; id++) {
+        const wf = world.fighters[id];
+        const st0 = wf.state;
+        if (!st0.alive) continue;
+        const wants = Math.hypot(wf.intent.moveX, wf.intent.moveZ) > 0.5 && (st0.action === 'run' || st0.action === 'idle');
+        if (!wants || Math.hypot(st0.pos.x - stallX[id], st0.pos.z - stallZ[id]) > 0.75) {
+          stallX[id] = st0.pos.x;
+          stallZ[id] = st0.pos.z;
+          stallN[id] = 0;
+        } else {
+          stallN[id]++;
+          if (stallN[id] > mx.worstStall) mx.worstStall = stallN[id];
+          if (stallN[id] === 300) mx.stalls300++;
+        }
+      }
+    }
     if (stats !== null) {
       for (let id = 0; id < animals.length; id++) {
         const st = world.fighters[id].state;
@@ -241,6 +321,15 @@ function play(
     extras.deaths += mx.deaths;
     extras.slams += mx.slams;
     extras.slamDmg += mx.slamDmg;
+    extras.serpEvents += mx.serpEvents;
+    extras.serpExposed += mx.serpExposed;
+    extras.serpHitExposed += mx.serpHitExposed;
+    extras.serpHitOther += mx.serpHitOther;
+    extras.serpDeaths += mx.serpDeaths;
+  }
+  if (extras !== null) {
+    extras.worstStall = Math.max(extras.worstStall, mx.worstStall);
+    extras.stalls300 += mx.stalls300;
   }
   if (ended && stats !== null) {
     for (let i = 0; i < animals.length; i++) {
@@ -316,6 +405,15 @@ function runFfa(lvl: Difficulty, traps: boolean = TRAPS_ON): PerAnimal[] {
       `trapDmg/fighter/match ${(ex.trapDmg / e / A.length).toFixed(1)}  share of all damage ${((100 * ex.trapDmg) / Math.max(1, ex.allDmg)).toFixed(1)}%  ` +
       `trap deaths/match ${(ex.trapDeaths / e).toFixed(2)} (${((100 * ex.trapDeaths) / Math.max(1, ex.deaths)).toFixed(1)}% of deaths)`,
   );
+  if (getArena(ARENA).hazards?.serpent === true) {
+    const dodged = ex.serpExposed - ex.serpHitExposed;
+    console.log(
+      `serpent${SERPENT_EVERY > 0 ? ` (forced every ${SERPENT_EVERY}s, chance ${SERPENT_CHANCE})` : ' (real rules)'}: events/match ${(ex.serpEvents / e).toFixed(2)}  ` +
+        `exposed/event ${(ex.serpExposed / Math.max(1, ex.serpEvents)).toFixed(2)}  dodge ${ex.serpExposed > 0 ? ((100 * dodged) / ex.serpExposed).toFixed(0) : '-'}% ` +
+        `(hit ${ex.serpHitExposed}/${ex.serpExposed} exposed, ${ex.serpHitOther} walked in)  deaths/match ${(ex.serpDeaths / e).toFixed(2)} (${((100 * ex.serpDeaths) / Math.max(1, ex.deaths)).toFixed(1)}% of deaths)`,
+    );
+  }
+  if (STALLS) console.log(`stalls: worst run ${ex.worstStall} frames, runs >= 300 frames: ${ex.stalls300} (over ${ended} matches)`);
   console.log(
     `eagle soar: landing slams/match ${(ex.slams / e).toFixed(2)}  avg slam base dmg ${(ex.slamDmg / Math.max(1, ex.slams)).toFixed(1)}`,
   );

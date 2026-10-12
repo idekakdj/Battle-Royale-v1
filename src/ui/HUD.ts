@@ -20,7 +20,8 @@ import { PICKUPS } from '../config/balance';
 import { el } from './dom';
 import { animalHeadSvg } from './icons';
 import { abilityGlyphSvg } from './abilityIcons';
-import { buffIconSvg, pickupIconSvg, trapGlyphSvg } from './buffIcons';
+import { buffIconSvg, pickupIconSvg, serpentGlyphSvg, trapGlyphSvg } from './buffIcons';
+import { killCauseText } from './serpentHudModel';
 
 /** One kill-feed line: killer icon ▸ victim icon (BLUEPRINT §12). */
 export interface KillFeedEntry {
@@ -33,8 +34,9 @@ export interface KillFeedEntry {
   /**
    * Set when the arena (not a rival) finished the victim. The feed should then
    * show a trap glyph instead of the killer's head; `killerAnimal` is ignored.
+   * v1.9: `'serpent'` = the Ocean Dome's sea serpent (serpent glyph + "was eaten by the Sea Serpent").
    */
-  cause?: 'trap';
+  cause?: 'trap' | 'serpent';
   /** Optional trap flavour for the glyph (flame / spikes); omitted → combined glyph. */
   trapKind?: TrapKind;
   /** v1.5 online: the human killer's / victim's chosen name, shown next to the head icon (omitted for bots and offline). */
@@ -372,17 +374,24 @@ export class HUD {
     const row = el('div', { class: 'gk-hud__kf-row' });
     if (entry.killerIsPlayer === true) row.classList.add('is-player-kill');
     if (entry.victimIsPlayer === true) row.classList.add('is-player-death');
+    const serpent = entry.cause === 'serpent';
     const trap = entry.cause === 'trap';
     if (trap) row.classList.add('is-trap');
-    const killer = trap
-      ? `<span class="gk-hud__kf-icon is-trap is-trap--${entry.trapKind ?? 'any'}" title="Arena trap">${trapGlyphSvg(entry.trapKind)}</span>`
-      : `<span class="gk-hud__kf-icon" style="color:${ANIMALS[entry.killerAnimal].accent}">${animalHeadSvg(entry.killerAnimal, 'gk-hud__kf-head')}</span>`;
-    const kName = !trap && entry.killerName !== undefined ? `<span class="gk-hud__kf-name">${escapeHtml(entry.killerName)}</span>` : '';
+    if (serpent) row.classList.add('is-serpent');
+    const env = trap || serpent;
+    const killer = serpent
+      ? `<span class="gk-hud__kf-icon is-serpent" title="Sea Serpent">${serpentGlyphSvg()}</span>`
+      : trap
+        ? `<span class="gk-hud__kf-icon is-trap is-trap--${entry.trapKind ?? 'any'}" title="Arena trap">${trapGlyphSvg(entry.trapKind)}</span>`
+        : `<span class="gk-hud__kf-icon" style="color:${ANIMALS[entry.killerAnimal].accent}">${animalHeadSvg(entry.killerAnimal, 'gk-hud__kf-head')}</span>`;
+    const kName = !env && entry.killerName !== undefined ? `<span class="gk-hud__kf-name">${escapeHtml(entry.killerName)}</span>` : '';
     const vName = entry.victimName !== undefined ? `<span class="gk-hud__kf-name is-victim">${escapeHtml(entry.victimName)}</span>` : '';
+    const causeText = killCauseText(entry.cause);
+    const cText = causeText !== null ? `<span class="gk-hud__kf-cause">${escapeHtml(causeText)}</span>` : '';
     row.innerHTML = `
       ${killer}${kName}
       <span class="gk-hud__kf-sep">▸</span>
-      <span class="gk-hud__kf-icon is-victim" style="color:${ANIMALS[entry.victimAnimal].accent}">${animalHeadSvg(entry.victimAnimal, 'gk-hud__kf-head')}</span>${vName}`;
+      <span class="gk-hud__kf-icon is-victim" style="color:${ANIMALS[entry.victimAnimal].accent}">${animalHeadSvg(entry.victimAnimal, 'gk-hud__kf-head')}</span>${vName}${cText}`;
     this.killFeedEl.appendChild(row);
     window.setTimeout(() => {
       row.classList.add('is-fading');

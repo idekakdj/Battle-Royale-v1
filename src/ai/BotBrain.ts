@@ -13,6 +13,8 @@ import { COLOSSEUM_ARENA } from '../config/arenas';
 import { mulberry32, dirToYaw, angleDelta, DEG2RAD, type Rng } from '../core/math';
 import { Perception, MEMORY_SECONDS, type TrackedEnemy } from './Perception';
 import { TerrainSense } from './TerrainSense';
+import { Navigator, type NavMode } from './Navigator';
+import { SerpentSense } from './SerpentSense';
 import { BlockControl, sampleAimNoise, timeToImpact } from './CombatMicro';
 import { decideAbilities, type Situation, type AbilityWish } from './scripts';
 import { previewUltTarget } from '../sim/ultimates/targeting';
@@ -110,6 +112,13 @@ export class BotBrain {
   private readonly arena: ArenaDef;
   /** v1.8: moss / pool awareness (inactive, and a no-op everywhere, on arenas without terrain - the colosseum). */
   private readonly sense: TerrainSense;
+  /** v1.9: A* over the ramps of an elevated arena (inactive, and a no-op everywhere, on the colosseum / jungle). */
+  private readonly nav: Navigator;
+  /** v1.9: sea-serpent dodging (inactive, and a no-op, on arenas without the serpent hazard). */
+  private readonly serp: SerpentSense;
+  private readonly serpMove: Move2 = { x: 0, z: 0 };
+  /** v1.9: own feet height, refreshed every tick (cross-level target scoring). */
+  private selfH = 0;
 
   constructor(id: number, animal: FighterState['animal'], profile: BotProfile, seed: number, arena: ArenaDef = COLOSSEUM_ARENA) {
     this.id = id;
@@ -120,6 +129,8 @@ export class BotBrain {
     this.rng = mulberry32(seed);
     this.perception = new Perception(id, profile.reactionMs / 1000, arena);
     this.sense = new TerrainSense(arena, animal, profile.difficulty, id);
+    this.nav = new Navigator(arena, this.def.radius, profile.difficulty);
+    this.serp = new SerpentSense(arena, animal, profile.difficulty);
     // Stagger decision ticks across bots (deterministically).
     this.decisionAcc = (id % 6) * 0.017;
     this.sit = {
@@ -173,6 +184,11 @@ export class BotBrain {
     }
 
     if (this.sense.active) this.sense.setDifficulty(this.profile.difficulty);
+    if (this.serp.active) this.serp.setDifficulty(this.profile.difficulty);
+    if (this.nav.active) {
+      this.nav.setDifficulty(this.profile.difficulty);
+      this.selfH = self.pos.y;
+    }
     this.perception.update(now, self, delayed);
     this.processEvents(now, self);
     this.trapView = delayed.traps;
@@ -290,7 +306,9 @@ export class BotBrain {
 
   private baseTargetScore(t: TrackedEnemy): number {
     const p = this.profile;
-    const closeness = 1 / (1 + t.dist * 0.15);
+    // v1.9: on a multi-level arena a foe on another level is farther than it looks (a walk round to a ramp).
+    const eff = this.nav.active ? t.dist + this.nav.crossPenalty(this.selfH, t.x, t.z) : t.dist;
+    const closeness = 1 / (1 + eff * 0.15);
     switch (p.targetPolicy) {
       case 'nearest':
         return closeness;
@@ -679,6 +697,18 @@ export class BotBrain {
       case 'engage': {
         if (t !== null) {
           this.engageMovement(now, move, self, t, tx, tz);
+          // v1.9: a Veteran / Apex eagle flies over the cliffs instead of walking the long way round to a ramp.
+          if (
+            this.nav.active &&
+            this.def.id === 'eagle' &&
+            p.soarUse === 'defensive' &&
+            this.nav.following &&
+            this.nav.pathStraight > 9 &&
+            this.nav.pathMetres > this.nav.pathStraight * 1.45 + 4 &&
+            this.canStartSoar(now, self)
+          ) {
+            this.beginSoar(now);
+          }
           const r = this.engageAttack(now, self, t, tx, tz);
           wantAttack = Number.isFinite(r);
           aimYaw = wantAttack ? r : dirToYaw(tx - sx, tz - sz) + this.aimNoise;
@@ -688,11 +718,15 @@ export class BotBrain {
           if (m !== null) {
             seek(move, sx, sz, m.x, m.z);
             if (!lowWallDetour(move, sx, sz, m.x, m.z, this.def.radius, this.arena)) this.sense.plan(move, now, sx, sz, m.x, m.z);
+            this.navOverride(move, now, sx, sz, m.x, m.z, 'engage');
           } else if (this.sense.active) {
             // v1.8: the jungle's centre is the pool - rally on a dry ring round it instead.
             const dp = this.sense.driftPoint(sx, sz);
             if (dp !== null) seek(move, sx, sz, dp.x, dp.z);
-          } else if (sx * sx + sz * sz > 36) seek(move, sx, sz, 0, 0);
+          } else if (sx * sx + sz * sz > 36) {
+            seek(move, sx, sz, 0, 0);
+            this.navOverride(move, now, sx, sz, 0, 0, 'goto');
+          }
           aimYaw = move.x !== 0 || move.z !== 0 ? dirToYaw(move.x, move.z) : self.yaw;
         }
         break;
@@ -705,10 +739,12 @@ export class BotBrain {
           const pad = current.pickups[healIdx];
           seek(move, sx, sz, pad.pos.x, pad.pos.z);
           if (!lowWallDetour(move, sx, sz, pad.pos.x, pad.pos.z, this.def.radius, this.arena)) this.sense.plan(move, now, sx, sz, pad.pos.x, pad.pos.z);
+          this.navOverride(move, now, sx, sz, pad.pos.x, pad.pos.z, 'goto');
         } else if (threat !== null) {
           if (p.retreat.losBreak) this.losBreakMove(move, sx, sz, threat);
           else flee(move, sx, sz, threat.x, threat.z);
           this.sense.fleePlan(move, now, sx, sz, threat.animal);
+          this.navFlee(move, sx, sz, threat);
         }
         if (threat !== null) {
           aimYaw = dirToYaw(threat.x - sx, threat.z - sz) + this.aimNoise;
@@ -731,6 +767,7 @@ export class BotBrain {
         if (pad !== undefined && pad.active) {
           seek(move, sx, sz, pad.pos.x, pad.pos.z);
           if (!lowWallDetour(move, sx, sz, pad.pos.x, pad.pos.z, this.def.radius, this.arena)) this.sense.plan(move, now, sx, sz, pad.pos.x, pad.pos.z);
+          this.navOverride(move, now, sx, sz, pad.pos.x, pad.pos.z, 'goto');
           aimYaw =
             t !== null ? dirToYaw(t.x - sx, t.z - sz) + this.aimNoise : dirToYaw(move.x, move.z);
         } else {
@@ -800,6 +837,27 @@ export class BotBrain {
       avoidTraps(move, sx, sz, this.def.radius, this.trapView, p.trapAwareness);
     }
 
+    // v1.9 sea serpent: after its reaction delay the bot leaves the strike strip by the shortest walkable route, dropping every swing /
+    // block / ability start that would hold it in the strip; Veteran / Apex never step into the strip while the strike is live.
+    let dodging = false;
+    if (this.serp.active) {
+      const busy = isAttackAction(self.action) || self.action === 'block';
+      dodging = this.serp.update(now, self, current.serpent, p.reactionMs, busy, this.rng, this.serpMove);
+      if (dodging) {
+        move.x = this.serpMove.x;
+        move.z = this.serpMove.z;
+        wantAttack = false;
+        intent.special = false;
+        intent.ultimate = false;
+        this.block.clear();
+        this.smashUntil = -1;
+        this.unstickUntil = -1;
+        if (move.x !== 0 || move.z !== 0) aimYaw = dirToYaw(move.x, move.z);
+      } else if (soarState === 0) {
+        this.serp.repel(move, now, sx, sz);
+      }
+    }
+
     // Steering post-passes: obstacle feelers, local avoidance.
     const burrowed = false; // handled in driveChannel; normal flow is surface
     const jumpableAhead = avoidObstacles(move, sx, sz, this.def.radius, current.crates, burrowed, this.arena);
@@ -811,8 +869,10 @@ export class BotBrain {
     // v1.1 unstick: travelling but going nowhere (e.g. a big body wedged in
     // the gap between a crate pile and a fallen column) → smash the crate in
     // the way, else sidestep and hop for a moment.
-    this.updateStuck(now, self, current, move, wantAttack, t);
-    if (now < this.smashUntil) {
+    if (!dodging) this.updateStuck(now, self, current, move, wantAttack, t);
+    if (dodging) {
+      // the serpent comes first: no crate smashing / sidestepping
+    } else if (now < this.smashUntil) {
       wantAttack = true;
       aimYaw = this.smashYaw;
     } else if (now < this.unstickUntil) {
@@ -823,7 +883,7 @@ export class BotBrain {
     intent.moveX = move.x;
     intent.moveZ = move.z;
     intent.aimYaw = aimYaw;
-    intent.jump = intent.jump || now < this.jumpHoldUntil;
+    intent.jump = intent.jump || now < this.jumpHoldUntil || this.nav.wantJump;
     // v1.8: bots never hop-chain through the pool (an eagle's glide hop is its own movement and stays).
     if (this.sense.active && self.inWater === true && this.def.id !== 'eagle') intent.jump = false;
     // Soar plan: hold to climb, and ALWAYS release once the plan says so.
@@ -838,7 +898,7 @@ export class BotBrain {
     // Block overlay (cannot attack while blocking, §7.4). Skip when the guard
     // is nearly broken — eating a guard break is worse than a hit (L3+).
     const guardOk = p.whiffPunish ? self.guard > self.maxGuard * 0.15 : self.guard > 0;
-    if (this.block.active(now) && !isAttackAction(self.action) && guardOk) {
+    if (!dodging && this.block.active(now) && !isAttackAction(self.action) && guardOk) {
       intent.block = true;
       // v1.3: keep the ultimate's aim when it needs a target (the block yaw could break the lock).
       if (!(intent.ultimate && this.ultNeedsTarget)) intent.aimYaw = this.block.yaw;
@@ -1048,6 +1108,29 @@ export class BotBrain {
     this.jumpHoldUntil = Math.max(this.jumpHoldUntil, now + 0.35);
   }
 
+  // ── v1.9 elevated-arena navigation ──────────────────────────────────────────
+
+  /** Replace `move` with the next A* waypoint when TERRAIN blocks the straight walk to (gx, gz); a no-op on flat arenas. */
+  private navOverride(move: Move2, now: number, sx: number, sz: number, gx: number, gz: number, mode: NavMode): boolean {
+    if (!this.nav.active) return false;
+    return this.nav.steer(move, now, sx, sz, gx, gz, mode, this.sit.hpFrac);
+  }
+
+  /** Can our melee reach the foe's height (|dy| inside the sim's overlap tolerance)? Always true off elevated arenas. */
+  private canMeleeLevel(self: FighterState, t: TrackedEnemy): boolean {
+    const ty = groundY(t.x, t.z, this.arena) + t.alt;
+    const tol = (this.def.id === 'giraffe' ? MOVE.heightOverlapGiraffe : MOVE.heightOverlap) - 0.2;
+    return Math.abs(self.pos.y - ty) <= tol;
+  }
+
+  /** Flight on an elevated arena: if the plain flee heading runs into a cliff, run to a reachable point away from the threat instead. */
+  private navFlee(move: Move2, sx: number, sz: number, threat: TrackedEnemy): void {
+    if (!this.nav.active || (move.x === 0 && move.z === 0)) return;
+    const hp = this.sit.hpFrac;
+    if (!this.nav.terrainBlocked(sx, sz, sx + move.x * 5, sz + move.z * 5, 'flee', hp)) return;
+    this.nav.fleePoint(sx, sz, threat.x, threat.z, move);
+  }
+
   /** Engage-goal movement: close to spacing, then strafe-orbit per skill. */
   private engageMovement(now: number, move: Move2, self: FighterState, t: TrackedEnemy, tx: number, tz: number): void {
     const p = this.profile;
@@ -1066,11 +1149,14 @@ export class BotBrain {
     const dx = tx - sx;
     const dz = tz - sz;
     const dist = Math.sqrt(dx * dx + dz * dz);
-    if (dist > spacing + 1.2 || p.strafeSkill <= 0.05) {
+    // v1.9: a foe too far above / below for a melee hit to connect must be reached by a ramp, however close it stands.
+    const unreachable = this.nav.active && !this.canMeleeLevel(self, t);
+    if (dist > spacing + 1.2 || p.strafeSkill <= 0.05 || unreachable) {
       seek(move, sx, sz, tx, tz);
-      if (dist < spacing * 0.8) flee(move, sx, sz, tx, tz); // unskilled: back off overlap
+      if (dist < spacing * 0.8 && !unreachable) flee(move, sx, sz, tx, tz); // unskilled: back off overlap
       // Walk round a fallen column instead of pressing into it (v1.1 stall fix).
       else if (dist > range && !lowWallDetour(move, sx, sz, tx, tz, this.def.radius, this.arena)) this.sense.plan(move, now, sx, sz, tx, tz);
+      this.navOverride(move, now, sx, sz, t.x, t.z, 'engage');
     } else {
       orbit(move, sx, sz, t.x, t.z, this.orbitSign, spacing, p.strafeSkill);
     }

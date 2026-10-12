@@ -23,7 +23,7 @@ import { clamp, dirToYaw, rotateToward } from '../../core/math';
 import { PYTHON, PYTHON_STAGE } from '../../config/ultimates/python';
 import { dealDamage } from '../CombatSystem';
 import { altitudeOf, isGroundTargetable } from '../hitbox';
-import { clampToWall, groundHeightAt, resolveObstacles } from '../MovementSystem';
+import { clampToWall, groundHeightAt, pushOutOfCliffs, resolveObstacles } from '../MovementSystem';
 import type { Fighter, Sim, AbilityRuntime } from '../Fighter';
 import { emitCastEvents, emitUltimateStage, emitUltimateTarget, endAbility, toRecovery } from './common';
 import type { UltimateImpl } from './types';
@@ -321,6 +321,7 @@ function yankTick(sim: Sim, f: Fighter, rt: AbilityRuntime, s: PyState, dt: numb
   const pz = t.state.pos.z;
   t.state.pos.x = s.sx + (s.hx - s.sx) * e;
   t.state.pos.z = s.sz + (s.hz - s.sz) * e;
+  if (sim.arena.heightfield !== undefined) pushOutOfCliffs(sim.arena, t); // v1.9: yanked along the ground, not up a cliff
   t.state.pos.y = groundHeightAt(t.state.pos.x, t.state.pos.z, sim.arena);
   resolveObstacles(sim, t, false);
   clampToWall(t);

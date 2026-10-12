@@ -4,7 +4,7 @@
  * and tiny builders.
  */
 
-import { World } from '../../src/sim/World';
+import { World, type WorldOptions } from '../../src/sim/World';
 import { EventBus } from '../../src/core/EventBus';
 import { BotManager } from '../../src/ai/BotManager';
 import { ANIMAL_IDS } from '../../src/config/animals';
@@ -39,12 +39,12 @@ export function tenAnimalConfig(difficulty: Difficulty, arena?: ArenaId): MatchC
 }
 
 /** Plays `fightSeconds` of fight time (after the 3 s countdown) with bot brains; records every tick. */
-export function recordMatch(seed: number, difficulty: Difficulty, fightSeconds: number, arena?: ArenaId): Recording {
+export function recordMatch(seed: number, difficulty: Difficulty, fightSeconds: number, arena?: ArenaId, worldOpts?: WorldOptions): Recording {
   const cfg = tenAnimalConfig(difficulty, arena);
   const bus = new EventBus();
   let current: GameEvent[] = [];
   bus.onAny((e) => current.push(e));
-  const world = new World(cfg, seed, bus);
+  const world = new World(cfg, seed, bus, worldOpts);
   const bots = new BotManager(bus, difficulty, seed, world.arena);
   const snapshots: WorldSnapshot[] = [];
   const events: GameEvent[][] = [];
@@ -243,6 +243,17 @@ export function snapshotMismatches(o: WorldSnapshot, d: WorldSnapshot): string[]
       }
     }
   }
+  // v1.9 sea serpent: presence, phase, and the quantised numbers (angle 360/65536 deg, clock 1 ms, head distance 1 cm)
+  const so = o.serpent;
+  const sd = d.serpent;
+  if ((so === undefined) !== (sd === undefined)) bad.push('serpent presence');
+  else if (so !== undefined && sd !== undefined) {
+    if (so.phase !== sd.phase) bad.push(`serpent.phase ${so.phase} vs ${sd.phase}`);
+    const dAngle = Math.abs((((so.angleDeg - sd.angleDeg) % 360) + 540) % 360 - 180);
+    near('serpent.angleDeg', 0, dAngle, 360 / 65536 + 1e-9);
+    near('serpent.t', so.t, sd.t, TOLERANCE.time);
+    near('serpent.headR', so.headR, sd.headR, TOLERANCE.pos);
+  }
   return bad;
 }
 
@@ -292,5 +303,9 @@ export const SAMPLES: { [K in GameEvent['type']]: GameEventOf<K> } = {
   landingImpact: { type: 'landingImpact', fighterId: 5, pos: Q, radius: 6, damage: 140.5, height: 11.75 },
   matchEnd: { type: 'matchEnd', winnerId: 4 },
   splash: { type: 'splash', fighterId: 8, pos: { x: 1.5, y: 0.55, z: -2.25 }, entering: true, strength: 0.6 },
+  serpentWarning: { type: 'serpentWarning', angleDeg: 211.37, warnS: 1.3 },
+  serpentStrike: { type: 'serpentStrike', angleDeg: 211.37 },
+  serpentHit: { type: 'serpentHit', fighterId: 6, damage: 300, pos: Q },
+  serpentEnd: { type: 'serpentEnd' },
 };
 

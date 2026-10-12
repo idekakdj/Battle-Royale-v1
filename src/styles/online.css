@@ -789,7 +789,12 @@
   opacity: 0.55;
 }
 
-/* v1.8 Battle Royale map picker: same two-card row as the stage picker, but with a square thumbnail + the blurb. */
+/* v1.8 Battle Royale map picker: same card row as the stage picker, but with a square thumbnail + the blurb.
+   v1.9: three maps (colosseum | jungle | ocean) share ONE row (the Champions League stage picker keeps its 2 x 2 grid). */
+.gk-on .gk-on-maps {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .gk-on .gk-on-map .gk-bs__thumb {
   flex: 0 0 clamp(52px, 4.6vw, 88px);
   aspect-ratio: 1;

@@ -21,7 +21,7 @@ import type { Vec3 } from '../../core/types';
 import { dealDamage } from '../CombatSystem';
 import type { AbilityRuntime, Fighter, Sim } from '../Fighter';
 import { isTargetable, withinGroundReach } from '../hitbox';
-import { clampToWall, groundHeightAt, resolveObstacles } from '../MovementSystem';
+import { clampToWall, groundHeightAt, leapGroundY, resolveObstacles } from '../MovementSystem';
 import { KNOCKDOWN_RISE } from '../simTuning';
 import { applyEffect } from '../StatusEffects';
 import { emitCastEvents, emitUltimateStage, emitUltimateTarget, toRecovery } from './common';
@@ -188,7 +188,7 @@ function leapTick(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): void {
   clampToWall(f);
   const run = dist2(rt.sx, rt.sz, rt.px, rt.pz);
   const peak = Math.min(H.leapPeakMax, H.leapPeakBase + H.leapPeakPerM * run);
-  const gy = groundHeightAt(s.pos.x, s.pos.z, sim.arena);
+  const gy = leapGroundY(sim.arena, rt.sx, rt.sz, rt.px, rt.pz, s.pos.x, s.pos.z, frac); // v1.9: = the ground under the lion on flat arenas
   s.pos.y = gy + peak * 4 * frac * (1 - frac);
   s.airborne = frac < 1;
   s.vel.x = (s.pos.x - ox) / dt;

@@ -870,7 +870,7 @@
   font-size: 1.25rem;
 }
 
-/* v1.8 Battle Royale map row (Colosseum | Jungle Clearing) under the difficulty cards */
+/* v1.8 Battle Royale map row (Colosseum | Jungle Clearing | v1.9 Ocean Dome) under the difficulty cards */
 .gk-ds__maprow {
   position: relative;
   z-index: 1;
@@ -898,8 +898,8 @@
   display: flex;
   align-items: center;
   gap: 0.8rem;
-  width: clamp(250px, 26vw, 360px);
-  padding: 0.5rem 0.9rem 0.5rem 0.5rem;
+  width: clamp(224px, 21vw, 340px); /* three cards must fit beside the label + key hint at 1280 px */
+  padding: 0.5rem 0.8rem 0.5rem 0.5rem;
   text-align: left;
   border-radius: 8px;
   background: linear-gradient(180deg, var(--gk-stone-700), var(--gk-stone-800));
@@ -3267,4 +3267,204 @@
 }
 .gk-fps.is-bad {
   color: #ff6a55;
+}
+
+/* ══ v1.9 Ocean Dome: sea-serpent warning HUD (ui/SerpentHud.ts) + kill-feed cause ═══════════════════════════ */
+.gk-serpent {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 4;
+  --serpent: #ff5a2e;
+}
+
+.gk-serpent[data-status='safe'] {
+  --serpent: #4fe3a8;
+}
+
+.gk-serpent[data-status='after'] {
+  --serpent: #9db7c4;
+}
+
+.gk-serpent[data-status='strike'] {
+  --serpent: #ff2a1c;
+}
+
+/* Centred banner: absolute, so it never moves anything; 1 s hold (pulse) then a 0.5 s fade (class toggled by JS). */
+.gk-serpent__banner {
+  position: absolute;
+  top: 14%;
+  left: 50%;
+  padding: 0.4rem 1.9rem;
+  font-size: clamp(1.7rem, 3.3vw, 2.7rem);
+  letter-spacing: 0.2em;
+  white-space: nowrap;
+  color: #fff1e2;
+  background: linear-gradient(180deg, rgba(168, 26, 16, 0.9), rgba(96, 10, 8, 0.9));
+  border: 2px solid #ff7a3c;
+  border-radius: 6px;
+  box-shadow: 0 0 30px rgba(255, 74, 30, 0.7), 0 0 0 1px rgba(0, 0, 0, 0.6);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9), 0 0 16px rgba(255, 120, 60, 0.9);
+  transform: translateX(-50%);
+  opacity: 0;
+  visibility: hidden;
+}
+
+.gk-serpent__banner.is-hold {
+  opacity: 1;
+  visibility: visible;
+  animation: gk-serpent-pulse 0.42s ease-in-out infinite alternate;
+}
+
+.gk-serpent__banner.is-fade {
+  opacity: 0;
+  visibility: visible;
+  transition: opacity 0.5s ease;
+}
+
+@keyframes gk-serpent-pulse {
+  from {
+    transform: translateX(-50%) scale(1);
+    box-shadow: 0 0 22px rgba(255, 74, 30, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.6);
+  }
+  to {
+    transform: translateX(-50%) scale(1.05);
+    box-shadow: 0 0 42px rgba(255, 90, 40, 0.95), 0 0 0 1px rgba(0, 0, 0, 0.6);
+  }
+}
+
+/* Status chip under the banner: MOVE! (inside the strip) / SAFE (clear). */
+.gk-serpent__chip {
+  position: absolute;
+  top: calc(14% + 4.6rem);
+  left: 50%;
+  min-width: 6.4rem;
+  padding: 0.25rem 1.1rem;
+  text-align: center;
+  font-size: 1.15rem;
+  letter-spacing: 0.22em;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(150, 18, 10, 0.88);
+  border: 2px solid var(--serpent);
+  border-radius: 4px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+  transform: translateX(-50%);
+  opacity: 0;
+  visibility: hidden;
+}
+
+.gk-serpent__chip.is-on {
+  opacity: 1;
+  visibility: visible;
+}
+
+.gk-serpent[data-status='move'] .gk-serpent__chip {
+  animation: gk-serpent-flash 0.3s ease-in-out infinite alternate;
+}
+
+.gk-serpent[data-status='safe'] .gk-serpent__chip {
+  color: #062a1c;
+  background: rgba(79, 227, 168, 0.92);
+  border-color: #c9ffe9;
+  text-shadow: none;
+}
+
+@keyframes gk-serpent-flash {
+  from {
+    background: rgba(150, 18, 10, 0.88);
+  }
+  to {
+    background: rgba(236, 52, 28, 0.95);
+  }
+}
+
+/* Rim marker (chevron pointing outward to where the strike line starts) + the thin line running inward from it. */
+.gk-serpent__marker,
+.gk-serpent__line {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+  visibility: hidden;
+}
+
+.gk-serpent__marker {
+  width: 0;
+  height: 0;
+}
+
+.gk-serpent__marker.is-on,
+.gk-serpent__line.is-on {
+  visibility: visible;
+}
+
+.gk-serpent__svg {
+  position: absolute;
+  left: -30px;
+  top: -30px;
+  width: 60px;
+  height: 60px;
+  color: var(--serpent);
+  filter: drop-shadow(0 0 8px var(--serpent));
+}
+
+.gk-serpent[data-status='move'] .gk-serpent__svg,
+.gk-serpent[data-status='strike'] .gk-serpent__svg {
+  animation: gk-serpent-chev 0.3s ease-in-out infinite alternate;
+}
+
+@keyframes gk-serpent-chev {
+  from {
+    opacity: 0.65;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* The line starts at the chevron and runs toward the screen centre (local +y once rotated to the marker angle). */
+.gk-serpent__line {
+  width: 3px;
+  margin-left: -1.5px;
+  transform-origin: 50% 0;
+  background: linear-gradient(to bottom, var(--serpent), rgba(255, 255, 255, 0));
+  box-shadow: 0 0 8px var(--serpent);
+  border-radius: 2px;
+  opacity: 0.9;
+}
+
+.gk-hud.is-spectating .gk-serpent__marker,
+.gk-hud.is-spectating .gk-serpent__line,
+.gk-hud.is-spectating .gk-serpent__chip {
+  display: none;
+}
+
+/* Kill feed: "was eaten by the Sea Serpent" (v1.9). */
+.gk-hud__kf-row.is-serpent {
+  border-color: rgba(60, 200, 190, 0.55);
+}
+
+.gk-hud__kf-icon.is-serpent {
+  color: #46e0c2;
+  filter: drop-shadow(0 0 4px rgba(40, 220, 190, 0.7));
+}
+
+.gk-hud__kf-cause {
+  font-size: 0.82rem;
+  font-style: italic;
+  letter-spacing: 0.02em;
+  color: #bfeee6;
+  white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gk-serpent__banner.is-hold,
+  .gk-serpent[data-status='move'] .gk-serpent__chip,
+  .gk-serpent[data-status='move'] .gk-serpent__svg,
+  .gk-serpent[data-status='strike'] .gk-serpent__svg {
+    animation: none;
+  }
 }

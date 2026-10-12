@@ -9,7 +9,16 @@ import { AbilityPhase } from './Fighter';
 import { dealDamage } from './CombatSystem';
 import { applyEffect, applyKnockback } from './StatusEffects';
 import { isGroundTargetable } from './hitbox';
-import { chargeStep, clampToWall, groundHeightAt } from './MovementSystem';
+import {
+  chargeStep,
+  clampToWall,
+  groundHeightAt,
+  clipPathToCliffs,
+  followGround,
+  leapGroundY,
+  pushOutOfCliffs,
+  resolveObstacles,
+} from './MovementSystem';
 import { lerp } from '../core/math';
 import { MOVE } from '../config/balance';
 import { DASH_SPEED, LEAP_DURATION, LEAP_PEAK, LAND_RECOVER, CONTACT_PAD } from './simTuning';
@@ -31,6 +40,13 @@ export function startSpecial(sim: Sim, f: Fighter): void {
       const d = aimPointDist(sim, f, spec.range ?? 7);
       rt.px = aimX(f, d);
       rt.pz = aimZ(f, d);
+      if (sim.arena.heightfield !== undefined) {
+        // v1.9: a leap cannot carry the body up a cliff: land at the foot of it (a ramp / a drop is fine).
+        if (clipPathToCliffs(sim.arena, rt.sx, rt.sz, rt.px, rt.pz, f.def.radius, f.state.pos.y, LEAP_CLIP)) {
+          rt.px = LEAP_CLIP.x;
+          rt.pz = LEAP_CLIP.z;
+        }
+      }
       emitCastEvents(sim, f, rt, rt.px, rt.pz, spec.radius ?? 2, 360, spec.windup);
       return;
     }
@@ -202,17 +218,20 @@ function activeSpecial(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): vo
   }
 }
 
+const LEAP_CLIP = { x: 0, z: 0 };
+
 function leap(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): void {
   const spec = rt.spec;
   rt.accum += dt;
   const frac = Math.min(1, rt.accum / LEAP_DURATION);
   f.state.pos.x = lerp(rt.sx, rt.px, frac);
   f.state.pos.z = lerp(rt.sz, rt.pz, frac);
-  const gy = groundHeightAt(f.state.pos.x, f.state.pos.z, sim.arena);
+  const gy = leapGroundY(sim.arena, rt.sx, rt.sz, rt.px, rt.pz, f.state.pos.x, f.state.pos.z, frac); // = the ground under the fighter on flat arenas
   f.state.pos.y = gy + LEAP_PEAK * Math.sin(Math.PI * frac);
   f.state.airborne = true;
   clampToWall(f);
   if (frac >= 1) {
+    if (sim.arena.heightfield !== undefined) pushOutOfCliffs(sim.arena, f); // v1.9: before the feet are re-seated
     f.state.pos.y = groundHeightAt(f.state.pos.x, f.state.pos.z, sim.arena);
     f.state.airborne = false;
     if (f.def.id === 'lion') {
@@ -383,6 +402,11 @@ function burrow(sim: Sim, f: Fighter, rt: AbilityRuntime, dt: number): void {
     f.state.pos.x += mx * spd;
     f.state.pos.z += mz * spd;
     clampToWall(f);
+    if (sim.arena.heightfield !== undefined) {
+      // v1.9: a burrowing mole tunnels under pillars but not through a cliff; its feet follow the ground.
+      resolveObstacles(sim, f, true);
+      followGround(sim.arena, f);
+    }
   }
   f.state.burrowT = Math.max(0, f.state.burrowT - dt);
   if (f.edgeSpecial || f.state.burrowT <= 0) {

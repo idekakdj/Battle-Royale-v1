@@ -93,6 +93,8 @@ import { UltCamera, type UltEnv } from '../render/animals/fp/ultCam';
 import { getUltDirector } from '../render/animals/fp/ult';
 import { UltOverlay } from '../render/animals/fp/ultOverlay';
 import { LocalSimDriver, type SimDriver } from './SimDriver';
+import type { SerpentOptions } from '../sim/SerpentSystem';
+import { SerpentHud } from '../ui/SerpentHud'; // v1.9 Ocean Dome: sea-serpent warning banner + rim marker
 import {
   LOCK_ON,
   assistAimYaw,
@@ -162,6 +164,8 @@ export interface MatchControllerOptions {
   arena?: ArenaId;
   /** v1.8 QA shortcut (`?br=1&qa=1`): expose `window.__gkBr` in production builds too (dev builds always do). */
   qa?: boolean;
+  /** v1.9 QA shortcut (`?br=1&arena=ocean&serpent=1`): sea-serpent schedule override for the offline World (see `brParams.ts`). */
+  serpent?: SerpentOptions;
   /** Fired once, ~2.5 s after matchEnd, with the assembled results. */
   onMatchEnd: (results: MatchResults) => void;
   /** Pause menu → QUIT TO LOBBY. */
@@ -218,6 +222,8 @@ export class MatchController implements Screen {
   private rigs: BaseRig[] = [];
   private input!: InputManager;
   private hud!: HUD;
+  /** v1.9: the sea-serpent warning HUD — only on arenas with `hazards.serpent` (null elsewhere). */
+  private serpentHud: SerpentHud | null = null;
   private pauseMenu!: PauseMenu;
   private overlay!: CombatOverlay;
   private loop!: GameLoop;
@@ -293,7 +299,7 @@ export class MatchController implements Screen {
     // shuffle (fresh neighbours every match / REMATCH). Online, the driver
     // supplies the fixed room roster with the local player remapped to id 0.
     // One shared bus: sim emits; AI, audio, and the pipes below subscribe.
-    this.sim = this.opts.sim ?? new LocalSimDriver({ animal, difficulty, seed, arena: this.opts.arena });
+    this.sim = this.opts.sim ?? new LocalSimDriver({ animal, difficulty, seed, arena: this.opts.arena, serpent: this.opts.serpent });
     this.arenaId = this.sim.arena ?? this.opts.arena ?? 'colosseum';
     const roster = this.sim.roster;
     this.rosterAnimals = roster.map((r) => r.animal);
@@ -385,6 +391,13 @@ export class MatchController implements Screen {
         this.names,
       );
     }
+    // v1.9 Ocean Dome: banner + rim marker for the sea-serpent event (never created on arenas without the hazard).
+    const arenaDef = getArena(this.arenaId);
+    this.serpentHud = null;
+    if (arenaDef.hazards?.serpent === true && layer !== null) {
+      this.serpentHud = new SerpentHud(arenaDef);
+      this.serpentHud.mount(layer);
+    }
     this.pauseMenu = new PauseMenu({
       onResume: () => this.resume(),
       onQuitToLobby: () => this.opts.onQuitToLobby(),
@@ -433,6 +446,8 @@ export class MatchController implements Screen {
     this.opts.audio.stopCrowd();
     this.opts.audio.stopFireBed();
     this.overlay.unmount();
+    this.serpentHud?.unmount(); // v1.9
+    this.serpentHud = null;
     if (this.crosshairEl !== null) this.crosshairEl.remove(); // v1.3 WP-Q
     this.ultOverlay.dispose(); // v1.3 FP ult
     this.crosshairEl = null;
@@ -744,6 +759,7 @@ export class MatchController implements Screen {
     this.updateUltSystems(alpha, dtRender);
 
     this.effects.update(dtRender);
+    this.stadium.setSnapshot?.(this.snap, alpha); // v1.9 Ocean Dome (WP-O3): the sea-serpent set piece reads snapshot.serpent
     this.stadium.update(dtRender, this.excitement);
     this.updateFpUlt(dtRender); // v1.3 FP ult: first-person ultimate camera director
     this.cameraRig.update(dtRender);
@@ -771,6 +787,7 @@ export class MatchController implements Screen {
       performance.now(),
     );
     this.hud.update(this.snap, 0);
+    this.serpentHud?.update(this.snap, this.cameraRig.yaw, _size.x, _size.y, performance.now(), this.playerDead); // v1.9
     this.hud.setTerrainTag(this.playerDead ? null : terrainTagText(this.snap.fighters[0], this.arenaId));
     this.updateUltHud();
     this.syncPickups();
@@ -956,8 +973,8 @@ export class MatchController implements Screen {
         victimIsPlayer: e.targetId === 0,
         ...(killerName !== null ? { killerName } : {}),
         ...(victimName !== null ? { victimName } : {}),
-        ...(e.killerId === -1 ? { cause: 'trap' as const } : {}),
-        ...(e.killerId === -1 && this.lastTrapKind[e.targetId] !== undefined
+        ...(e.killerId === -1 ? { cause: e.cause === 'serpent' ? ('serpent' as const) : ('trap' as const) } : {}), // v1.9: serpent kills
+        ...(e.killerId === -1 && e.cause !== 'serpent' && this.lastTrapKind[e.targetId] !== undefined
           ? { trapKind: this.lastTrapKind[e.targetId] }
           : {}),
       });
@@ -1052,6 +1069,17 @@ export class MatchController implements Screen {
 
     // v1.8 jungle: a fighter crossed the pool's waterline → splash rings + droplets (the audio engine hears it through the same bus).
     bus.on('splash', (e) => this.effects.handleSplashEvent(e));
+
+    // v1.9 Ocean Dome (WP-O4 HUD): the warning starts the "SEA SERPENT!" banner; the end clears it (also on a match-end abort).
+    // (The alarm sound / scene set piece are other layers' own handlers on the same events.)
+    bus.on('serpentWarning', () => this.serpentHud?.onWarning(performance.now()));
+    bus.on('serpentEnd', () => this.serpentHud?.onEnd());
+    // v1.9 Ocean Dome (WP-O3 scene): the same events fire the one-shot FX (glass shards + splash, hit flash); the persistent set piece
+    // (strip, serpent, cracks) is rendered from snapshot.serpent via `stadium.setSnapshot` above.
+    bus.on('serpentWarning', (e) => this.stadium.onEvent?.(e));
+    bus.on('serpentStrike', (e) => this.stadium.onEvent?.(e));
+    bus.on('serpentHit', (e) => this.stadium.onEvent?.(e));
+    bus.on('serpentEnd', (e) => this.stadium.onEvent?.(e));
   }
 
   /** Fighter the camera follows: the player, or the spectated bot once dead. */

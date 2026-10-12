@@ -17,8 +17,10 @@ import type { StageId } from '../brawl/types';
  * Bump whenever ANY wire format changes (both peers must match exactly, checked in the room handshake).
  *  1  v1.5 launch (Champions League rollback + Battle Royale host/client).
  *  2  v1.8 Jungle: BR snapshot fighter flags `inWater` (flags bit 7) / `onMoss` (opt bit 12) and the `splash` event (tag 22).
+ *  3  v1.9 Ocean Dome: BR snapshot header flag 64 + the 6-byte sea-serpent block, events `serpentWarning`/`serpentStrike`/
+ *     `serpentHit`/`serpentEnd` (tags 23-26) and a trailing cause byte on the `death` event.
  */
-export const ONLINE_PROTOCOL_VERSION = 2;
+export const ONLINE_PROTOCOL_VERSION = 3;
 
 export type OnlineMode = 'battleRoyale' | 'championsLeague';
 

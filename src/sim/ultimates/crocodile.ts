@@ -25,7 +25,7 @@ import { clamp, dirToYaw, rotateToward } from '../../core/math';
 import { CROC, CROC_STAGE, crocRollAngle } from '../../config/ultimates/crocodile';
 import { dealDamage } from '../CombatSystem';
 import { isGroundTargetable, altitudeOf } from '../hitbox';
-import { chargeStep, clampToWall, groundHeightAt, resolveObstacles } from '../MovementSystem';
+import { chargeStep, clampToWall, groundHeightAt, pushOutOfCliffs, resolveObstacles } from '../MovementSystem';
 import { applyDirectionalKnockback } from '../StatusEffects';
 import { CONTACT_PAD } from '../simTuning';
 import type { Fighter, Sim, AbilityRuntime } from '../Fighter';
@@ -363,6 +363,7 @@ function slaveVictim(f: Fighter, rt: AbilityRuntime, s: CrocState, t: Fighter, b
   const rz = s.relZ + (jawZ - s.relZ) * blend + oz;
   t.state.pos.x = f.state.pos.x + rx;
   t.state.pos.z = f.state.pos.z + rz;
+  if (t.arena.heightfield !== undefined) pushOutOfCliffs(t.arena, t); // v1.9: the held foe is not swung up a cliff (feet = last tick's)
   const gy = groundHeightAt(t.state.pos.x, t.state.pos.z, t.arena);
   const baseLift = s.relY * (1 - blend) + lift;
   t.state.pos.y = gy + Math.max(0, baseLift + oy);

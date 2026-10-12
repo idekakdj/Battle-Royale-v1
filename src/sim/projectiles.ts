@@ -208,7 +208,7 @@ export class ProjectileSystem {
     // 2. Crates.
     for (let i = 0; i < sim.crates.length; i++) {
       const c = sim.crates[i];
-      if (!c.alive || p.y - r > c.height) continue;
+      if (!c.alive || p.y - r > (c.baseY ?? 0) + c.height) continue;
       if (circleOverlapsBox(p.x, p.z, r, c.x, c.z, c.halfX, c.halfZ)) {
         if (p.breaksCrates) sim.damageCrate(c, c.hp);
         this.finish(sim, p, 'crate', -1);
@@ -219,7 +219,7 @@ export class ProjectileSystem {
     // 3. Static obstacles (pillars, fallen columns).
     for (let i = 0; i < sim.staticObstacles.length; i++) {
       const ob = sim.staticObstacles[i];
-      if (p.y - r > ob.height) continue;
+      if (p.y - r > (ob.baseY ?? 0) + ob.height) continue;
       let hit = false;
       if (ob.shape === 'circle') {
         if (ob.walkable) continue; // the dais is floor, not a blocker
