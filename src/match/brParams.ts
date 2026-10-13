@@ -10,7 +10,7 @@
  *
  * v1.9 Ocean Dome sea-serpent QA: `?br=1&arena=ocean&serpent=1[&serpentAt=12][&seed=N]&qa=1` forces a serpent event at
  * `serpentAt` LIVE match seconds (the 3-2-1 countdown does not count; default 12) by giving the World the option
- * `{ serpent: { chance: 1, firstAtS: serpentAt } }` (see {@link serpentOptionsFor}; later rolls then follow every 60 s, also with
+ * `{ serpent: { chance: 1, firstAtS: serpentAt } }` (see {@link serpentOptionsFor}; later rolls then follow every `SERPENT.intervalS` (20 s), also with
  * certainty). Only honoured when `arena` is an arena with a serpent hazard (`hazards.serpent`; otherwise `serpent=1` is ignored and
  * the match is exactly the normal one). `serpentAt` must be a finite number in (0, 3600]; anything else falls back to 12. The
  * event can also be started by hand from the console: `window.__gkBr.world.debugTriggerSerpent(angleDeg)`.
@@ -38,7 +38,7 @@ export interface BrShortcut {
   qa: boolean;
   /**
    * v1.9: `serpent=1` on a serpent arena — force a sea-serpent event at `atS` live seconds. Absent otherwise (the normal rules:
-   * a 10 % roll per minute on arenas with the hazard, nothing elsewhere).
+   * a 50 % roll every 20 s on arenas with the hazard, nothing elsewhere).
    */
   serpent?: { atS: number };
 }

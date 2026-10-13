@@ -1,5 +1,5 @@
 /**
- * v1.9 sea serpent — the roll SCHEDULE (WP-O1b): 10 % per minute of LIVE match time, rolled on exact 60 s multiples (never during
+ * v1.9 sea serpent — the roll SCHEDULE (WP-O1b; retuned in v1.9.1 to 50 % every 20 s): rolled on LIVE match time, on exact multiples of SERPENT.intervalS (never during
  * the countdown) from the serpent's own RNG stream; deterministic; and arenas without `hazards.serpent` never see it.
  */
 import { describe, it, expect } from 'vitest';
@@ -14,9 +14,10 @@ import { ANIMAL_IDS } from '../../src/config/animals';
 import { DT, FLAT_ARENA, stubSim, trueDeal } from './serpentHelpers';
 
 describe('serpent config', () => {
-  it('is the binding plan (docs/OCEAN-PLAN.md): 10 % per 60 s, 1.3 / 0.55 / 0.35 / 0.8 s, 1.6 m strip, 300 true damage, 3 m reach', () => {
-    expect(SERPENT.intervalS).toBe(60);
-    expect(SERPENT.chance).toBe(0.1);
+  it('is the binding plan (docs/OCEAN-PLAN.md, frequency retuned in v1.9.1 to 50 % per 20 s): 1.3 / 0.55 / 0.35 / 0.8 s, 1.6 m strip, 300 true damage, 3 m reach', () => {
+    expect(SERPENT.intervalS).toBe(20);
+    expect(SERPENT.chance).toBe(0.5);
+    expect(SERPENT_EVENT_S).toBeLessThan(SERPENT.intervalS); // an event is always over before the next roll
     expect(SERPENT.damage).toBe(300);
     expect(SERPENT.hazardHeight).toBe(3);
     expect(SERPENT.headRadius).toBe(SERPENT.stripHalfWidth); // the telegraph IS the hitbox
@@ -34,18 +35,18 @@ describe('serpent config', () => {
 });
 
 describe('roll statistics (own RNG stream)', () => {
-  /** The outcome of the t = 60 s roll for `seed` (the system is stepped with the clock set to the roll time). */
+  /** The outcome of the first roll (t = SERPENT.intervalS) for `seed` (the system is stepped with the clock set to the roll time). */
   function firstRoll(seed: number): { started: boolean; angleDeg: number } {
     const { sim } = stubSim([]);
     const sys = new SerpentSystem(seed, FLAT_ARENA);
-    sim.time = 60;
+    sim.time = SERPENT.intervalS;
     sys.step(sim, DT, trueDeal);
     expect(sys.rollLog).toHaveLength(1);
-    expect(sys.rollLog[0].at).toBe(60);
+    expect(sys.rollLog[0].at).toBe(SERPENT.intervalS);
     return { started: sys.rollLog[0].started, angleDeg: sys.rollLog[0].angleDeg };
   }
 
-  it('the t = 60 s roll succeeds in 10 % +- 2 % of 4000 seeds', () => {
+  it('the first roll (t = 20 s) succeeds in 50 % +- 3 % of 4000 seeds', () => {
     let ok = 0;
     const angles: number[] = [];
     const N = 4000;
@@ -58,8 +59,8 @@ describe('roll statistics (own RNG stream)', () => {
     }
     const rate = ok / N;
     console.log(`[serpent] first-roll success rate over ${N} seeds: ${(rate * 100).toFixed(2)} %`);
-    expect(rate).toBeGreaterThan(0.08);
-    expect(rate).toBeLessThan(0.12);
+    expect(rate).toBeGreaterThan(0.47);
+    expect(rate).toBeLessThan(0.53);
     // angles are uniform over [0, 360): every 60-degree sector is used and none dominates
     const sectors = new Array<number>(6).fill(0);
     for (const a of angles) {
@@ -73,15 +74,15 @@ describe('roll statistics (own RNG stream)', () => {
     }
   });
 
-  it('later rolls (t = 120, 180, … ) follow the same 10 % law over a long match', () => {
+  it('later rolls (t = 40, 60, … ) follow the same 50 % law over a long match', () => {
     let rolls = 0;
     let ok = 0;
     for (let seed = 1; seed <= 400; seed++) {
       const { sim } = stubSim([]);
-      // intervalS shortened only for the clock; the chance is the real 10 %
-      const sys = new SerpentSystem(seed, FLAT_ARENA, { intervalS: 60 });
+      // the real interval and the real chance
+      const sys = new SerpentSystem(seed, FLAT_ARENA, { intervalS: SERPENT.intervalS });
       for (let k = 1; k <= 10; k++) {
-        sim.time = 60 * k;
+        sim.time = SERPENT.intervalS * k;
         sys.step(sim, DT, trueDeal);
         // an event started by this roll is skipped over by the next ones: abort it so every roll is a real roll
         if (sys.active) sys.abort(sim);
@@ -90,8 +91,8 @@ describe('roll statistics (own RNG stream)', () => {
       ok += sys.rollLog.filter((r) => r.started).length;
     }
     expect(rolls).toBe(4000);
-    expect(ok / rolls).toBeGreaterThan(0.085);
-    expect(ok / rolls).toBeLessThan(0.115);
+    expect(ok / rolls).toBeGreaterThan(0.48);
+    expect(ok / rolls).toBeLessThan(0.52);
   });
 
   it('the stream is seed ^ salt: it matches an independent mulberry32 and never touches another stream', () => {
@@ -101,7 +102,7 @@ describe('roll statistics (own RNG stream)', () => {
       const wantAngle = wantStart ? rng() * 360 : -1;
       const { sim } = stubSim([]);
       const sys = new SerpentSystem(seed, FLAT_ARENA);
-      sim.time = 60;
+      sim.time = SERPENT.intervalS;
       sys.step(sim, DT, trueDeal);
       expect(sys.rollLog[0].started).toBe(wantStart);
       expect(sys.rollLog[0].angleDeg).toBe(wantAngle);
@@ -146,28 +147,31 @@ describe('roll statistics (own RNG stream)', () => {
   });
 });
 
-describe('World: rolls happen on exact live-time multiples of 60 s', () => {
+describe('World: rolls happen on exact live-time multiples of the interval', () => {
   const roster = ANIMAL_IDS.map((a, i) => ({ animal: a, isPlayer: i === 0 }));
   const cfg = (arena: MatchConfig['arena']): MatchConfig => ({ roster, difficulty: 1, arena });
 
-  it('first rolls at 60 s and 120 s of LIVE time (the 3 s countdown does not count), within one tick of the multiple', () => {
-    const world = new World(cfg('ocean'), 31, new EventBus(), { traps: false });
+  it('rolls at 20 s, 40 s, 60 s … of LIVE time (the 3 s countdown does not count), within one tick of the multiple', () => {
+    // chance 0 keeps the match free of serpent kills so it runs long enough; the interval is the real one
+    const world = new World(cfg('ocean'), 31, new EventBus(), { traps: false, serpent: { chance: 0 } });
     expect(world.serpent).not.toBeNull();
     let ticks = 0;
-    while (world.time < 125 && !world.matchOver) {
+    while (world.time < 65 && !world.matchOver) {
       world.step(DT);
       ticks++;
     }
+    expect(world.time).toBeGreaterThanOrEqual(45); // at least two rolls were due
     const sys = world.serpent as SerpentSystem;
     const log = sys.rollLog;
-    expect(log.map((r) => r.at)).toEqual([60, 120]);
+    const due = Math.floor(world.time / SERPENT.intervalS);
+    expect(log.map((r) => r.at)).toEqual(Array.from({ length: due }, (_, k) => (k + 1) * SERPENT.intervalS));
     for (const r of log) {
       expect(r.time).toBeGreaterThanOrEqual(r.at - 1e-6);
       expect(r.time).toBeLessThan(r.at + DT);
     }
-    // 125 s of live time took 3 s of countdown + 125 s of fight
-    expect(ticks).toBeGreaterThanOrEqual(Math.round((125 + 3) * 60) - 2);
-    expect(ticks).toBeLessThanOrEqual(Math.round((125 + 3) * 60) + 2);
+    // `world.time` seconds of live time took 3 s of countdown + that much fight
+    expect(ticks).toBeGreaterThanOrEqual(Math.round((world.time + 3) * 60) - 2);
+    expect(ticks).toBeLessThanOrEqual(Math.round((world.time + 3) * 60) + 2);
   });
 
   it('no roll happens during the countdown, even when the first roll is forced to t = 0.5 s', () => {

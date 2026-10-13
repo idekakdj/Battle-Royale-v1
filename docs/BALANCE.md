@@ -1,5 +1,18 @@
 # Gladiator Kingdom — Balance Report (v1.3 ultimates on top of v1.2 WP-N and v1.1 WP-J)
 
+## v1.9.1 serpent retune (50 % every 20 s)
+
+User request: the sea serpent rolls **50 % every 20 s of live match time** (was 10 % every 60 s). Only `src/config/serpent.ts` `intervalS`/`chance` changed. Ocean sweep, real rules, N=60 per level (`ARENA=ocean N=60 npm run balance`):
+
+| Level | Avg match | Timeouts | Serpent events/match | Exposed/event | Bot dodge (mid-fight) | Serpent share of deaths | Worst stall (frames) |
+|---|---|---|---|---|---|---|---|
+| L1 | 46 s | 0 | 0.97 | 0.26 | 47 % | 1.3 % | 157 |
+| L2 | 51 s | 0 | 0.93 | 0.45 | 64 % | 1.1 % | 114 |
+| L3 | 90 s | 0 | 2.10 | 0.36 | 73 % | 1.3 % | 167 |
+| L4 | 109 s | 0 | 2.40 | 0.40 | 84 % | 0.7 % | 229 |
+
+Roughly 1–2.4 attacks per match, no stalls ≥ 300 frames, no timeouts, serpent deaths stay ≤ 1.3 % of all deaths (bots dodge most of the time). Win-rate spread was not re-tuned (the event hits everyone equally and kills almost nobody).
+
 ## v1.9 ocean (WP-O2): bots on three levels, sea-serpent dodging, Ocean Dome balance
 
 Plan: `docs/OCEAN-PLAN.md` (arena data `OCEAN_ARENA` in `src/config/arenas.ts`, serpent numbers `src/config/serpent.ts`, serpent system `src/sim/SerpentSystem.ts`). Bot code: `src/ai/NavGrid.ts` (walkability grid + A*), `src/ai/Navigator.ts` (per-bot planning, path following, level ladder), `src/ai/SerpentSense.ts` (serpent perception, dodge, level ladder); hooks in `BotBrain`. Everything is gated on arena data (`arena.heightfield`, `arena.hazards.serpent`), so the colosseum and the jungle are byte-identical (proof below). **No animal stat, no arena data and no serpent number was changed**: the sweeps needed none.

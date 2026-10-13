@@ -17,6 +17,12 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.9.1] - 2026-10-13
+
+### Changed
+- **The Sea Serpent comes much more often.** On the Ocean Dome it now has a **50 % chance every 20 seconds** (it was a 10 % chance once a minute), so expect around two attacks in an average match. The attack itself is the same: about 1.1 s of warning, 300 damage to everyone in the strip.
+- Online: the serpent's timing is part of the game rules, so everyone in an online room needs to be on version 1.9.1 (1.9.0 and 1.9.1 won't join each other's rooms).
+
 ## [1.9.0] - 2026-10-12
 
 ### Added
@@ -223,7 +229,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.9.1...HEAD
+[1.9.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.6.0...v1.7.0

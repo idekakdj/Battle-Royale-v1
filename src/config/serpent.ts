@@ -3,7 +3,7 @@
  * `sim/SerpentSystem.ts` reads it, the AI / HUD / renderer read the same table (warning time, strip width, speeds).
  *
  * The event, in live match time (the 3-2-1 countdown does not count): every {@link SERPENT.intervalS} seconds
- * (t = 60, 120, 180 …) the world rolls its OWN seeded stream (match seed XOR {@link SERPENT.seedSalt}; the sim RNG is
+ * (t = 20, 40, 60 …) the world rolls its OWN seeded stream (match seed XOR {@link SERPENT.seedSalt}; the sim RNG is
  * never touched); with probability {@link SERPENT.chance} the serpent attacks from a random point of the dome edge.
  * Timeline (seconds): WARN {@link SERPENT.warnS} -> STRIKE {@link SERPENT.strikeS} -> HOLD {@link SERPENT.holdS} ->
  * RETREAT {@link SERPENT.retreatS}. Only STRIKE hurts: the head travels from the dome wall (r = wallRadius) to the centre
@@ -28,7 +28,9 @@
  *   - a stationary fighter on the line is ALWAYS hit;
  *   - bot dodge rates by level (O2 implements, the balance sweep measures): Apex >= 90 %, Veteran >= 75 %,
  *     Fighter >= 50 %, Cub ~ 25-40 %.
- * A match rarely sees it: ~10 % per minute.
+ * v1.9.1 retune (user request): the first release rolled 10 % once a minute ("a match rarely sees it"); it now rolls 50 % every
+ * 20 s of live match time, i.e. ~1.5 events per minute and ~2 per average match. The event itself (timeline, strip, damage,
+ * dodge budget) is unchanged; only how often it comes.
  */
 
 /** Strike-line half-width (m): the telegraphed strip and the head capsule's radius. */
@@ -36,9 +38,9 @@ const STRIP_HALF_WIDTH = 1.8;
 
 export const SERPENT = {
   /** Seconds of live match time between two rolls (t = intervalS, 2 x intervalS, …). */
-  intervalS: 60,
+  intervalS: 20,
   /** Probability that a roll starts an event. */
-  chance: 0.1,
+  chance: 0.5,
   /** WARN: the strip is telegraphed, the serpent coils outside the dome (s). Plan 1.3, tuned to 1.1 (-15 %; see "Serpent tuning"). */
   warnS: 1.1,
   /** STRIKE: the head sweeps wall -> centre (s); speed = wallRadius / strikeS (30 m / 0.44 s = 68 m/s on the Ocean Dome). Plan 0.55, tuned -20 %. */

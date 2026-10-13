@@ -24,7 +24,7 @@ describe('LocalSimDriver on the Ocean Dome', () => {
     expect(d.arena).toBe('ocean');
     expect(d.world.arena).toBe(OCEAN_ARENA);
     expect(d.world.arena.hazards?.serpent).toBe(true);
-    expect(d.world.serpent).not.toBeNull(); // the real rules: a 10 % roll per minute
+    expect(d.world.serpent).not.toBeNull(); // the real rules: a 50 % roll every 20 s
     expect(d.roster).toHaveLength(10);
     expect(d.roster[0]).toMatchObject({ animal: 'lion', isPlayer: true });
     const seats = seatPositions(10, OCEAN_ARENA);
