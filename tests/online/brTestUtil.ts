@@ -243,16 +243,19 @@ export function snapshotMismatches(o: WorldSnapshot, d: WorldSnapshot): string[]
       }
     }
   }
-  // v1.9 sea serpent: presence, phase, and the quantised numbers (angle 360/65536 deg, clock 1 ms, head distance 1 cm)
-  const so = o.serpent;
-  const sd = d.serpent;
-  if ((so === undefined) !== (sd === undefined)) bad.push('serpent presence');
-  else if (so !== undefined && sd !== undefined) {
-    if (so.phase !== sd.phase) bad.push(`serpent.phase ${so.phase} vs ${sd.phase}`);
-    const dAngle = Math.abs((((so.angleDeg - sd.angleDeg) % 360) + 540) % 360 - 180);
-    near('serpent.angleDeg', 0, dAngle, 360 / 65536 + 1e-9);
-    near('serpent.t', so.t, sd.t, TOLERANCE.time);
-    near('serpent.headR', so.headR, sd.headR, TOLERANCE.pos);
+  // v1.9 sea serpent (v1.10: and the second, high one): presence, phase, and the quantised numbers (angle 360/65536 deg, clock 1 ms,
+  // head distance 1 cm)
+  for (const key of ['serpent', 'serpentHigh'] as const) {
+    const so = o[key];
+    const sd = d[key];
+    if ((so === undefined) !== (sd === undefined)) bad.push(`${key} presence`);
+    else if (so !== undefined && sd !== undefined) {
+      if (so.phase !== sd.phase) bad.push(`${key}.phase ${so.phase} vs ${sd.phase}`);
+      const dAngle = Math.abs((((so.angleDeg - sd.angleDeg) % 360) + 540) % 360 - 180);
+      near(`${key}.angleDeg`, 0, dAngle, 360 / 65536 + 1e-9);
+      near(`${key}.t`, so.t, sd.t, TOLERANCE.time);
+      near(`${key}.headR`, so.headR, sd.headR, TOLERANCE.pos);
+    }
   }
   return bad;
 }
@@ -307,5 +310,6 @@ export const SAMPLES: { [K in GameEvent['type']]: GameEventOf<K> } = {
   serpentStrike: { type: 'serpentStrike', angleDeg: 211.37 },
   serpentHit: { type: 'serpentHit', fighterId: 6, damage: 300, pos: Q },
   serpentEnd: { type: 'serpentEnd' },
+  fall: { type: 'fall', fighterId: 4, damage: 50, drop: 3.5, pos: { x: 12.25, y: 3, z: -4.5 } },
 };
 

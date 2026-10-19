@@ -15,6 +15,7 @@ import { Perception, MEMORY_SECONDS, type TrackedEnemy } from './Perception';
 import { TerrainSense } from './TerrainSense';
 import { Navigator, type NavMode } from './Navigator';
 import { SerpentSense } from './SerpentSense';
+import { FallGuard } from './FallGuard';
 import { BlockControl, sampleAimNoise, timeToImpact } from './CombatMicro';
 import { decideAbilities, type Situation, type AbilityWish } from './scripts';
 import { previewUltTarget } from '../sim/ultimates/targeting';
@@ -36,6 +37,11 @@ import { MOVE } from '../config/balance';
 type Goal = 'engage' | 'retreat' | 'pickup' | 'defend' | 'special' | 'ultimate';
 
 const DECISION_DT = 1 / AI_TUNING.decisionHz;
+
+/** v1.10: ground at or above this height is the UPPER tier of an elevated arena (the Ocean's tower tops; `serpentSplitY`). */
+const UPPER_PAD_Y = 4.5;
+/** v1.10: after a visit to the upper tier a bot feels no pull towards another upper pad for this long (no tower camping). */
+const UPPER_COOL_S = 25;
 
 function isAttackAction(a: FighterState['action']): boolean {
   return a === 'attack1' || a === 'attack2' || a === 'attack3';
@@ -117,6 +123,10 @@ export class BotBrain {
   /** v1.9: sea-serpent dodging (inactive, and a no-op, on arenas without the serpent hazard). */
   private readonly serp: SerpentSense;
   private readonly serpMove: Move2 = { x: 0, z: 0 };
+  /** v1.10: never walks off a high platform by accident (inactive, and a no-op, on arenas without fall damage). */
+  private readonly fall: FallGuard;
+  /** v1.10: absolute manager time before which the pull towards the upper tier's pads is off. */
+  private upperCoolUntil = -1;
   /** v1.9: own feet height, refreshed every tick (cross-level target scoring). */
   private selfH = 0;
 
@@ -131,6 +141,7 @@ export class BotBrain {
     this.sense = new TerrainSense(arena, animal, profile.difficulty, id);
     this.nav = new Navigator(arena, this.def.radius, profile.difficulty);
     this.serp = new SerpentSense(arena, animal, profile.difficulty);
+    this.fall = new FallGuard(arena, this.def.radius, profile.difficulty, seed);
     // Stagger decision ticks across bots (deterministically).
     this.decisionAcc = (id % 6) * 0.017;
     this.sit = {
@@ -166,6 +177,11 @@ export class BotBrain {
     };
   }
 
+  /** v1.10: true while this bot is on its way off a platform ON PURPOSE (the serpent dive; telemetry for the balance sweep). */
+  get diving(): boolean {
+    return this.serp.diving;
+  }
+
   update(now: number, dt: number, current: WorldSnapshot, delayed: WorldSnapshot): void {
     const self = current.fighters[this.id];
     const intent = this.intent;
@@ -185,6 +201,7 @@ export class BotBrain {
 
     if (this.sense.active) this.sense.setDifficulty(this.profile.difficulty);
     if (this.serp.active) this.serp.setDifficulty(this.profile.difficulty);
+    if (this.fall.active) this.fall.setDifficulty(this.profile.difficulty);
     if (this.nav.active) {
       this.nav.setDifficulty(this.profile.difficulty);
       this.selfH = self.pos.y;
@@ -511,13 +528,19 @@ export class BotBrain {
       }
     }
 
+    // v1.10: a light pull towards the pads on the upper tier (the towers) for the bots that climb: only when nobody is near, healthy,
+    // standing on a lower level, and not again for a while after a visit up there (a tower is a dead end, not a camp).
+    if (this.nav.active && this.selfH >= UPPER_PAD_Y) this.upperCoolUntil = now + UPPER_COOL_S;
+    const pull =
+      this.nav.active && nearestDist > 8 && hpFrac >= 0.5 && this.selfH < UPPER_PAD_Y && now >= this.upperCoolUntil ? this.nav.level.upperPull : 0;
+
     let pickupScore = 0;
     this.pickupIdx = -1;
     switch (p.pickupPolicy) {
       case 'ignore':
         break;
       case 'ifWithinRange': {
-        const idx = this.nearestActivePickup(delayed, sx, sz, p.pickupRangeM, hpFrac < 0.95);
+        const idx = this.nearestActivePickup(delayed, sx, sz, p.pickupRangeM, hpFrac < 0.95, pull);
         if (idx >= 0) {
           this.pickupIdx = idx;
           pickupScore = 0.55;
@@ -530,7 +553,7 @@ export class BotBrain {
         const idx = wantHeal
           ? this.findPickup(delayed, 'heal')
           : safe
-            ? this.nearestActivePickup(delayed, sx, sz, 15, hpFrac < 0.95)
+            ? this.nearestActivePickup(delayed, sx, sz, 15, hpFrac < 0.95, pull)
             : -1;
         if (idx >= 0) {
           this.pickupIdx = idx;
@@ -552,7 +575,7 @@ export class BotBrain {
             pickupScore = 0.8;
           }
         } else if (nearestDist > 8 && hpFrac < 0.95) {
-          const idx = this.nearestActivePickup(delayed, sx, sz, 12, true);
+          const idx = this.nearestActivePickup(delayed, sx, sz, 12, true, pull);
           if (idx >= 0) {
             this.pickupIdx = idx;
             pickupScore = 0.45;
@@ -624,6 +647,7 @@ export class BotBrain {
     sz: number,
     maxDist: number,
     allowHeal: boolean,
+    pull = 0,
   ): number {
     let best = -1;
     let bestD = maxDist;
@@ -631,7 +655,8 @@ export class BotBrain {
       const pk = snap.pickups[i];
       if (!pk.active) continue;
       if (pk.kind === 'heal' && !allowHeal) continue;
-      const d = Math.hypot(pk.pos.x - sx, pk.pos.z - sz);
+      // v1.10: a pad on the upper tier counts as nearer than it is (range and ranking alike), by the level's pull
+      const d = Math.hypot(pk.pos.x - sx, pk.pos.z - sz) * (pull > 0 && pk.pos.y >= UPPER_PAD_Y ? 1 - pull : 1);
       if (d <= bestD) {
         bestD = d;
         best = i;
@@ -672,12 +697,24 @@ export class BotBrain {
       case 'special':
       case 'ultimate': {
         // Fire the edge once, keep engage movement underneath.
-        if (goal === 'special' && this.wish.special && self.specialCd <= 0 && now >= this.lastSpecialPress + 0.3 && !(this.sense.active && this.sense.specialIntoWater(now, self.inWater === true, t))) {
+        if (
+          goal === 'special' &&
+          this.wish.special &&
+          self.specialCd <= 0 &&
+          now >= this.lastSpecialPress + 0.3 &&
+          !(this.sense.active && this.sense.specialIntoWater(now, self.inWater === true, t)) &&
+          !(this.fall.active && this.fall.dropAhead(self, this.wish.aimYaw, this.castReach(t)))
+        ) {
           intent.special = true;
           this.lastSpecialPress = now;
           this.wish.special = false;
           aimYaw = this.wish.aimYaw;
-        } else if (goal === 'ultimate' && this.wish.ult && self.ultCharge >= 100 && this.ultCastValid(self, current.fighters, this.wish.aimYaw)) {
+        } else if (
+          goal === 'ultimate' &&
+          this.wish.ult &&
+          self.ultCharge >= 100 &&
+          this.ultCastValid(self, current.fighters, this.wish.aimYaw)
+        ) {
           intent.ultimate = true;
           this.wish.ult = false;
           aimYaw = this.wish.aimYaw;
@@ -842,7 +879,7 @@ export class BotBrain {
     let dodging = false;
     if (this.serp.active) {
       const busy = isAttackAction(self.action) || self.action === 'block';
-      dodging = this.serp.update(now, self, current.serpent, p.reactionMs, busy, this.rng, this.serpMove);
+      dodging = this.serp.update(now, self, current.serpent, p.reactionMs, busy, this.rng, this.serpMove, current.serpentHigh);
       if (dodging) {
         move.x = this.serpMove.x;
         move.z = this.serpMove.z;
@@ -879,6 +916,9 @@ export class BotBrain {
       move.x = this.unstickX;
       move.z = this.unstickZ;
     }
+
+    // v1.10 fall damage: the last word on the heading is "not off a high platform" (an eagle in flight and the serpent dive are the exceptions)
+    if (this.fall.active && soarState === 0 && !this.serp.diving) this.fall.guard(move, now, self);
 
     intent.moveX = move.x;
     intent.moveZ = move.z;
@@ -1068,7 +1108,7 @@ export class BotBrain {
     const travelling =
       !wantAttack &&
       move.x * move.x + move.z * move.z > 0.25 &&
-      (t === null || t.dist > this.def.range + ANIMALS[t.animal].radius + 0.06) && // not yet in swing reach
+      (t === null || t.dist > this.def.range + ANIMALS[t.animal].radius + 0.06 || (this.nav.active && (this.goal === 'retreat' || this.goal === 'pickup'))) && // not yet in swing reach (a retreat / a pad run has no swing)
       (self.action === 'run' || self.action === 'idle');
     if (!travelling || now < this.smashUntil || now < this.unstickUntil) {
       this.stuckRefT = now;
@@ -1109,6 +1149,30 @@ export class BotBrain {
   }
 
   // ── v1.9 elevated-arena navigation ──────────────────────────────────────────
+
+  /**
+   * v1.10: how far (m) this animal's SPECIAL carries the caster along its aim (0 = it does not move the caster): the leaps and the lunge
+   * end at the foe they are aimed at, the rush stops on impact, the rhino's charge carries its victim 12 m, the dash runs through. The
+   * brain holds the cast back when that line runs over a deadly edge (see {@link FallGuard.dropAhead}).
+   */
+  private castReach(t: TrackedEnemy | null): number {
+    const d = t !== null ? t.dist : 6;
+    switch (this.def.id) {
+      case 'lion':
+        return Math.min(8, d + 1.5);
+      case 'gorilla':
+        return Math.min(7, d + 1.5);
+      case 'crocodile':
+      case 'panther':
+        return 7; // the lunge and the dash run their full length when the foe steps aside
+      case 'hippo':
+        return 13; // 11 m/s for up to 1.2 s; it stops on impact, not when the foe has moved
+      case 'rhino':
+        return 12;
+      default:
+        return 0;
+    }
+  }
 
   /** Replace `move` with the next A* waypoint when TERRAIN blocks the straight walk to (gx, gz); a no-op on flat arenas. */
   private navOverride(move: Move2, now: number, sx: number, sz: number, gx: number, gz: number, mode: NavMode): boolean {

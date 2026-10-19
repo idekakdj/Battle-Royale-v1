@@ -115,6 +115,12 @@ export class BotManager {
     }
   }
 
+  /** v1.10 telemetry: is this bot currently taking a fall on purpose (the serpent dive)? False for players / unknown ids. */
+  isDiving(fighterId: number): boolean {
+    const b = this.brains[fighterId];
+    return b !== undefined && b !== null && b.diving;
+  }
+
   /** The (reused) intent for a bot fighter; neutral for players/unknown ids. */
   getIntent(fighterId: number): FighterIntent {
     const b = this.brains[fighterId];

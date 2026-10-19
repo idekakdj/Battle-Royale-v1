@@ -70,6 +70,10 @@
  * v1.9 (protocol 3): the Ocean Dome's sea serpent rides along — snapshot header flag 64 + a 6-byte block (only while an event runs),
  * events `serpentWarning` / `serpentStrike` / `serpentHit` / `serpentEnd` (tags 23-26) and a cause byte on `death`; the client view
  * interpolates `serpent.t` / `headR`; `swapIds` copies the block, `swapEventIds` remaps `serpentHit.fighterId`.
+ * v1.10 (protocol 4): the Ocean Dome's SECOND (high) serpent — snapshot header flag 128 + another 6-byte block after the low one
+ * (`serpentHigh`, interpolated / extrapolated / id-swapped like `serpent`); the four serpent events carry the tier in bit 7 of their
+ * tag byte (set = high, decoded as `tier: 'high'`; clear = low, no `tier` key); event `fall` (tag 27, 12 B: fighter · damage ·
+ * drop cm · pos) and death cause byte 2 = 'fall'; `swapEventIds` remaps `fall.fighterId`.
  * Any change to a wire format ⇒ bump ONLINE_PROTOCOL_VERSION in ../types.ts (the room handshake enforces equality).
  */
 export * from './tables';

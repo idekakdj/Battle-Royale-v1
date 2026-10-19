@@ -13,7 +13,7 @@
  * Positions are world XZ metres; the angle convention of ring layouts is `x = r·cos θ, z = r·sin θ` (θ in degrees).
  */
 
-import type { ArenaId } from '../core/types';
+import type { ArenaId, SerpentTier } from '../core/types';
 import { ARENA_IDS } from '../core/types';
 import { ARENA, MATCH } from './balance';
 import * as A from './arena';
@@ -56,9 +56,17 @@ export type ElevationPiece =
    */
   | { kind: 'ramp'; x: number; z: number; dirDeg: number; length: number; width: number; h0: number; h1: number };
 
-/** v1.9 arena hazards. `serpent`: the Ocean Dome's sea-serpent event (docs/OCEAN-PLAN.md; numbers in config/serpent.ts). */
+/**
+ * v1.9 arena hazards. `serpent`: the Ocean Dome's sea-serpent event (docs/OCEAN-PLAN.md; numbers in config/serpent.ts).
+ * v1.10 (docs/OCEAN-HEIGHTS-PLAN.md): `serpentSplitY` splits the arena into a LOW and a HIGH band by GROUND height under a fighter
+ * (see {@link arenaSerpentBand}) and makes the event two independent serpents (a `low` and a `high` one); absent = the single v1.9
+ * serpent that hurts everywhere. `fallDamage`: landing after a drop of at least `minDrop` m (from the height where the fighter
+ * last stood) costs the fixed `damage` true damage; absent = no fall damage (every other arena).
+ */
 export interface ArenaHazards {
   serpent?: boolean;
+  serpentSplitY?: number;
+  fallDamage?: { minDrop: number; damage: number };
 }
 
 /** A fighter spawn seat (the fighter faces the arena centre). */
@@ -437,6 +445,22 @@ export function arenaGroundHeight(arena: ArenaDef, x: number, z: number): number
   return h;
 }
 
+/** v1.10: does this arena run the second (HIGH) serpent? True iff `hazards.serpent` and a `serpentSplitY` is set. */
+export function arenaHasHighSerpent(arena: ArenaDef): boolean {
+  return arena.hazards?.serpent === true && arena.hazards.serpentSplitY !== undefined;
+}
+
+/**
+ * v1.10: which serpent's band the spot (x, z) belongs to, by the GROUND height there (not the fighter's own height): `'high'`
+ * when the ground is at least `hazards.serpentSplitY`, else `'low'` (always `'low'` on an arena without a split). A fighter in
+ * mid-air, or an eagle, is in the band of the ground it is over.
+ */
+export function arenaSerpentBand(arena: ArenaDef, x: number, z: number): SerpentTier {
+  const split = arena.hazards?.serpentSplitY;
+  if (split === undefined) return 'low';
+  return arenaGroundHeight(arena, x, z) >= split ? 'high' : 'low';
+}
+
 /**
  * Walking slope at (x, z) as rise / run (0 on flat ground, level edges and outside the heightfield): the grade of the ramp that
  * supplies the ground height there. Compare with {@link ARENA_MAX_RAMP_SLOPE}.
@@ -728,22 +752,34 @@ export function staticObstaclesOf(arena: ArenaDef): readonly Obstacle[] {
   return [...arena.circles, ...arena.segments];
 }
 
-// ── Ocean Dome (v1.9, docs/OCEAN-PLAN.md) ────────────────────────────────────
+// ── Ocean Dome (v1.9, docs/OCEAN-PLAN.md; v1.10 upper tier: docs/OCEAN-HEIGHTS-PLAN.md) ──────────────────
 //
-// The floor of a glass dome on the sea bed, wall radius 30, THREE LEVELS joined by ramps; every other edge is a cliff
+// The floor of a glass dome on the sea bed, wall radius 30, FOUR LEVELS joined by ramps; every other edge is a cliff
 // (a grounded fighter can only step up ARENA_STEP_UP = 0.6 m, so the ramps are the way up):
 //
-//   level 0  the SEABED ring   r 19 … 30   height 0      the 10 spawn seats (r 24) and 3 pads
-//   level 1  the TERRACE ring  r 8 … 19    height 1.5    2 pads, 2 crate clusters
-//   level 2  the PLATEAU       r < 8       height 3.0    the centre pad (where the serpent's strike ends)
+//   level 0  the SEABED ring    r 19 … 30   height 0     the 10 spawn seats (r 24), 3 pads, cover, 2 crate piles
+//   level 1  the TERRACE ring   r 8 … 19    height 1.5   2 pads, 2 arches, 2 crate piles
+//   level 2  the PLATEAU        r < 8       height 3.0   the centre pad (where the serpent's strike ends), 3 coral pillars
+//   level 3  the UPPER tier     3 SEA-STACKS at r 19 (angles 72°, 180°, 288°), radius 3.6, top 6.5 m: one pad on each (at its centre)
 //
-//   5 seabed→terrace ramps (angles 0°, 72°, 144°, 216°, 288°: between the spawn seats), 4 terrace→plateau ramps (45°, 135°, 225°,
-//   315°: offset from them), all 6 m long × 6 m wide, rising 1.5 m (grade 0.25 = 14°, well under 25°; a body of the largest radius,
-//   1.2 m, fits on them with room to spare — the 0.6 m step limit is 2.4 m of ramp ahead).
+//   Level ramps: 5 seabed→terrace (0°, 108°, 216°, 252°, 324°) and 3 terrace→plateau (105°, 234°, 342°), 6 m long × 6 m wide, rising
+//   1.5 m (grade 0.25 = 14°). The height field is single-valued, so a sea-stack is a SOLID round tower (a `plateau` piece, top 6.5 m)
+//   standing on the terrace's outer edge (half over the terrace, half over the seabed), and the way up is a wedge-shaped ramp over the level
+//   below: every tower has a CAUSEWAY that runs radially from the plateau rim (3.0 → 6.5, 9.25 m) and the towers at 72° and 180° have a CHORD
+//   as well, which runs slantwise across the terrace (1.5 → 6.5, 13.25 m, leaning clockwise so its foot lands mid-pocket): two ways up from
+//   two levels, from different directions. All are 3.8 m wide and made of two pieces (a long lower one, grade ≤ 0.40, and a short gentle
+//   top one, see below). The causeways cut the terrace into three pockets (A 72°→180°, B 180°→288°, C 288°→72°); the plateau (inner ramps),
+//   the seabed (outer ramps) and the tower tops (chords) connect them. Walking off a ramp's side or a tower's rim near the top is a real fall
+//   (≥ 3.4 m: the Ocean's fall damage, see `OCEAN_FALL_*`); the lower ramps and the plateau rim are only 1.5 m drops.
 //
-// Solid cover: coral pillars (r ≈ 1, tall), rock outcrops (r ≈ 1.6), low coral arches (jumpable segments) on every level and crate
-// clusters on the seabed and the terrace. Every solid carries `baseY` = the ground height under it (its top is baseY + height); none
-// stands on a ramp, near a level edge or in a ramp's path.
+// Serpent lanes (config/serpentLanes.ts): ground ≥ 4.5 m is the HIGH band (tower tops + the top of their ramps); the layout leaves 182 low and
+// 96 high strike bins of 360 (the low serpent never runs over or alongside the upper tier).
+//
+// Solid cover: coral pillars (r ≈ 1, tall), rock outcrops (r ≈ 1.6), low coral arches (jumpable segments) and crate piles. Every solid carries
+// `baseY` = the ground height under it (its top is baseY + height); none stands on a ramp, within 1 m of a level edge, in a ramp's approach, or
+// so near a wall that a hippo could not pass between them. The tower tops carry only the pad (a 7.2 m disc: no room for cover).
+// `scripts/ocean-layout.ts` prints the ASCII height map, the lane bins, every layout rule and the reachability proof; the rules are
+// tests/config/oceanRules.ts (shared with tests/config/ocean.layout.test.ts).
 
 /** Polar → world XZ (x = r·cos θ, z = r·sin θ), 4-decimal rounded like the other hand-authored rings. */
 function pol(r: number, deg: number): SpawnPoint {
@@ -756,25 +792,119 @@ export const OCEAN_PLATEAU_HEIGHT = 3;
 export const OCEAN_PLATEAU_RADIUS = 8;
 export const OCEAN_TERRACE_OUTER_RADIUS = 19;
 const OCEAN_TERRACE_INNER_RADIUS = 7.5;
-/** Ramps: 6 m long, 6 m wide, rising 1.5 m (grade 0.25). */
+/** v1.10: top of the sea-stacks (the UPPER tier), metres above the seabed. */
+export const OCEAN_UPPER_HEIGHT = 6.5;
+/** v1.10: ground at or above this height belongs to the HIGH serpent's band (`hazards.serpentSplitY`): stack tops + the top of their ramps. */
+export const OCEAN_SERPENT_SPLIT_Y = 4.5;
+/** v1.10 fall damage (`hazards.fallDamage`): a landing after a drop of at least this many metres hurts … */
+export const OCEAN_FALL_MIN_DROP = 3.4;
+/** … for exactly this much TRUE damage. (Stack top → plateau is 3.5 m: damage; plateau → seabed is 3.0 m: none.) */
+export const OCEAN_FALL_DAMAGE = 50;
+/** Level ramps: 6 m long, 6 m wide, rising 1.5 m (grade 0.25). */
 const OCEAN_RAMP_LENGTH = 6;
 const OCEAN_RAMP_WIDTH = 6;
-const OCEAN_OUTER_RAMP_DEGS: readonly number[] = [0, 72, 144, 216, 288];
-const OCEAN_INNER_RAMP_DEGS: readonly number[] = [36, 108, 252, 324];
+const OCEAN_OUTER_RAMP_DEGS: readonly number[] = [0, 108, 216, 252, 324];
+const OCEAN_INNER_RAMP_DEGS: readonly number[] = [105, 234, 342];
 
-/** A ramp along the radius at angle `deg`, its HIGH end `topR` from the dome centre, rising from `h0` (outer end) to `h1` (inner end). */
+/** The sea-stacks: centre distance from the dome centre, top radius, and angles (degrees). */
+export const OCEAN_STACK_RING = 19;
+export const OCEAN_STACK_RADIUS = 3.6;
+const OCEAN_STACK_DEGS: readonly number[] = [72, 180, 288];
+
+/**
+ * Ramps to the upper tier (width 3.8 m, two pieces each). A body of radius r walking up must never have the tower's rim (a cliff while the
+ * ground is more than ARENA_STEP_UP below the top) closer than r, so the last stretch is GENTLE: a short "top" piece rises the final
+ * 0.6 m (5.9 → 6.5) over 1.9 m (grade 0.32) — with the rim 0.55 m past its high end, the rim is still 1.35 m away when the ground gets
+ * within a step of the top — and a long "lower" piece (grade ≤ 0.39) does the rest. The top piece's high end tucks 0.55 m under the
+ * tower's edge, so the ramp's corners are inside the tower (no notch).
+ */
+export const OCEAN_UPPER_RAMP_WIDTH = 3.8;
+const OCEAN_UPPER_RAMP_TUCK = 0.55;
+export const OCEAN_UPPER_TOP_LENGTH = 1.9;
+export const OCEAN_UPPER_LANDING_Y = 5.9;
+/** The long lower piece overlaps the short top piece by this much (m) so the joint has no crack; its top is then 5.9 + grade × this, within 1.5 cm of 5.9. */
+export const OCEAN_UPPER_JOIN_OVERLAP = 0.03;
+/** A causeway's long piece (plateau 3.0 → 5.9) is this long: grade 0.395. */
+export const OCEAN_CAUSEWAY_LOWER_LENGTH = 7.35;
+/** A chord's long piece (terrace 1.5 → 5.9) is this long: grade 0.388. It leaves its tower this many degrees clockwise of the radial direction. */
+export const OCEAN_CHORD_LOWER_LENGTH = 11.35;
+const OCEAN_CHORD_BEARING_DEG = 128;
+
+/** A sea-stack: where it stands (world XZ of its centre), its radius and its polar angle. */
+export interface OceanStack {
+  x: number;
+  z: number;
+  radius: number;
+  deg: number;
+}
+export const OCEAN_STACKS: readonly OceanStack[] = OCEAN_STACK_DEGS.map((deg) => {
+  const c = pol(OCEAN_STACK_RING, deg);
+  return { x: c.x, z: c.z, radius: OCEAN_STACK_RADIUS, deg };
+});
+
+/** A level ramp along the radius at angle `deg`, its HIGH end `topR` from the dome centre, rising from `h0` (outer end) to `h1` (inner end). */
 function oceanRamp(deg: number, topR: number, h0: number, h1: number): ElevationPiece {
   const c = pol(topR + OCEAN_RAMP_LENGTH / 2, deg);
   return { kind: 'ramp', x: c.x, z: c.z, dirDeg: deg + 180, length: OCEAN_RAMP_LENGTH, width: OCEAN_RAMP_WIDTH, h0, h1 };
 }
 
+/**
+ * The ramp up to sea-stack `s` whose axis passes through the tower's centre and leaves it toward `bearingDeg`; its low end (height `h0`) is
+ * `footDist` from the tower's centre. Two pieces (see above): the long lower piece `h0` → 5.9 and the gentle top piece 5.9 → 6.5.
+ */
+function oceanClimb(s: OceanStack, bearingDeg: number, footDist: number, h0: number): ElevationPiece[] {
+  const d = bearingDeg * DEG;
+  const piece = (dHigh: number, dLow: number, lo: number, hi: number): ElevationPiece => {
+    const mid = (dHigh + dLow) / 2;
+    return {
+      kind: 'ramp',
+      x: r4(s.x + Math.cos(d) * mid),
+      z: r4(s.z + Math.sin(d) * mid),
+      dirDeg: bearingDeg + 180,
+      length: r4(dLow - dHigh),
+      width: OCEAN_UPPER_RAMP_WIDTH,
+      h0: lo,
+      h1: hi,
+    };
+  };
+  const topHigh = s.radius - OCEAN_UPPER_RAMP_TUCK;
+  const topLow = topHigh + OCEAN_UPPER_TOP_LENGTH;
+  // the lower piece runs OCEAN_UPPER_JOIN_OVERLAP m on into the top piece along its own plane (no hairline crack at the joint after rounding)
+  const slope = (OCEAN_UPPER_LANDING_Y - h0) / (footDist - topLow);
+  const lower = piece(topLow - OCEAN_UPPER_JOIN_OVERLAP, footDist, h0, r4(OCEAN_UPPER_LANDING_Y + slope * OCEAN_UPPER_JOIN_OVERLAP));
+  return [lower, piece(topHigh, topLow, OCEAN_UPPER_LANDING_Y, OCEAN_UPPER_HEIGHT)];
+}
+
+/**
+ * The chord from tower `s` across the terrace: it leaves the tower clockwise (bearing = the tower's angle − 128°, i.e. leaning back toward
+ * the dome centre), so its foot lands mid-pocket, on the terrace, 55-60° from the tower.
+ */
+function oceanChord(s: OceanStack): ElevationPiece[] {
+  const footDist = s.radius - OCEAN_UPPER_RAMP_TUCK + OCEAN_UPPER_TOP_LENGTH + OCEAN_CHORD_LOWER_LENGTH;
+  return oceanClimb(s, s.deg - OCEAN_CHORD_BEARING_DEG, footDist, OCEAN_TERRACE_HEIGHT);
+}
+
+/** The causeway from the plateau rim straight out to tower `s` (radial). */
+function oceanCauseway(s: OceanStack): ElevationPiece[] {
+  const footDist = s.radius - OCEAN_UPPER_RAMP_TUCK + OCEAN_UPPER_TOP_LENGTH + OCEAN_CAUSEWAY_LOWER_LENGTH;
+  return oceanClimb(s, s.deg + 180, footDist, OCEAN_PLATEAU_HEIGHT);
+}
+
+/** The towers that have a chord as well as their causeway (indices into OCEAN_STACKS). */
+const OCEAN_CHORD_STACKS: readonly number[] = [0, 1];
+
 export const OCEAN_HEIGHTFIELD: readonly ElevationPiece[] = [
   { kind: 'ring', x: 0, z: 0, rInner: OCEAN_TERRACE_INNER_RADIUS, rOuter: OCEAN_TERRACE_OUTER_RADIUS, height: OCEAN_TERRACE_HEIGHT },
   { kind: 'plateau', x: 0, z: 0, radius: OCEAN_PLATEAU_RADIUS, height: OCEAN_PLATEAU_HEIGHT },
+  // the upper tier: solid towers rising out of the terrace's outer edge
+  ...OCEAN_STACKS.map((s): ElevationPiece => ({ kind: 'plateau', x: s.x, z: s.z, radius: s.radius, height: OCEAN_UPPER_HEIGHT })),
   // seabed → terrace: the high end tucks 0.5 m under the terrace edge, so the ramp's corners are inside the ring (no notch)
   ...OCEAN_OUTER_RAMP_DEGS.map((d) => oceanRamp(d, 18.5, 0, OCEAN_TERRACE_HEIGHT)),
   // terrace → plateau: the high end tucks 0.6 m under the plateau edge
   ...OCEAN_INNER_RAMP_DEGS.map((d) => oceanRamp(d, 7.4, OCEAN_TERRACE_HEIGHT, OCEAN_PLATEAU_HEIGHT)),
+  // plateau → tower (causeways: radial, from the plateau rim outward) and terrace → tower (chords: slantwise across the terrace)
+  ...OCEAN_STACKS.flatMap((s) => oceanCauseway(s)),
+  ...OCEAN_CHORD_STACKS.flatMap((i) => oceanChord(OCEAN_STACKS[i])),
 ];
 
 /** Ground height of the ocean heightfield alone (used to seat the ocean's solids; the sim reads `arenaGroundHeight`). */
@@ -799,24 +929,20 @@ export const OCEAN_ARCH_HEIGHT = 0.9;
 const OCEAN_BLOCKER_DATA: readonly (readonly [number, number, 'coral' | 'rock'])[] = [
   // plateau
   [4, 0, 'coral'],
-  [4, 120, 'coral'],
-  [4, 240, 'coral'],
-  // terrace
-  [13, 144, 'rock'],
-  [13, 288, 'rock'],
-  [16.7, 90, 'coral'],
-  [16.7, 270, 'coral'],
+  [4, 126, 'coral'],
+  [4, 234, 'coral'],
+  // terrace: none (the strips between a pillar and the ramp walls would be too narrow for the big animals: dead pockets)
   // seabed
-  [25.8, 108, 'rock'],
-  [25.8, 252, 'rock'],
-  [26.4, 180, 'coral'],
+  [25.5, 42, 'rock'],
+  [23.5, 148.5, 'rock'],
+  [26.4, 171, 'coral'],
 ];
 
 /** Low coral arches (jumpable segments, laid tangentially at radius r, angle θ). */
 const OCEAN_ARCH_DATA: readonly (readonly [number, number])[] = [
-  [11, 180],
-  [20.9, 108],
-  [20.9, 252],
+  [15.5, 207],
+  [10.5, 36],
+  [26.5, 288],
 ];
 
 function oceanArch(r: number, deg: number): ArenaSegment {
@@ -848,28 +974,29 @@ function crateAnchor(r: number, deg: number): SpawnPoint {
 
 /** Crate clusters (anchor of the L-pile, same pile shape as the other arenas): two on the terrace, two on the seabed. */
 const OCEAN_CRATE_ANCHORS: readonly SpawnPoint[] = [
-  crateAnchor(14.5, 351),
-  crateAnchor(15, 168),
-  crateAnchor(26, 36),
-  crateAnchor(26, 324),
+  crateAnchor(12.5, 264),
+  crateAnchor(13, 312),
+  crateAnchor(26, 136.5),
+  crateAnchor(26, 30),
 ];
 
 const OCEAN_SPAWNS = ringPoints(24, 10, 270);
 
-/** Pads: the centre plateau, two on the terrace, three on the seabed. */
+/** Pads: the centre plateau (id 0), the three stack tops, two on the terrace, three on the seabed. */
 const OCEAN_PAD_DATA: readonly SpawnPoint[] = [
   { x: 0, z: 0 },
-  pol(14.5, 72),
-  pol(14.5, 216),
+  ...OCEAN_STACKS.map((s): SpawnPoint => ({ x: s.x, z: s.z })),
+  pol(16, 253.5),
+  pol(15, 4.5),
   pol(21.9, 36),
-  pol(21.9, 180),
-  pol(21.9, 324),
+  pol(25.5, 72),
+  pol(25.5, 180),
 ];
 
 export const OCEAN_ARENA: ArenaDef = makeArena({
   id: 'ocean',
   name: 'Ocean Dome',
-  blurb: 'A glass dome on the sea floor: terraces, ramps, and something huge outside.',
+  blurb: 'A glass dome on the sea floor: three levels, towers to climb, two serpents, and a long way down.',
   wallRadius: 30,
   wallHeight: 5,
   standsInner: 31,
@@ -916,12 +1043,18 @@ export const OCEAN_ARENA: ArenaDef = makeArena({
   spawnLayout: 'seats',
   terrain: [],
   heightfield: OCEAN_HEIGHTFIELD,
-  hazards: { serpent: true },
-  // Tighter gaps than the colosseum (ramps, cliffs and cover leave little flat ground): a trap disc must also lie wholly on ONE flat level
-  // (trapSiteValid → arenaIsLevel, +0.25 m margin), so none sits on a ramp or at a level edge. ~85 m2 of valid sites on the terrace and
-  // the seabed; every difficulty places its full count for every tested seed (about a third of them on the seabed).
+  hazards: {
+    serpent: true,
+    serpentSplitY: OCEAN_SERPENT_SPLIT_Y,
+    fallDamage: { minDrop: OCEAN_FALL_MIN_DROP, damage: OCEAN_FALL_DAMAGE },
+  },
+  // Tighter gaps than the colosseum (ramps, wedges, cliffs and cover leave little flat ground): a trap disc must also lie wholly on ONE flat
+  // level (trapSiteValid → arenaIsLevel, +0.25 m margin), so none sits on a ramp or at a level edge. v1.10: the stacks' ramps took a big
+  // bite out of the terrace, so the clearances shrank again (0.6/1.5/2.0/3.0 → 0.3/0.8/1.0/2.0). Valid sites remain on the terrace (a few) and
+  // the seabed (most; never on a stack top: the disc test is conservative at the terrace rim); every difficulty places its full count for
+  // every tested seed (1500 per difficulty measured).
   trapRules: {
-    overrides: { obstacleClear: 0.6, pickupClear: 1.5, spawnClear: 2.0, trapClear: 3.0, maxRadius: 27 },
+    overrides: { obstacleClear: 0.3, pickupClear: 0.8, spawnClear: 1.0, trapClear: 2.0, maxRadius: 27.5 },
     exclusions: [],
     terrainClear: 0.5,
   },

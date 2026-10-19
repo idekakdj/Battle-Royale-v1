@@ -20,7 +20,7 @@ import { PICKUPS } from '../config/balance';
 import { el } from './dom';
 import { animalHeadSvg } from './icons';
 import { abilityGlyphSvg } from './abilityIcons';
-import { buffIconSvg, pickupIconSvg, serpentGlyphSvg, trapGlyphSvg } from './buffIcons';
+import { buffIconSvg, fallGlyphSvg, pickupIconSvg, serpentGlyphSvg, trapGlyphSvg } from './buffIcons';
 import { killCauseText } from './serpentHudModel';
 
 /** One kill-feed line: killer icon ▸ victim icon (BLUEPRINT §12). */
@@ -35,8 +35,9 @@ export interface KillFeedEntry {
    * Set when the arena (not a rival) finished the victim. The feed should then
    * show a trap glyph instead of the killer's head; `killerAnimal` is ignored.
    * v1.9: `'serpent'` = the Ocean Dome's sea serpent (serpent glyph + "was eaten by the Sea Serpent").
+   * v1.10: `'fall'` = a fatal drop off the Ocean Dome's upper platforms (falling glyph + "fell from the heights").
    */
-  cause?: 'trap' | 'serpent';
+  cause?: 'trap' | 'serpent' | 'fall';
   /** Optional trap flavour for the glyph (flame / spikes); omitted → combined glyph. */
   trapKind?: TrapKind;
   /** v1.5 online: the human killer's / victim's chosen name, shown next to the head icon (omitted for bots and offline). */
@@ -57,6 +58,12 @@ export interface SpectateTarget {
 const KILLFEED_TTL_MS = 4000;
 const CONTROLS_HINT_SIM_T = 10; // seconds of sim time before the hint fades
 const LOW_HP_FRAC = 0.3;
+/** v1.10 fall feedback: how long the edge flash / the floating number / the first-time hint stay up (ms). */
+const FALL_FLASH_MS = 750;
+const FALL_NUM_MS = 1300;
+const FALL_HINT_MS = 3600;
+/** The one-line hint shown the first time the local player takes fall damage in a match. */
+export const FALL_HINT_TEXT = 'Took the long way down — use the ramps';
 
 /** Buff icon presentation per {@link BuffState.kind} (glyphs in `buffIcons.ts`). */
 const BUFF_META: Record<BuffState['kind'], { label: string; good: boolean }> = {
@@ -107,6 +114,14 @@ export class HUD {
   private countdownEl!: HTMLElement;
   private hitmarkerEl!: HTMLElement;
   private vignetteEl!: HTMLElement;
+  /** v1.10 fall damage: red screen-edge flash, the floating "-50" and the first-time hint (all absolute, pointer-transparent). */
+  private fallFlashEl!: HTMLElement;
+  private fallNumEl!: HTMLElement;
+  private fallHintEl!: HTMLElement;
+  private fallFlashTimer: number | null = null;
+  private fallNumTimer: number | null = null;
+  private fallHintTimer: number | null = null;
+  private fallHintShown = false;
   private controlsHint!: HTMLElement;
   private spectateEl!: HTMLElement;
   private nameplate!: HTMLElement;
@@ -190,6 +205,9 @@ export class HUD {
     this.countdownEl = el('div', { class: 'gk-hud__countdown gk-display' });
     this.hitmarkerEl = el('div', { class: 'gk-hud__hitmarker', html: hitmarkerSvg() });
     this.vignetteEl = el('div', { class: 'gk-hud__vignette' });
+    this.fallFlashEl = el('div', { class: 'gk-hud__fall-flash' });
+    this.fallNumEl = el('div', { class: 'gk-hud__fall-num gk-display' });
+    this.fallHintEl = el('div', { class: 'gk-hud__fall-hint', text: FALL_HINT_TEXT, attrs: { 'aria-live': 'polite' } });
     this.controlsHint = el('div', { class: 'gk-hud__hint' }, [
       hintKey('WASD', 'Move'),
       hintKey('LMB', 'Attack'),
@@ -210,6 +228,7 @@ export class HUD {
 
     this.root = el('div', { class: 'gk-hud' }, [
       this.vignetteEl,
+      this.fallFlashEl,
       vitals,
       this.buffBar,
       abilities,
@@ -223,6 +242,8 @@ export class HUD {
       this.toastEl,
       this.ultHintEl,
       this.lockTagEl,
+      this.fallNumEl,
+      this.fallHintEl,
     ]);
     root.appendChild(this.root);
     // QA handle (e.g. `__gkHud.pickupToast('speed')` from the console).
@@ -237,6 +258,7 @@ export class HUD {
     this.lockTagOn = false;
     this.ultPreviewState = 'off';
     this.lastTerrainTag = null;
+    this.fallHintShown = false;
   }
 
   /**
@@ -255,8 +277,12 @@ export class HUD {
     if (this.toastTimer !== null) window.clearTimeout(this.toastTimer);
     if (this.ultHintTimer !== null) window.clearTimeout(this.ultHintTimer);
     if (this.ultShakeTimer !== null) window.clearTimeout(this.ultShakeTimer);
+    if (this.fallFlashTimer !== null) window.clearTimeout(this.fallFlashTimer);
+    if (this.fallNumTimer !== null) window.clearTimeout(this.fallNumTimer);
+    if (this.fallHintTimer !== null) window.clearTimeout(this.fallHintTimer);
     this.hitmarkerTimer = this.bloodlustTimer = this.countdownTimer = this.toastTimer = null;
     this.ultHintTimer = this.ultShakeTimer = null;
+    this.fallFlashTimer = this.fallNumTimer = this.fallHintTimer = null;
     this.root?.remove();
     this.root = null;
     const w = window as unknown as { __gkHud?: HUD };
@@ -375,15 +401,19 @@ export class HUD {
     if (entry.killerIsPlayer === true) row.classList.add('is-player-kill');
     if (entry.victimIsPlayer === true) row.classList.add('is-player-death');
     const serpent = entry.cause === 'serpent';
+    const fall = entry.cause === 'fall';
     const trap = entry.cause === 'trap';
     if (trap) row.classList.add('is-trap');
     if (serpent) row.classList.add('is-serpent');
-    const env = trap || serpent;
+    if (fall) row.classList.add('is-fall');
+    const env = trap || serpent || fall;
     const killer = serpent
       ? `<span class="gk-hud__kf-icon is-serpent" title="Sea Serpent">${serpentGlyphSvg()}</span>`
-      : trap
-        ? `<span class="gk-hud__kf-icon is-trap is-trap--${entry.trapKind ?? 'any'}" title="Arena trap">${trapGlyphSvg(entry.trapKind)}</span>`
-        : `<span class="gk-hud__kf-icon" style="color:${ANIMALS[entry.killerAnimal].accent}">${animalHeadSvg(entry.killerAnimal, 'gk-hud__kf-head')}</span>`;
+      : fall
+        ? `<span class="gk-hud__kf-icon is-fall" title="Fall">${fallGlyphSvg()}</span>`
+        : trap
+          ? `<span class="gk-hud__kf-icon is-trap is-trap--${entry.trapKind ?? 'any'}" title="Arena trap">${trapGlyphSvg(entry.trapKind)}</span>`
+          : `<span class="gk-hud__kf-icon" style="color:${ANIMALS[entry.killerAnimal].accent}">${animalHeadSvg(entry.killerAnimal, 'gk-hud__kf-head')}</span>`;
     const kName = !env && entry.killerName !== undefined ? `<span class="gk-hud__kf-name">${escapeHtml(entry.killerName)}</span>` : '';
     const vName = entry.victimName !== undefined ? `<span class="gk-hud__kf-name is-victim">${escapeHtml(entry.victimName)}</span>` : '';
     const causeText = killCauseText(entry.cause);
@@ -397,6 +427,38 @@ export class HUD {
       row.classList.add('is-fading');
       window.setTimeout(() => row.remove(), 450);
     }, KILLFEED_TTL_MS);
+  }
+
+  /**
+   * v1.10 Ocean Dome fall damage for the LOCAL player (the controller calls it on the `fall` event whose fighter is the player): a
+   * brief red flash around the screen edge, a floating "-50" (rises and fades) and — the first time in a match only — a one-line
+   * hint toward the ramps. Reuses the one-shot restart-the-animation pattern of the other HUD flashes (no new system).
+   * Returns true when the first-time hint was shown (so callers / tests can tell).
+   */
+  fallHit(damage: number): boolean {
+    if (this.root === null) return false;
+    this.fallNumEl.textContent = `-${Math.round(damage)}`;
+    this.restart(this.fallFlashEl);
+    this.restart(this.fallNumEl);
+    if (this.fallFlashTimer !== null) window.clearTimeout(this.fallFlashTimer);
+    if (this.fallNumTimer !== null) window.clearTimeout(this.fallNumTimer);
+    this.fallFlashTimer = window.setTimeout(() => this.fallFlashEl.classList.remove('is-active'), FALL_FLASH_MS);
+    this.fallNumTimer = window.setTimeout(() => this.fallNumEl.classList.remove('is-active'), FALL_NUM_MS);
+    const first = !this.fallHintShown;
+    if (first) {
+      this.fallHintShown = true;
+      this.restart(this.fallHintEl);
+      if (this.fallHintTimer !== null) window.clearTimeout(this.fallHintTimer);
+      this.fallHintTimer = window.setTimeout(() => this.fallHintEl.classList.remove('is-active'), FALL_HINT_MS);
+    }
+    return first;
+  }
+
+  /** Re-trigger a one-shot CSS animation class on `node` (remove, flush, add). */
+  private restart(node: HTMLElement): void {
+    node.classList.remove('is-active');
+    void node.offsetWidth;
+    node.classList.add('is-active');
   }
 
   /** Flash the Crowd's Bloodlust banner with the new damage multiplier. */

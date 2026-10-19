@@ -11,7 +11,7 @@
  * codec entry here is a COMPILE error; {@link eventTag} / {@link EVENT_TYPES} are derived from it.
  */
 
-import type { GameEvent, GameEventOf } from '../../core/types';
+import type { GameEvent, GameEventOf, SerpentTier } from '../../core/types';
 import { ByteReader, ByteWriter } from '../wire';
 import {
   ANIMAL_TABLE,
@@ -55,8 +55,17 @@ const step3 = (r: ByteReader): 0 | 1 | 2 => {
 };
 const f32 = readFiniteF32;
 
-/** `death` cause byte: 1 = sea serpent (v1.9). */
+/** `death` cause byte: 0 = none / trap, 1 = sea serpent (v1.9), 2 = fall damage (v1.10). */
 const DEATH_CAUSE_SERPENT = 1;
+const DEATH_CAUSE_FALL = 2;
+
+/**
+ * v1.10 TIER BIT: bit 7 of the tag byte of a sea-serpent event marks the HIGH serpent's event (`tier: 'high'`); clear = the low
+ * serpent's (no `tier` key, exactly the v1.9 event). Only the four serpent events may carry it (a stray bit elsewhere is corrupt).
+ * Every tag is < 128, so the bit is free.
+ */
+const TIER_HIGH_BIT = 0x80;
+const TIERED_EVENTS: ReadonlySet<string> = new Set(['serpentWarning', 'serpentStrike', 'serpentHit', 'serpentEnd']);
 
 /** Splash strength 0..1 is sent as one byte. */
 const STRENGTH_STEPS = 255;
@@ -100,24 +109,24 @@ export const EVENT_CODECS: { [K in Type]: EventCodec<K> } = {
     },
     read: (r) => ({ type: 'guardBreak', targetId: readOptId(r), pos: readVec3(r) }),
   },
-  // v1.9: a trailing cause byte (0 = none/trap, 1 = sea serpent); the decoded event has NO `cause` key when it is 0.
+  // v1.9: a trailing cause byte (0 = none/trap, 1 = sea serpent, v1.10: 2 = fall damage); the decoded event has NO `cause` key when it is 0.
   death: {
     tag: 4,
     write: (w, e) => {
       writeOptId(w, e.targetId);
       writeOptId(w, e.killerId);
       w.u8(Math.max(0, Math.min(255, e.placement)));
-      w.u8(e.cause === 'serpent' ? DEATH_CAUSE_SERPENT : 0);
+      w.u8(e.cause === 'serpent' ? DEATH_CAUSE_SERPENT : e.cause === 'fall' ? DEATH_CAUSE_FALL : 0);
     },
     read: (r) => {
       const targetId = readOptId(r);
       const killerId = readOptId(r);
       const placement = r.u8();
       const c = r.u8();
-      if (c > DEATH_CAUSE_SERPENT) throw new RangeError('bad death cause');
-      return c === DEATH_CAUSE_SERPENT
-        ? { type: 'death', targetId, killerId, placement, cause: 'serpent' }
-        : { type: 'death', targetId, killerId, placement };
+      if (c > DEATH_CAUSE_FALL) throw new RangeError('bad death cause');
+      if (c === DEATH_CAUSE_SERPENT) return { type: 'death', targetId, killerId, placement, cause: 'serpent' };
+      if (c === DEATH_CAUSE_FALL) return { type: 'death', targetId, killerId, placement, cause: 'fall' };
+      return { type: 'death', targetId, killerId, placement };
     },
   },
   ultimate: {
@@ -353,7 +362,8 @@ export const EVENT_CODECS: { [K in Type]: EventCodec<K> } = {
     },
     read: (r) => ({ type: 'splash', fighterId: readOptId(r), pos: readVec3(r), entering: bool(r), strength: r.u8() / STRENGTH_STEPS }),
   },
-  // v1.9 Ocean Dome sea serpent. warning: u16 angle (360 deg / 65536) · u16 warnS in ms (7 B incl. tag).
+  // v1.9 Ocean Dome sea serpent (v1.10: the four events of the HIGH serpent set the tier bit of their tag byte, see TIER_HIGH_BIT;
+  // the payloads are unchanged). warning: u16 angle (360 deg / 65536) · u16 warnS in ms (7 B incl. tag).
   serpentWarning: {
     tag: 23,
     write: (w, e) => {
@@ -384,6 +394,17 @@ export const EVENT_CODECS: { [K in Type]: EventCodec<K> } = {
     write: () => undefined,
     read: () => ({ type: 'serpentEnd' }),
   },
+  // v1.10 fall damage: fighter · u16 damage (hp removed, whole points) · u16 drop in cm · pos (12 B incl. tag).
+  fall: {
+    tag: 27,
+    write: (w, e) => {
+      writeOptId(w, e.fighterId);
+      w.u16(qU16(e.damage, 1));
+      w.u16(qU16(e.drop, Q.POS));
+      writeVec3(w, e.pos);
+    },
+    read: (r) => ({ type: 'fall', fighterId: readOptId(r), damage: r.u16(), drop: r.u16() / Q.POS, pos: readVec3(r) }),
+  },
 };
 
 /** All variant names, in tag order (derived from the exhaustive table). */
@@ -398,14 +419,21 @@ export function eventTag(type: Type): number {
 
 export function writeEvent(w: ByteWriter, e: GameEvent): void {
   const c = EVENT_CODECS[e.type] as unknown as EventCodec<Type>;
-  w.u8(c.tag);
+  const high = TIERED_EVENTS.has(e.type) && (e as { tier?: SerpentTier }).tier === 'high';
+  w.u8(c.tag | (high ? TIER_HIGH_BIT : 0));
   c.write(w, e as never);
 }
 
 export function readEvent(r: ByteReader): GameEvent {
-  const c = BY_TAG.get(r.u8());
+  const b = r.u8();
+  const c = BY_TAG.get(b & ~TIER_HIGH_BIT);
   if (c === undefined) throw new RangeError('unknown event tag');
-  return c.read(r) as GameEvent;
+  const e = c.read(r) as GameEvent;
+  if ((b & TIER_HIGH_BIT) !== 0) {
+    if (!TIERED_EVENTS.has(e.type)) throw new RangeError('tier bit on a non-serpent event');
+    (e as { tier?: SerpentTier }).tier = 'high';
+  }
+  return e;
 }
 
 // ── Batches ──────────────────────────────────────────────────────────────────

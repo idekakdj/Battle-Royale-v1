@@ -56,8 +56,9 @@ describe('arena registry', () => {
       expect(a.segments.every((o) => o.shape === 'segment')).toBe(true);
       expect(a.crates.every((o) => o.shape === 'aabb' && o.destructible && o.hp > 0)).toBe(true);
       expect(a.spawns).toHaveLength(10);
-      expect(a.pickupPads).toHaveLength(6);
-      expect(a.pickupPads.map((p) => p.id)).toEqual([0, 1, 2, 3, 4, 5]);
+      // 6 pads on the colosseum and the jungle; the Ocean Dome has 9 (v1.10: one more on each of its three upper platforms). Ids are the array index.
+      expect(a.pickupPads).toHaveLength(id === 'ocean' ? 9 : 6);
+      expect(a.pickupPads.map((p) => p.id)).toEqual(a.pickupPads.map((_, i) => i));
       for (const o of a.solids) expect(typeof o.kind).toBe('string');
     }
   });

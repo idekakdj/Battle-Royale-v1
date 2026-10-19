@@ -5,10 +5,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ARENA_IDS, type ArenaId } from '../../src/core/types';
-import { ARENAS } from '../../src/config/arenas';
+import { ARENAS, OCEAN_STACKS, OCEAN_UPPER_HEIGHT } from '../../src/config/arenas';
+import { serpentLaneBins } from '../../src/config/serpentLanes';
 import { ARENA_KEY, DEFAULT_ARENA, DIFFICULTY_KEY, loadArena, parseArena, saveArena } from '../../src/ui/storage';
 import { DifficultySelect, mapChoices, mapKeyTarget, stepArena } from '../../src/ui/DifficultySelect';
-import { arenaThumbSvg, mixHex } from '../../src/ui/mapThumb';
+import { UPPER_FROM_M, arenaThumbSvg, mixHex } from '../../src/ui/mapThumb';
 import { FakeDocument, FakeElement } from './fakeDom';
 
 function stubStorage(initial: Record<string, string> = {}): Map<string, string> {
@@ -301,19 +302,27 @@ describe('arena thumbnails (drawn from the arena data)', () => {
     expect((svg.match(/<rect /g) ?? []).length).toBe(j.crates.length);
   });
 
-  it('the ocean thumbnail shows the dome: both raised levels, all 9 ramps, the pads, coral + rock cover and the faint serpent strip', () => {
+  it('the ocean thumbnail shows the dome: every level, every ramp piece, the pads, coral + rock cover and both faint serpent strips', () => {
     const o = ARENAS.ocean;
     const svg = arenaThumbSvg(o);
     expect(svg).toContain('aria-hidden="true"');
-    expect(o.heightfield?.filter((p) => p.kind === 'ramp')).toHaveLength(9);
-    // 9 ramps = 9 rotated groups; the terrace is an annulus path (evenodd), the plateau a circle
-    expect((svg.match(/<g transform="translate\(/g) ?? []).length).toBe(9);
+    const hf = o.heightfield ?? [];
+    const ramps = hf.filter((p) => p.kind === 'ramp').length;
+    const flats = hf.filter((p) => p.kind === 'plateau').length; // the centre plateau + the upper towers
+    expect(ramps).toBe(18); // 5 seabed->terrace, 3 terrace->plateau, 3 causeways + 2 chords (two pieces each)
+    expect(flats).toBe(4); // the plateau + 3 towers
+    expect(o.pickupPads).toHaveLength(9);
+    // one rotated group per ramp piece; the terrace is an annulus path (evenodd), the plateau and the towers circles
+    expect((svg.match(/<g transform="translate\(/g) ?? []).length).toBe(ramps);
     expect((svg.match(/fill-rule="evenodd"/g) ?? []).length).toBe(1);
-    expect(svg).toContain('data-hint="serpent"');
+    // two strike-strip hints (low + high), each a rotated group with its bar and chevron
+    expect((svg.match(/data-hint="serpent"/g) ?? []).length).toBe(2);
+    expect(svg).toContain('data-tier="low"');
+    expect(svg).toContain('data-tier="high"');
     // each ramp is stepped from its low end's shade to its high end's: four slices + the outline
-    expect((svg.match(/<rect /g) ?? []).length).toBe(9 * 5 + o.crates.length + 1); // + the serpent strip
-    // every pad, plus ring + ground + plateau + every round blocker (coral / rock) — circles
-    expect((svg.match(/<circle /g) ?? []).length).toBe(2 + 1 + o.pickupPads.length + o.circles.length);
+    expect((svg.match(/<rect /g) ?? []).length).toBe(ramps * 5 + o.crates.length + 2); // + the two serpent strips
+    // every pad, plus ring + ground + plateau + towers + every round blocker (coral / rock) — circles
+    expect((svg.match(/<circle /g) ?? []).length).toBe(2 + flats + o.pickupPads.length + o.circles.length);
     expect(svg).toContain('#ff7a9a'); // coral pillars
     expect(svg).toContain('#8a98a6'); // rock outcrops
     // the other arenas keep their pictures: no ramps, no serpent hint
@@ -324,6 +333,56 @@ describe('arena thumbnails (drawn from the arena data)', () => {
       expect(t).not.toContain('evenodd');
     }
     expect(svg).not.toBe(arenaThumbSvg(ARENAS.jungle));
+  });
+
+  it('the upper towers get their own tone (>= 6 m), distinct from the plateau; the ramps that climb to them blend into it', () => {
+    const o = ARENAS.ocean;
+    expect(UPPER_FROM_M).toBeLessThanOrEqual(OCEAN_UPPER_HEIGHT);
+    expect(UPPER_FROM_M).toBeGreaterThan(3); // the plateau is not "upper"
+    const svg = arenaThumbSvg(o);
+    const towers = svg.match(/<circle [^>]*data-tier="upper"[^>]*\/>/g) ?? [];
+    expect(towers).toHaveLength(OCEAN_STACKS.length);
+    const fills = new Set(towers.map((t) => /fill="(#[0-9a-f]{6})"/.exec(t)?.[1]));
+    expect(fills.size).toBe(1); // all towers share the one tone
+    const upperFill = [...fills][0] as string;
+    // each tower is drawn at its real position and radius
+    for (const st of OCEAN_STACKS) {
+      expect(towers.some((t) => t.includes(`cx="${Math.round(st.x * 10) / 10}"`) && t.includes(`cy="${Math.round(st.z * 10) / 10}"`) && t.includes(`r="${st.radius}"`))).toBe(true);
+    }
+    // the plateau (3 m) is NOT in the tower tone, and no ordinary level is
+    const plateau = (svg.match(/<circle cx="0" cy="0" r="8"[^>]*\/>/g) ?? [])[0] ?? '';
+    expect(plateau).toContain('fill="#');
+    expect(plateau).not.toContain(upperFill);
+    expect(plateau).not.toContain('data-tier');
+    const plateauFill = /fill="(#[0-9a-f]{6})"/.exec(plateau)?.[1] ?? '#000000';
+    const rgb = (hex: string): number[] => [1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16));
+    // the ramps that climb above the plateau blend from its shade toward the tower tone (redder, less green than the plateau)
+    const ramps = svg.match(/<g transform="translate\([^>]*>.*?<\/g>/g) ?? [];
+    expect(ramps).toHaveLength(18);
+    const aboveThePlateau = ramps.filter((g) =>
+      [...g.matchAll(/fill="(#[0-9a-f]{6})"/g)].some((m) => rgb(m[1])[0] > rgb(plateauFill)[0] + 2 && rgb(m[1])[1] < rgb(plateauFill)[1]),
+    );
+    expect(aboveThePlateau).toHaveLength(10); // 3 causeways + 2 chords, two pieces each
+    // legible: the tower tone differs from the plateau shade and the cliff edge is darker than the fill
+    expect(upperFill).not.toBe(plateauFill);
+    expect(towers[0]).toMatch(/stroke="#3b1d73"/);
+  });
+
+  it('the serpent strip hints lie along lanes the serpents really use (low on a low bin, high over a tower)', () => {
+    const o = ARENAS.ocean;
+    const svg = arenaThumbSvg(o);
+    const bins = serpentLaneBins(o);
+    const angleOf = (tier: 'low' | 'high'): number => {
+      const m = new RegExp(String.raw`<g transform="rotate\(([-\d.]+)\)" data-hint="serpent" data-tier="${tier}"`).exec(svg);
+      expect(m, tier).not.toBeNull();
+      return Number(m?.[1]);
+    };
+    const low = angleOf('low');
+    const high = angleOf('high');
+    expect(bins.low).toContain(Math.floor(low));
+    expect(bins.high).toContain(Math.floor(high));
+    expect(Math.abs(low - 305)).toBeLessThan(25); // still up-right, clear of the player's seat at the bottom
+    expect(Math.abs(high - 180)).toBeLessThan(25); // points at the left-hand tower
   });
 
   it('the ocean thumbnail is deterministic and fits the same square as the other maps (viewBox = 2 x (wall + 2))', () => {

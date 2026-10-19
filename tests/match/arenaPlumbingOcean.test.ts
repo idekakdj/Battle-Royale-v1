@@ -55,9 +55,17 @@ describe('LocalSimDriver on the Ocean Dome', () => {
     }
     expect(warnTime).toBeGreaterThanOrEqual(2 - 1e-6); // live time: the 3-2-1 countdown does not count
     expect(warnTime).toBeLessThan(2.1);
-    expect(events.map((e) => e.type)).toEqual(['serpentWarning', 'serpentStrike', 'serpentEnd']);
+    // v1.10: the forced options apply to BOTH serpents of the Ocean Dome (low first, then the high one, whose events carry tier 'high')
+    const lanes = d.world.serpent?.lanes.length ?? 0;
+    expect(lanes).toBe(OCEAN_ARENA.hazards?.serpentSplitY !== undefined ? 2 : 1);
+    const once = (type: 'serpentWarning' | 'serpentStrike' | 'serpentEnd'): string[] => Array.from({ length: lanes }, () => type);
+    expect(events.map((e) => e.type)).toEqual([...once('serpentWarning'), ...once('serpentStrike'), ...once('serpentEnd')]);
     const warning = events[0];
-    if (warning.type === 'serpentWarning') expect(warning.warnS).toBeCloseTo(SERPENT.warnS, 6);
+    if (warning.type === 'serpentWarning') {
+      expect(warning.warnS).toBeCloseTo(SERPENT.warnS, 6);
+      expect('tier' in warning).toBe(false); // the low serpent's event is exactly the v1.9 one
+    }
+    if (lanes === 2) expect((events[1] as { tier?: string }).tier).toBe('high');
   });
 
   it('world.debugTriggerSerpent(angle) works on the driver\'s world (the QA console path)', () => {

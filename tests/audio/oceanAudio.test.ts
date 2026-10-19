@@ -1,14 +1,15 @@
 /**
- * Ocean Dome audio tests (v1.9 WP-O3), node-safe with a fake Web Audio graph: the serpent one-shot throttles, ambience start / stop,
- * combat ducking, and the AudioEngine mapping - the serpent events make sounds ONLY while the Ocean Dome is the arena, the
- * underwater bed replaces the crowd there, and the colosseum / jungle audio paths are unchanged.
+ * Ocean Dome audio tests (v1.9 WP-O3, v1.10 WP-H4), node-safe with a fake Web Audio graph: the serpent one-shot throttles (per tier), the
+ * high serpent's distinct variant, the fall thud + grunt and its rate limit, ambience start / stop, combat ducking, and the AudioEngine
+ * mapping - the serpent / fall events make sounds ONLY while the Ocean Dome is the arena, the underwater bed replaces the crowd there, and
+ * the colosseum / jungle audio paths are unchanged.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { JUNGLE_ARENA, OCEAN_ARENA } from '../../src/config/arenas';
 import { EventBus } from '../../src/core/EventBus';
 import { AudioEngine } from '../../src/audio/AudioEngine';
-import { OceanAudio, hitLevel } from '../../src/audio/ocean';
+import { OceanAudio, WARNING_VOICE, fallLevel, hitLevel } from '../../src/audio/ocean';
 import { VoiceManager, makeWhiteNoise, type SynthCtx } from '../../src/audio/synth';
 import { resetWaterActivity, setRenderArena, terrainAudio } from '../../src/render/arenaContext';
 
@@ -171,6 +172,86 @@ describe('OceanAudio', () => {
     oa.stop();
   });
 
+  it('the high serpent warns with its own variant: rising siren, higher growl, a ghost tone + chimes (more voices than the low one); the tiers rate-limit independently', () => {
+    expect(WARNING_VOICE.low.f0).toBeGreaterThan(WARNING_VOICE.low.f1); // the low klaxon falls
+    expect(WARNING_VOICE.high.f0).toBeLessThan(WARNING_VOICE.high.f1); // the high siren rises
+    expect(WARNING_VOICE.high.f0).toBeGreaterThan(WARNING_VOICE.low.f0); // and sits higher
+    expect(WARNING_VOICE.high.growl0).toBeGreaterThan(WARNING_VOICE.low.growl1); // the shriek starts above where the low growl ends
+    expect(WARNING_VOICE.high.pulses).toBeGreaterThan(WARNING_VOICE.low.pulses);
+    expect(WARNING_VOICE.high.type).not.toBe(WARNING_VOICE.low.type);
+    expect(WARNING_VOICE.high.stinger).toBe(true);
+    expect(WARNING_VOICE.low.stinger).toBe(false);
+    const { sc, ctx, created } = fakeSynth();
+    const oa = new OceanAudio(sc, () => listener);
+    oa.start();
+    const b0 = created();
+    oa.warning('low');
+    const low = created() - b0;
+    ctx.currentTime += 5;
+    const b1 = created();
+    oa.warning('high');
+    const high = created() - b1;
+    expect(low).toBe(3 + 1 + 1); // 3 klaxon pulses + growl + rumble
+    expect(high).toBe(4 + 1 + 1 + 1 + 3); // 4 pulses + growl + rumble + ghost tone + 3 chimes
+    expect(high).toBeGreaterThan(low);
+    // same instant: the OTHER tier is not blocked by this one, the same tier is
+    ctx.currentTime += 5;
+    const c0 = created();
+    oa.warning('low');
+    oa.warning('high');
+    expect(created() - c0).toBe(low + high);
+    const c1 = created();
+    oa.warning('low');
+    oa.warning('high');
+    expect(created()).toBe(c1);
+    // strikes too
+    ctx.currentTime += 5;
+    const s0 = created();
+    oa.strike('low');
+    const sLow = created() - s0;
+    const s1 = created();
+    oa.strike('high');
+    const sHigh = created() - s1;
+    expect(sLow).toBeGreaterThan(8);
+    expect(sHigh).toBe(sLow + 1); // + the overhead whoosh
+    const s2 = created();
+    oa.strike('low');
+    oa.strike('high');
+    expect(created()).toBe(s2);
+    oa.stop();
+  });
+
+  it('fall: a thud + crunch + grunt, silent when stopped / far, <= 3 per second and >= 120 ms apart', () => {
+    const { sc, ctx, created } = fakeSynth();
+    const oa = new OceanAudio(sc, () => listener);
+    oa.fall(1);
+    expect(created()).toBe(0); // not started
+    oa.start();
+    const n0 = created();
+    oa.fall(1);
+    expect(created() - n0).toBe(2); // the body (thud + crunch share a voice) + the grunt
+    const n1 = created();
+    oa.fall(0.001); // far away
+    expect(created()).toBe(n1);
+    const times: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      ctx.currentTime = 10 + i * 0.05; // 40 attempts over 2 s
+      const before = created();
+      oa.fall(1);
+      if (created() > before) times.push(ctx.currentTime);
+    }
+    expect(times.length).toBeGreaterThan(2);
+    for (let i = 0; i < times.length; i++) {
+      expect(times.filter((x) => x >= times[i] && x < times[i] + 1).length).toBeLessThanOrEqual(3);
+      if (i > 0) expect(times[i] - times[i - 1]).toBeGreaterThanOrEqual(0.12 - 1e-9);
+    }
+    expect(oa.combatLevel).toBeGreaterThan(0);
+    expect(fallLevel(2)).toBe(1);
+    expect(fallLevel(-1)).toBe(0);
+    expect(fallLevel(0.4)).toBe(0.4);
+    oa.stop();
+  });
+
   it('ducks and decays under combat', () => {
     const { sc } = fakeSynth();
     const oa = new OceanAudio(sc, () => listener);
@@ -218,8 +299,34 @@ describe('AudioEngine mapping', () => {
     bus.emit({ type: 'serpentEnd' });
     e.deathSfx();
     expect(flush).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenLastCalledWith('low'); // no tier on the event = the low serpent
+    expect(strike).toHaveBeenLastCalledWith('low');
     e.stopCrowd();
     expect(inner.oceanMod.running).toBe(false);
+    e.dispose();
+  });
+
+  it('ocean: tiered serpent events pick the high variant; a fall event plays the fall sound (attenuated by distance)', async () => {
+    setRenderArena(OCEAN_ARENA);
+    const e = await engine();
+    const bus = new EventBus();
+    e.attachBus(bus);
+    e.startCrowd();
+    const inner = e as unknown as Inner;
+    const warn = vi.spyOn(inner.oceanMod, 'warning');
+    const strike = vi.spyOn(inner.oceanMod, 'strike');
+    const fall = vi.spyOn(inner.oceanMod, 'fall');
+    bus.emit({ type: 'serpentWarning', angleDeg: 72, warnS: 1.1, tier: 'high' });
+    expect(warn).toHaveBeenLastCalledWith('high');
+    bus.emit({ type: 'serpentStrike', angleDeg: 72, tier: 'high' });
+    expect(strike).toHaveBeenLastCalledWith('high');
+    bus.emit({ type: 'serpentWarning', angleDeg: 200, warnS: 1.1 });
+    expect(warn).toHaveBeenLastCalledWith('low');
+    bus.emit({ type: 'fall', fighterId: 3, damage: 50, drop: 3.5, pos: { x: 4, y: 3, z: 4 } });
+    expect(fall).toHaveBeenCalledTimes(1);
+    expect(fall.mock.calls[0][0]).toBeGreaterThan(0);
+    expect(fall.mock.calls[0][0]).toBeLessThanOrEqual(1);
+    e.stopCrowd();
     e.dispose();
   });
 
@@ -235,12 +342,16 @@ describe('AudioEngine mapping', () => {
       const warn = vi.spyOn(inner.oceanMod, 'warning');
       const strike = vi.spyOn(inner.oceanMod, 'strike');
       const hit = vi.spyOn(inner.oceanMod, 'hit');
+      const fall = vi.spyOn(inner.oceanMod, 'fall');
       bus.emit({ type: 'serpentWarning', angleDeg: 40, warnS: 1.1 });
+      bus.emit({ type: 'serpentWarning', angleDeg: 40, warnS: 1.1, tier: 'high' });
       bus.emit({ type: 'serpentStrike', angleDeg: 40 });
       bus.emit({ type: 'serpentHit', fighterId: 2, damage: 300, pos: { x: 3, y: 0, z: 3 } });
+      bus.emit({ type: 'fall', fighterId: 2, damage: 50, drop: 3.5, pos: { x: 3, y: 0, z: 3 } });
       expect(warn).not.toHaveBeenCalled();
       expect(strike).not.toHaveBeenCalled();
       expect(hit).not.toHaveBeenCalled();
+      expect(fall).not.toHaveBeenCalled();
       if (arena === undefined) expect(inner.crowdMod.running).toBe(true);
       else expect(inner.jungleMod.running).toBe(true);
       e.stopCrowd();

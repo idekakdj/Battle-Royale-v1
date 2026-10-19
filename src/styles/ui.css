@@ -3269,44 +3269,82 @@
   color: #ff6a55;
 }
 
-/* ══ v1.9 Ocean Dome: sea-serpent warning HUD (ui/SerpentHud.ts) + kill-feed cause ═══════════════════════════ */
+/* ══ v1.9 / v1.10 Ocean Dome: sea-serpent warning HUD (ui/SerpentHud.ts, two lanes) + kill-feed causes + fall feedback ══════════ */
 .gk-serpent {
   position: absolute;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
   z-index: 4;
-  --serpent: #ff5a2e;
 }
 
-.gk-serpent[data-status='safe'] {
-  --serpent: #4fe3a8;
+/* Lane identities. LOW = the red-orange v1.9 serpent; HIGH = the violet/magenta one that hunts the upper platforms. */
+.gk-serpent__lane,
+.gk-serpent__card {
+  --lane: #ff5a2e;
+  --lane-lo: rgba(255, 74, 30, 0.55);
+  --lane-hi: rgba(255, 90, 40, 0.95);
+  --banner-top: rgba(168, 26, 16, 0.9);
+  --banner-bot: rgba(96, 10, 8, 0.9);
+  --banner-edge: #ff7a3c;
+  --banner-text: #fff1e2;
+  --banner-halo: rgba(255, 120, 60, 0.9);
+  --chip-lo: rgba(150, 18, 10, 0.88);
+  --chip-hi: rgba(236, 52, 28, 0.95);
 }
 
-.gk-serpent[data-status='after'] {
-  --serpent: #9db7c4;
+.gk-serpent__lane[data-tier='high'],
+.gk-serpent__card[data-tier='high'] {
+  --lane: #c36bff;
+  --lane-lo: rgba(176, 80, 255, 0.55);
+  --lane-hi: rgba(206, 120, 255, 0.95);
+  --banner-top: rgba(122, 38, 198, 0.92);
+  --banner-bot: rgba(54, 12, 110, 0.92);
+  --banner-edge: #d6a3ff;
+  --banner-text: #f8eeff;
+  --banner-halo: rgba(206, 130, 255, 0.9);
+  --chip-lo: rgba(96, 28, 160, 0.9);
+  --chip-hi: rgba(176, 70, 255, 0.95);
 }
 
-.gk-serpent[data-status='strike'] {
-  --serpent: #ff2a1c;
-}
-
-/* Centred banner: absolute, so it never moves anything; 1 s hold (pulse) then a 0.5 s fade (class toggled by JS). */
-.gk-serpent__banner {
+/* Banner + chip cards: one centred column near the top; a card only takes room while its banner or chip shows, so a lone lane sits
+   at the top and two lanes stack (LOW first). Nothing else in the HUD moves. */
+.gk-serpent__stack {
   position: absolute;
   top: 14%;
   left: 50%;
-  padding: 0.4rem 1.9rem;
-  font-size: clamp(1.7rem, 3.3vw, 2.7rem);
-  letter-spacing: 0.2em;
-  white-space: nowrap;
-  color: #fff1e2;
-  background: linear-gradient(180deg, rgba(168, 26, 16, 0.9), rgba(96, 10, 8, 0.9));
-  border: 2px solid #ff7a3c;
-  border-radius: 6px;
-  box-shadow: 0 0 30px rgba(255, 74, 30, 0.7), 0 0 0 1px rgba(0, 0, 0, 0.6);
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9), 0 0 16px rgba(255, 120, 60, 0.9);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  width: max-content;
+  max-width: 94vw;
   transform: translateX(-50%);
+}
+
+.gk-serpent__card {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+.gk-serpent__card.is-on {
+  display: flex;
+}
+
+/* Banner: ~1 s hold (pulse) then a 0.5 s fade (class toggled by JS). */
+.gk-serpent__banner {
+  padding: 0.4rem 1.7rem;
+  font-size: clamp(1.15rem, 2.6vw, 2.15rem);
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+  color: var(--banner-text);
+  background: linear-gradient(180deg, var(--banner-top), var(--banner-bot));
+  border: 2px solid var(--banner-edge);
+  border-radius: 6px;
+  box-shadow: 0 0 30px var(--lane-lo), 0 0 0 1px rgba(0, 0, 0, 0.6);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9), 0 0 16px var(--banner-halo);
   opacity: 0;
   visibility: hidden;
 }
@@ -3325,32 +3363,30 @@
 
 @keyframes gk-serpent-pulse {
   from {
-    transform: translateX(-50%) scale(1);
-    box-shadow: 0 0 22px rgba(255, 74, 30, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.6);
+    transform: scale(1);
+    box-shadow: 0 0 22px var(--lane-lo), 0 0 0 1px rgba(0, 0, 0, 0.6);
   }
   to {
-    transform: translateX(-50%) scale(1.05);
-    box-shadow: 0 0 42px rgba(255, 90, 40, 0.95), 0 0 0 1px rgba(0, 0, 0, 0.6);
+    transform: scale(1.05);
+    box-shadow: 0 0 42px var(--lane-hi), 0 0 0 1px rgba(0, 0, 0, 0.6);
   }
 }
 
-/* Status chip under the banner: MOVE! (inside the strip) / SAFE (clear). */
+/* Status chip hanging off the bottom edge of its lane's banner like a tab: MOVE! (inside that lane's strip, in its band) / SAFE
+   (clear, or the other band). */
 .gk-serpent__chip {
-  position: absolute;
-  top: calc(14% + 4.6rem);
-  left: 50%;
   min-width: 6.4rem;
+  margin-top: -2px;
   padding: 0.25rem 1.1rem;
   text-align: center;
   font-size: 1.15rem;
   letter-spacing: 0.22em;
   white-space: nowrap;
   color: #fff;
-  background: rgba(150, 18, 10, 0.88);
-  border: 2px solid var(--serpent);
-  border-radius: 4px;
+  background: var(--chip-lo);
+  border: 2px solid var(--lane);
+  border-radius: 0 0 6px 6px;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
-  transform: translateX(-50%);
   opacity: 0;
   visibility: hidden;
 }
@@ -3360,11 +3396,11 @@
   visibility: visible;
 }
 
-.gk-serpent[data-status='move'] .gk-serpent__chip {
+.gk-serpent__card[data-status='move'] .gk-serpent__chip {
   animation: gk-serpent-flash 0.3s ease-in-out infinite alternate;
 }
 
-.gk-serpent[data-status='safe'] .gk-serpent__chip {
+.gk-serpent__card[data-status='safe'] .gk-serpent__chip {
   color: #062a1c;
   background: rgba(79, 227, 168, 0.92);
   border-color: #c9ffe9;
@@ -3373,14 +3409,19 @@
 
 @keyframes gk-serpent-flash {
   from {
-    background: rgba(150, 18, 10, 0.88);
+    background: var(--chip-lo);
   }
   to {
-    background: rgba(236, 52, 28, 0.95);
+    background: var(--chip-hi);
   }
 }
 
 /* Rim marker (chevron pointing outward to where the strike line starts) + the thin line running inward from it. */
+.gk-serpent__lane {
+  position: absolute;
+  inset: 0;
+}
+
 .gk-serpent__marker,
 .gk-serpent__line {
   position: absolute;
@@ -3406,13 +3447,21 @@
   top: -30px;
   width: 60px;
   height: 60px;
-  color: var(--serpent);
-  filter: drop-shadow(0 0 8px var(--serpent));
+  color: var(--lane);
+  filter: drop-shadow(0 0 8px var(--lane));
 }
 
-.gk-serpent[data-status='move'] .gk-serpent__svg,
-.gk-serpent[data-status='strike'] .gk-serpent__svg {
+.gk-serpent__lane[data-status='move'] .gk-serpent__svg,
+.gk-serpent__lane[data-status='strike'] .gk-serpent__svg {
   animation: gk-serpent-chev 0.3s ease-in-out infinite alternate;
+}
+
+.gk-serpent__lane[data-status='safe'] .gk-serpent__svg {
+  opacity: 0.8;
+}
+
+.gk-serpent__lane[data-status='after'] .gk-serpent__svg {
+  opacity: 0.6;
 }
 
 @keyframes gk-serpent-chev {
@@ -3429,19 +3478,37 @@
   width: 3px;
   margin-left: -1.5px;
   transform-origin: 50% 0;
-  background: linear-gradient(to bottom, var(--serpent), rgba(255, 255, 255, 0));
-  box-shadow: 0 0 8px var(--serpent);
+  background: linear-gradient(to bottom, var(--lane), rgba(255, 255, 255, 0));
+  box-shadow: 0 0 8px var(--lane);
   border-radius: 2px;
   opacity: 0.9;
 }
 
-.gk-hud.is-spectating .gk-serpent__marker,
-.gk-hud.is-spectating .gk-serpent__line,
+/* A lane that cannot hurt the band the player stands in (a high strike while on the plateau, a low one on a tower top): dimmed. */
+.gk-serpent__lane.is-off-band .gk-serpent__svg {
+  opacity: 0.42;
+  animation: none;
+}
+
+.gk-serpent__lane.is-off-band .gk-serpent__line {
+  opacity: 0.3;
+}
+
+.gk-hud.is-spectating .gk-serpent__lane,
 .gk-hud.is-spectating .gk-serpent__chip {
   display: none;
 }
 
-/* Kill feed: "was eaten by the Sea Serpent" (v1.9). */
+@media (max-width: 560px) {
+  .gk-serpent__banner {
+    max-width: 92vw;
+    white-space: normal;
+    text-align: center;
+    letter-spacing: 0.08em;
+  }
+}
+
+/* Kill feed: "was eaten by the Sea Serpent" (v1.9), "fell from the heights" (v1.10). */
 .gk-hud__kf-row.is-serpent {
   border-color: rgba(60, 200, 190, 0.55);
 }
@@ -3449,6 +3516,19 @@
 .gk-hud__kf-icon.is-serpent {
   color: #46e0c2;
   filter: drop-shadow(0 0 4px rgba(40, 220, 190, 0.7));
+}
+
+.gk-hud__kf-row.is-fall {
+  border-color: rgba(255, 150, 80, 0.55);
+}
+
+.gk-hud__kf-icon.is-fall {
+  color: #ffb36b;
+  filter: drop-shadow(0 0 4px rgba(255, 140, 60, 0.7));
+}
+
+.gk-hud__kf-row.is-fall .gk-hud__kf-cause {
+  color: #ffdcbc;
 }
 
 .gk-hud__kf-cause {
@@ -3460,11 +3540,127 @@
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
+/* v1.10 fall damage (local player): red screen-edge flash, a floating "-50" and a first-time hint (HUD.fallHit). */
+.gk-hud__fall-flash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 150px 46px rgba(230, 28, 18, 0.9);
+}
+
+.gk-hud__fall-flash.is-active {
+  animation: gk-fall-flash 0.75s ease-out forwards;
+}
+
+@keyframes gk-fall-flash {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.gk-hud__fall-num {
+  position: absolute;
+  left: 50%;
+  bottom: 34%;
+  font-size: clamp(2.6rem, 5vw, 4.2rem);
+  letter-spacing: 0.04em;
+  color: #ff4a3a;
+  text-shadow: 0 0 18px rgba(255, 60, 40, 0.85), 0 3px 4px #000;
+  opacity: 0;
+  transform: translate(-50%, 0);
+  pointer-events: none;
+}
+
+.gk-hud__fall-num.is-active {
+  animation: gk-fall-num 1.3s ease-out forwards;
+}
+
+@keyframes gk-fall-num {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 18px) scale(0.6);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1.18);
+  }
+  26% {
+    opacity: 1;
+    transform: translate(-50%, -8px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -76px) scale(1);
+  }
+}
+
+.gk-hud__fall-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 27%;
+  max-width: 92vw;
+  padding: 0.4rem 1.1rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: #ffe9d2;
+  background: rgba(40, 10, 8, 0.8);
+  border: 1px solid rgba(255, 120, 80, 0.6);
+  border-radius: 999px;
+  box-shadow: 0 0 18px rgba(255, 70, 40, 0.3);
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  pointer-events: none;
+}
+
+.gk-hud__fall-hint.is-active {
+  animation: gk-fall-hint 3.6s ease-out forwards;
+}
+
+@keyframes gk-fall-hint {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  8% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  86% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 0);
+  }
+}
+
+.gk-hud.is-spectating .gk-hud__fall-flash,
+.gk-hud.is-spectating .gk-hud__fall-num,
+.gk-hud.is-spectating .gk-hud__fall-hint {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .gk-serpent__banner.is-hold,
-  .gk-serpent[data-status='move'] .gk-serpent__chip,
-  .gk-serpent[data-status='move'] .gk-serpent__svg,
-  .gk-serpent[data-status='strike'] .gk-serpent__svg {
+  .gk-serpent__card[data-status='move'] .gk-serpent__chip,
+  .gk-serpent__lane[data-status='move'] .gk-serpent__svg,
+  .gk-serpent__lane[data-status='strike'] .gk-serpent__svg {
     animation: none;
+  }
+  .gk-hud__fall-flash.is-active {
+    animation: none;
+    opacity: 0.7;
+  }
+  .gk-hud__fall-num.is-active,
+  .gk-hud__fall-hint.is-active {
+    animation: none;
+    opacity: 1;
   }
 }

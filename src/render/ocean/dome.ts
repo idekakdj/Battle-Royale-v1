@@ -4,6 +4,9 @@
  * rib structure (24 meridian ribs + latitude hoops + an apex hub); plus the light from the surface above: moving GOD-RAY shafts, a
  * shimmering surface plane overhead and the drifting MARINE SNOW outside.
  *
+ * v1.10: TWO independent breaches (the low and the high serpent): uBreach/uCrack/uHole/uShudder/uFlash and the same set suffixed 2
+ * (violet-tinted cracks / flash / alarm), so both serpents can shatter the glass at different angles and heights at the same time.
+ *
  * The glass NEVER blocks the third-person camera: the camera rig keeps the eye inside `wall - 0.95` of the centre (see CameraRig's
  * wall pull-in), the dome starts 3 m beyond that, is single-sided (we only ever see its inside), transparent and does not write depth.
  *
@@ -23,6 +26,8 @@ const GLASS_VERT = /* glsl */ `
 uniform float uTime;
 uniform vec3 uBreach;
 uniform float uShudder;
+uniform vec3 uBreach2;
+uniform float uShudder2;
 uniform vec2 uDome;
 varying vec3 vP;
 varying vec3 vWN;
@@ -31,8 +36,11 @@ void main() {
   vP = position;
   vec3 p = position;
   // Shudder: the dome flexes (a standing wave that is strongest near the breach side).
-  float near = max(dot(normalize(position + vec3(0.0001)), uBreach), 0.0);
-  p *= 1.0 + uShudder * 0.0035 * sin(uTime * 46.0 + position.y * 17.0 + position.x * 11.0) * (0.35 + near);
+  vec3 pn0 = normalize(position + vec3(0.0001));
+  float near = max(dot(pn0, uBreach), 0.0);
+  float near2 = max(dot(pn0, uBreach2), 0.0);
+  float wob = sin(uTime * 46.0 + position.y * 17.0 + position.x * 11.0);
+  p *= 1.0 + uShudder * 0.0035 * wob * (0.35 + near) + uShudder2 * 0.0035 * wob * (0.35 + near2);
   vec4 w = modelMatrix * vec4(p * vec3(uDome.x, uDome.y, uDome.x), 1.0);
   vWPos = w.xyz;
   vWN = normalize(vec3(position.x / uDome.x, position.y / uDome.y, position.z / uDome.x));
@@ -50,6 +58,12 @@ uniform float uFlash;
 uniform vec2 uDome;
 uniform vec3 uSun;
 uniform float uAlarm;
+uniform vec3 uBreach2;
+uniform float uCrack2;
+uniform float uHole2;
+uniform float uShudder2;
+uniform float uFlash2;
+uniform float uAlarm2;
 varying vec3 vP;
 varying vec3 vWN;
 varying vec3 vWPos;
@@ -82,6 +96,35 @@ float vEdge(vec2 x) {
   return md;
 }
 
+// One breach: shatter cracks + a hole where a head passed (B = the breach direction on the unit dome, tint = crack glow colour).
+void breachFx(vec3 B, float crack, float hole, vec3 tint, inout float alpha, inout vec3 col) {
+  float nearB = dot(normalize(vP), B);
+  if ((crack > 0.001 || hole > 0.001) && nearB > 0.2) {
+    vec3 e1 = normalize(cross(vec3(0.0, 1.0, 0.0), B));
+    vec3 e2 = cross(B, e1);
+    vec3 pn = normalize(vP);
+    vec2 xy = vec2(dot(pn, e1), dot(pn, e2)) * uDome.x;
+    float dist = length(xy);
+    float ang = atan(xy.y, xy.x);
+    float jag = 0.82 + 0.3 * h22(vec2(floor(ang * 5.0), 3.0)).x + 0.12 * sin(ang * 23.0);
+    float holeR = 2.9 * hole * jag;
+    if (dist < holeR) discard;
+    float crackR = 13.0 * (0.35 + 0.65 * crack);
+    if (dist < crackR) {
+      vec2 q = vec2(log(dist + 0.6) * 2.6, ang * 2.3);
+      float ed = vEdge(q);
+      float line = 1.0 - smoothstep(0.0, 0.07, ed);
+      float fade = (1.0 - dist / crackR);
+      float rim = (1.0 - smoothstep(holeR, holeR + 0.55, dist)) * hole;
+      float strength = crack * (line * fade * 1.0 + rim * 0.9);
+      alpha = max(alpha, strength * 0.95);
+      col += tint * strength * 1.3;
+      // faint milky fracture tint in the cell interiors
+      alpha += crack * fade * 0.08;
+    }
+  }
+}
+
 void main() {
   vec3 n = normalize(vWN);
   vec3 v = normalize(cameraPosition - vWPos);
@@ -104,37 +147,20 @@ void main() {
   vec3 col = mix(vec3(0.55, 0.88, 1.0), vec3(0.85, 1.0, 1.0), fres) * (0.55 + 0.7 * fres);
   col += vec3(0.9, 1.0, 1.0) * sunG * 2.0;
   col += vec3(1.2, 0.25, 0.1) * uAlarm * (0.05 + 0.25 * fres);
+  col += vec3(0.85, 0.2, 1.3) * uAlarm2 * (0.05 + 0.25 * fres);
   // shudder shimmer
-  alpha += uShudder * 0.06 * (0.5 + 0.5 * sin(vP.y * 55.0 - uTime * 40.0)) * (0.3 + max(dot(normalize(vP), uBreach), 0.0));
+  vec3 pnv = normalize(vP);
+  float shim = 0.5 + 0.5 * sin(vP.y * 55.0 - uTime * 40.0);
+  alpha += uShudder * 0.06 * shim * (0.3 + max(dot(pnv, uBreach), 0.0));
+  alpha += uShudder2 * 0.06 * shim * (0.3 + max(dot(pnv, uBreach2), 0.0));
 
-  // Breach: shatter cracks + a hole where the head passed.
-  float nearB = dot(normalize(vP), uBreach);
-  if ((uCrack > 0.001 || uHole > 0.001) && nearB > 0.2) {
-    vec3 e1 = normalize(cross(vec3(0.0, 1.0, 0.0), uBreach));
-    vec3 e2 = cross(uBreach, e1);
-    vec3 pn = normalize(vP);
-    vec2 xy = vec2(dot(pn, e1), dot(pn, e2)) * uDome.x;
-    float dist = length(xy);
-    float ang = atan(xy.y, xy.x);
-    float jag = 0.82 + 0.3 * h22(vec2(floor(ang * 5.0), 3.0)).x + 0.12 * sin(ang * 23.0);
-    float holeR = 2.9 * uHole * jag;
-    if (dist < holeR) discard;
-    float crackR = 13.0 * (0.35 + 0.65 * uCrack);
-    if (dist < crackR) {
-      vec2 q = vec2(log(dist + 0.6) * 2.6, ang * 2.3);
-      float ed = vEdge(q);
-      float line = 1.0 - smoothstep(0.0, 0.07, ed);
-      float fade = (1.0 - dist / crackR);
-      float rim = (1.0 - smoothstep(holeR, holeR + 0.55, dist)) * uHole;
-      float strength = uCrack * (line * fade * 1.0 + rim * 0.9);
-      alpha = max(alpha, strength * 0.95);
-      col += vec3(0.9, 1.2, 1.3) * strength * 1.3;
-      // faint milky fracture tint in the cell interiors
-      alpha += uCrack * fade * 0.08;
-    }
-  }
+  // Breaches: shatter cracks + a hole where a head passed (the low serpent's, then the high one's).
+  breachFx(uBreach, uCrack, uHole, vec3(0.9, 1.2, 1.3), alpha, col);
+  breachFx(uBreach2, uCrack2, uHole2, vec3(1.15, 0.85, 1.6), alpha, col);
   alpha += uFlash * 0.22;
   col += vec3(1.0) * uFlash * 0.6;
+  alpha += uFlash2 * 0.22;
+  col += vec3(0.85, 0.6, 1.0) * uFlash2 * 0.6;
   gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -151,6 +177,13 @@ export interface DomeUniforms {
   uDome: { value: THREE.Vector2 };
   uSun: { value: THREE.Vector3 };
   uAlarm: { value: number };
+  /** The HIGH serpent's breach (same meaning as the unsuffixed set). */
+  uBreach2: { value: THREE.Vector3 };
+  uCrack2: { value: number };
+  uHole2: { value: number };
+  uShudder2: { value: number };
+  uFlash2: { value: number };
+  uAlarm2: { value: number };
 }
 
 export class DomeGlass {
@@ -169,6 +202,12 @@ export class DomeGlass {
       uDome: shared.uDome,
       uSun: { value: sun.clone().normalize() },
       uAlarm: shared.uAlarm,
+      uBreach2: { value: new THREE.Vector3(-1, 0.3, 0).normalize() },
+      uCrack2: { value: 0 },
+      uHole2: { value: 0 },
+      uShudder2: { value: 0 },
+      uFlash2: { value: 0 },
+      uAlarm2: shared.uAlarmHigh,
     };
     this.mat = new THREE.ShaderMaterial({
       uniforms: this.uniforms as unknown as { [k: string]: THREE.IUniform },

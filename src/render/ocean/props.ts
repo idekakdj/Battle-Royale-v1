@@ -10,7 +10,7 @@ import type { ArenaCircle, ArenaDef, ArenaSegment } from '../../config/arenas';
 import { arenaGroundHeight } from '../../config/arenas';
 import { TAU } from '../../core/math';
 import { VGeo, composeMat, hash2, mix, rgb, smoothstep, type VertexColorFn } from '../jungle/vgeo';
-import { GLOW } from './terrain';
+import { GLOW, arenaTowers, inSpan, towerMouths } from './terrain';
 
 type RGB = [number, number, number];
 
@@ -299,6 +299,69 @@ export function addPad(vg: VGeo, glow: VGeo, x: number, y: number, z: number, se
   }
 }
 
+// ── Tower crowns ─────────────────────────────────────────────────────────────
+
+/** A sea-stack's top for the crown: where it stands and how high. */
+export interface CrownSite {
+  x: number;
+  z: number;
+  radius: number;
+  height: number;
+}
+
+/**
+ * A coral CROWN on a tower's rim (v1.10): small clumps just outside the parapet (they straddle the cliff's lip, rising ~0.3 m above it:
+ * decoration, never on the walkable disc) and a few taller leaning spires, plus drooping strands down the cliff face. Skips the ramp
+ * mouths. `spans` = the ramp mouths (see `towerMouths`). Returns the number of clumps placed.
+ */
+export function addTowerCrown(vg: VGeo, glow: VGeo, t: CrownSite, spans: ReadonlyArray<[number, number]>, index: number): number {
+  const seed = index * 17 + 3;
+  const n = 18;
+  let count = 0;
+  for (let i = 0; i < n; i++) {
+    const a = ((i + hash2(i, seed) * 0.6) / n) * TAU;
+    if (inSpan(a, spans, 0.1)) continue;
+    const hue = Math.floor(hash2(i + seed, 7) * P.coral.length);
+    const col = P.coral[hue];
+    const tip = P.coralTip[hue];
+    const big = i % 5 === 2;
+    const rr = t.radius + (big ? 0.34 : 0.1);
+    const bx = t.x + Math.cos(a) * rr;
+    const bz = t.z + Math.sin(a) * rr;
+    const y0 = t.height - (big ? 0.55 : 0.3);
+    const foot = lumpGeometry(seed + i, 1, 0.25);
+    vg.add(foot, composeMat(bx, y0 + 0.12, bz, 0, a * 3, 0, big ? 0.46 : 0.3, big ? 0.3 : 0.2, big ? 0.46 : 0.3), rockColor(col, seed + i));
+    foot.dispose();
+    const nf = big ? 5 : 3;
+    for (let k = 0; k < nf; k++) {
+      const ka = a + (k - (nf - 1) / 2) * 0.55 + (hash2(k, i + seed) - 0.5) * 0.3;
+      // fingers lean OUTWARD (away from the walkable disc) and up
+      const tilt = 0.3 + hash2(i, k + seed) * 0.5;
+      const dir = new THREE.Vector3(Math.cos(ka) * Math.sin(tilt) * 0.8 + Math.cos(a) * 0.35, Math.cos(tilt), Math.sin(ka) * Math.sin(tilt) * 0.8 + Math.sin(a) * 0.35).normalize();
+      const len = big ? 0.75 + hash2(k, i) * 0.55 : 0.28 + hash2(k, i) * 0.26;
+      const from = new THREE.Vector3(bx, y0 + 0.2, bz);
+      addBranch(vg, from, dir, len, big ? 0.09 : 0.06, big ? 0.045 : 0.03, solid(col, 0.2, k));
+      const end = from.clone().addScaledVector(dir, len);
+      const nodule = new THREE.IcosahedronGeometry(big ? 0.075 : 0.05, 0);
+      glow.add(nodule, new THREE.Matrix4().makeTranslation(end.x, end.y, end.z), [tip[0] * 1.7, tip[1] * 1.7, tip[2] * 1.7]);
+      nodule.dispose();
+      if (big) {
+        const d2 = new THREE.Vector3(dir.x + (hash2(k, seed) - 0.5) * 0.9, 0.9, dir.z + (hash2(seed, k) - 0.5) * 0.9).normalize();
+        addBranch(vg, end, d2, len * 0.45, 0.04, 0.025, solid(tip, 0.15, k));
+      }
+    }
+    count++;
+    // a strand drooping down the cliff face below a few clumps
+    if (i % 3 === 0) {
+      const sx = t.x + Math.cos(a) * (t.radius + 0.04);
+      const sz = t.z + Math.sin(a) * (t.radius + 0.04);
+      const dir = new THREE.Vector3(Math.cos(a) * 0.35, -0.94, Math.sin(a) * 0.35).normalize();
+      addBranch(vg, new THREE.Vector3(sx, t.height - 0.2, sz), dir, 0.9 + hash2(i, 5) * 0.5, 0.05, 0.02, solid(P.coral[(hue + 2) % P.coral.length], 0.2, i));
+    }
+  }
+  return count;
+}
+
 // ── Crates ───────────────────────────────────────────────────────────────────
 
 /** One sea-crate (1 m cube, origin at its CENTRE) as a single vertex-coloured geometry. */
@@ -352,13 +415,13 @@ export function buildPlankGeometry(): THREE.BufferGeometry {
 export interface PropsGeometry {
   main: THREE.BufferGeometry;
   glow: THREE.BufferGeometry;
-  stats: { coral: number; rocks: number; arches: number; pads: number };
+  stats: { coral: number; rocks: number; arches: number; pads: number; crowns: number };
 }
 
 export function buildOceanProps(arena: ArenaDef): PropsGeometry {
   const vg = new VGeo();
   const glow = new VGeo();
-  const stats = { coral: 0, rocks: 0, arches: 0, pads: 0 };
+  const stats = { coral: 0, rocks: 0, arches: 0, pads: 0, crowns: 0 };
   for (const c of arena.circles) {
     if (c.kind === 'coral') {
       addCoralPillar(vg, glow, c);
@@ -377,6 +440,10 @@ export function buildOceanProps(arena: ArenaDef): PropsGeometry {
   arena.pickupPads.forEach((pad, i) => {
     addPad(vg, glow, pad.x, arenaGroundHeight(arena, pad.x, pad.z), pad.z, i + 1);
     stats.pads++;
+  });
+  arenaTowers(arena).forEach((t, i) => {
+    addTowerCrown(vg, glow, t, towerMouths(arena, t), i);
+    stats.crowns++;
   });
   return { main: vg.build(), glow: glow.build(), stats };
 }

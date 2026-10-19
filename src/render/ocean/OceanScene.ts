@@ -1,15 +1,18 @@
 /**
  * OceanScene (v1.9, WP-O3) - the Ocean Dome, built procedurally and ENTIRELY from the arena's `ArenaDef` data:
  *
- *  - the SEABED floor (sand ripples + caustics inside, dunes outside), the THREE LEVELS from `heightfield` (terrace ring, plateau,
- *    nine ramps with kerbs + glowing coral inlays, cliff faces), coral pillars / rock outcrops / arches at their collider positions on
- *    their `baseY`, sea-crates (same destruction hooks as the other arenas), the six pickup pads on their levels,
+ *  - the SEABED floor (sand ripples + caustics inside, dunes outside), the LEVELS from `heightfield` (terrace ring, plateau, the level
+ *    ramps with kerbs + glowing coral inlays, cliff faces and, since v1.10, the three sea-stack TOWERS with their two-piece climbs and
+ *    coral crowns), coral pillars / rock outcrops / arches at their collider positions on their `baseY`, sea-crates (same destruction
+ *    hooks as the other arenas), the pickup pads on their own levels (the tower tops included),
  *  - the GLASS DOME (fresnel hemisphere, panel seams, metal base ring, 24 ribs + hoops, apex hub), god-ray shafts and a shimmering
  *    surface overhead, marine snow outside,
  *  - the OCEAN BEYOND: kelp forest, coral reef ring, a far shipwreck, fish schools, sharks, whales, mantas, turtles, jellyfish
  *    (GPU-animated, deterministic - see `life.ts`),
- *  - the SEA-SERPENT set piece (`serpentState` / `serpentModel` / `serpentFx`): driven each frame by `setSnapshot(snapshot)` ->
- *    `snapshot.serpent` (persistent state, rollback / late-join safe); `onEvent` only fires the one-shot FX (shards, splash, hit flash).
+ *  - the SEA-SERPENT set pieces (`serpentState` / `serpentModel` / `serpentFx`): TWO of them since v1.10 - the LOW serpent driven by
+ *    `snapshot.serpent`, the HIGH serpent (violet, flies over the tower tops) driven ONLY by `snapshot.serpentHigh` - each with its own
+ *    glass breach, strip, model and FX pools, both able to run at once (persistent state, rollback / late-join safe); `onEvent` only fires
+ *    the one-shot FX (shards, splash, hit flash; events with `tier: 'high'` go to the high serpent) and the FALL burst (`fall` event).
  *
  * Public surface = `ArenaScene` (render/arenaScene.ts) + the two optional hooks `setSnapshot` / `onEvent`. Create it through
  * `createArenaScene(sceneManager, arenaDef)`.
@@ -19,7 +22,7 @@ import * as THREE from 'three';
 import type { ArenaDef } from '../../config/arenas';
 import { arenaGroundHeight } from '../../config/arenas';
 import { mulberry32, TAU } from '../../core/math';
-import type { GameEvent, SerpentState, WorldSnapshot } from '../../core/types';
+import type { GameEvent, SerpentState, SerpentTier, WorldSnapshot } from '../../core/types';
 import { SERPENT } from '../../config/serpent';
 import type { ArenaScene, PickupKind } from '../arenaScene';
 import type { SceneManager } from '../SceneManager';
@@ -31,9 +34,10 @@ import { DomeGlass, MarineSnow, OceanRays, SurfacePlane, buildDomeFrame, frameMa
 import { SeaLife, type SeaLifeStats } from './life';
 import { createShared, patchLit, type OceanShared } from './materials';
 import { buildOceanProps, buildPlankGeometry, buildSeaCrateGeometry } from './props';
+import { FallFx } from './fallFx';
 import { SerpentFx } from './serpentFx';
 import { SerpentModel } from './serpentModel';
-import { EXIT_S, blank, serpentVisualState, type SerpentVisual } from './serpentState';
+import { EXIT_S, blank, breachHeight, serpentVisualState, type SerpentVisual } from './serpentState';
 import { DOME_HEIGHT, buildLevelsGeometry, buildSeabedGeometry, domeRadius } from './terrain';
 
 const PICKUP_KINDS: readonly PickupKind[] = ['heal', 'speed', 'rage'];
@@ -93,9 +97,29 @@ export interface OceanStats {
   arches: number;
   pads: number;
   crates: number;
+  /** Ramp PIECES (a two-piece tower climb counts twice). */
   ramps: number;
+  /** Ramps that arrive at a tower (3 causeways + 2 chords). */
+  climbs: number;
+  /** The upper-tier towers and their coral crowns. */
+  towers: number;
+  crowns: number;
   bulbs: number;
   life: SeaLifeStats;
+}
+
+/** One sea serpent's scene state (the low and the high one run the same machinery on their own block / visual / pools). */
+interface Lane {
+  tier: SerpentTier;
+  block: Pick<SerpentState, 'phase' | 'angleDeg' | 't'> | null;
+  alpha: number;
+  visual: SerpentVisual;
+  exitT: number;
+  dirty: boolean;
+  model: SerpentModel;
+  fx: SerpentFx;
+  /** The camera shake (m) this serpent asks for this frame. */
+  shake: number;
 }
 
 export class OceanScene implements ArenaScene {
@@ -119,8 +143,14 @@ export class OceanScene implements ArenaScene {
   private readonly surface: SurfacePlane;
   private readonly snow: MarineSnow;
   private readonly life: SeaLife;
+  /** The LOW serpent (v1.9). */
   readonly serpentModel: SerpentModel;
   readonly serpentFx: SerpentFx;
+  /** The HIGH serpent (v1.10): own model, FX and glass breach, driven by `snapshot.serpentHigh`. */
+  readonly serpentModelHigh: SerpentModel;
+  readonly serpentFxHigh: SerpentFx;
+  /** The fall-damage impact burst. */
+  readonly fallFx: FallFx;
   private readonly beacons: PickupBeacons;
   private readonly stats: Omit<OceanStats, 'life'>;
 
@@ -144,13 +174,10 @@ export class OceanScene implements ArenaScene {
   private focusX = 0;
   private focusZ = 0;
   private hasFocus = false;
-  private block: Pick<SerpentState, 'phase' | 'angleDeg' | 't'> | null = null;
-  private blockAlpha = 1;
-  private readonly visual: SerpentVisual = blank();
-  private exitT = -1;
+  private readonly lanes: Record<SerpentTier, Lane>;
   private hitShake = 0;
+  private fallShake = 0;
   private strikeKick = 0;
-  private visualDirty = false;
 
   constructor(sceneManager: SceneManager, arena: ArenaDef) {
     this.arena = arena;
@@ -262,16 +289,26 @@ export class OceanScene implements ArenaScene {
     this.root.add(this.life.root);
 
     // ── The serpent ──
-    this.serpentModel = new SerpentModel(shared);
+    this.serpentModel = new SerpentModel(shared, 'low');
     this.root.add(this.serpentModel.root);
-    this.serpentFx = new SerpentFx(shared, arena, centreY);
+    this.serpentFx = new SerpentFx(shared, arena, centreY, 'low');
     this.root.add(this.serpentFx.root);
+    this.serpentModelHigh = new SerpentModel(shared, 'high');
+    this.root.add(this.serpentModelHigh.root);
+    this.serpentFxHigh = new SerpentFx(shared, arena, centreY, 'high');
+    this.root.add(this.serpentFxHigh.root);
+    this.lanes = {
+      low: { tier: 'low', block: null, alpha: 1, visual: blank('low'), exitT: -1, dirty: false, model: this.serpentModel, fx: this.serpentFx, shake: 0 },
+      high: { tier: 'high', block: null, alpha: 1, visual: blank('high'), exitT: -1, dirty: false, model: this.serpentModelHigh, fx: this.serpentFxHigh, shake: 0 },
+    };
+    this.fallFx = new FallFx(arena);
+    this.root.add(this.fallFx.root);
 
     // ── Pickup beacons (the colosseum's icons / rings / lights, on the pads' own levels) ──
     this.beacons = new PickupBeacons(arena.pickupPads.map((p) => ({ x: p.x, z: p.z, y: arenaGroundHeight(arena, p.x, p.z) })));
     this.root.add(this.beacons.root);
 
-    this.stats = { ...pr.stats, crates: crates.length, ramps: lv.stats.ramps, bulbs: lv.stats.bulbs };
+    this.stats = { ...pr.stats, crates: crates.length, ramps: lv.stats.ramps, climbs: lv.stats.climbs, towers: lv.stats.towers, bulbs: lv.stats.bulbs };
 
     this.tier = getQualityTier();
     this.applyTier(this.tier);
@@ -281,25 +318,27 @@ export class OceanScene implements ArenaScene {
   // ── ArenaScene ─────────────────────────────────────────────────────────────
 
   setSnapshot(snapshot: WorldSnapshot, alpha = 1): void {
-    const s = snapshot.serpent;
-    if (s === undefined) {
-      this.block = null;
-    } else {
-      // Keep our own copy (the snapshot object may be reused / mutated by the driver).
-      if (this.block === null) this.block = { phase: s.phase, angleDeg: s.angleDeg, t: s.t };
-      else {
-        this.block.phase = s.phase;
-        this.block.angleDeg = s.angleDeg;
-        this.block.t = s.t;
-      }
-    }
-    this.blockAlpha = alpha;
+    this.setBlock(this.lanes.low, snapshot.serpent, alpha);
+    this.setBlock(this.lanes.high, snapshot.serpentHigh, alpha);
   }
 
-  /** QA / demo: set the serpent block directly (null = no event). */
-  setSerpentBlock(block: Pick<SerpentState, 'phase' | 'angleDeg' | 't'> | null, alpha = 1): void {
-    this.block = block === null ? null : { phase: block.phase, angleDeg: block.angleDeg, t: block.t };
-    this.blockAlpha = alpha;
+  private setBlock(lane: Lane, s: Pick<SerpentState, 'phase' | 'angleDeg' | 't'> | null | undefined, alpha: number): void {
+    if (s === undefined || s === null) {
+      lane.block = null;
+    } else if (lane.block === null) {
+      // Keep our own copy (the snapshot object may be reused / mutated by the driver).
+      lane.block = { phase: s.phase, angleDeg: s.angleDeg, t: s.t };
+    } else {
+      lane.block.phase = s.phase;
+      lane.block.angleDeg = s.angleDeg;
+      lane.block.t = s.t;
+    }
+    lane.alpha = alpha;
+  }
+
+  /** QA / demo: set a serpent block directly (null = no event); `tier` picks the lane (default: the low serpent). */
+  setSerpentBlock(block: Pick<SerpentState, 'phase' | 'angleDeg' | 't'> | null, alpha = 1, tier: SerpentTier = 'low'): void {
+    this.setBlock(this.lanes[tier], block, alpha);
   }
 
   update(dt: number, excitement: number): void {
@@ -309,27 +348,37 @@ export class OceanScene implements ArenaScene {
     this.snow.update();
     this.beacons.update(dt, this.time);
     this.updateDebris(dt);
-    this.updateSerpent(dt);
+    this.updateSerpents(dt);
+    this.fallFx.update(dt);
   }
 
   onEvent(e: GameEvent): void {
     switch (e.type) {
       case 'serpentWarning':
-        this.exitT = -1;
+        this.lanes[e.tier ?? 'low'].exitT = -1;
         break;
       case 'serpentStrike': {
+        const lane = this.lanes[e.tier ?? 'low'];
         const a = (e.angleDeg * Math.PI) / 180;
-        this.serpentFx.onStrike(Math.cos(a), Math.sin(a));
+        lane.fx.onStrike(Math.cos(a), Math.sin(a));
         kickFov(2.2);
         this.strikeKick = 0.14;
-        this.exitT = -1;
+        lane.exitT = -1;
         break;
       }
       case 'serpentHit':
-        this.serpentFx.onHit(e.pos.x, e.pos.y, e.pos.z);
+        this.lanes[e.tier ?? 'low'].fx.onHit(e.pos.x, e.pos.y, e.pos.z);
         if (!this.hasFocus || Math.hypot(e.pos.x - this.focusX, e.pos.z - this.focusZ) < 2.6) {
           this.hitShake = 0.15;
           kickFov(5);
+        }
+        break;
+      case 'fall':
+        // the impact burst at the landing spot; the victim's own camera gets a thump (a bot far away does not shake the player)
+        this.fallFx.burst(e.pos.x, e.pos.y, e.pos.z, e.drop);
+        if (!this.hasFocus || Math.hypot(e.pos.x - this.focusX, e.pos.z - this.focusZ) < 2.2) {
+          this.fallShake = 0.13;
+          kickFov(4);
         }
         break;
       default:
@@ -403,6 +452,9 @@ export class OceanScene implements ArenaScene {
     this.life.dispose();
     this.serpentModel.dispose();
     this.serpentFx.dispose();
+    this.serpentModelHigh.dispose();
+    this.serpentFxHigh.dispose();
+    this.fallFx.dispose();
     this.crateMesh.dispose();
     this.debrisMesh.dispose();
     for (const d of this.disposables) d.dispose();
@@ -418,8 +470,14 @@ export class OceanScene implements ArenaScene {
     return this.tier;
   }
 
+  /** The low serpent's visual state (v1.9 name). */
   getVisual(): SerpentVisual {
-    return this.visual;
+    return this.lanes.low.visual;
+  }
+
+  /** The visual state of the serpent of `tier`. */
+  getVisualOf(tier: SerpentTier): SerpentVisual {
+    return this.lanes[tier].visual;
   }
 
   getGlass(): DomeGlass {
@@ -453,58 +511,105 @@ export class OceanScene implements ArenaScene {
     this.life.setTier(tier);
     this.serpentModel.setTier(tier);
     this.serpentFx.setTier(tier);
+    this.serpentModelHigh.setTier(tier);
+    this.serpentFxHigh.setTier(tier);
+    this.fallFx.setTier(tier);
     this.beacons.setTier(tier);
   }
 
-  private updateSerpent(dt: number): void {
-    const v = this.visual;
+  /** Advance one serpent's visual state (incl. the withdrawal after the sim ends the event). */
+  private stepLane(lane: Lane, dt: number): void {
+    const v = lane.visual;
     const wasActive = v.active && v.phase !== 'exit';
-    serpentVisualState(this.arena, this.block, this.blockAlpha, v, this.exitT);
-    if (this.block === null) {
-      if (wasActive && this.exitT < 0) {
+    serpentVisualState(this.arena, lane.block, lane.alpha, v, lane.exitT, lane.tier);
+    if (lane.block === null) {
+      if (wasActive && lane.exitT < 0) {
         // The sim ended the event: the serpent keeps withdrawing outside the glass for a moment.
-        this.exitT = 0;
-        serpentVisualState(this.arena, null, 1, v, this.exitT);
-      } else if (this.exitT >= 0) {
-        this.exitT += dt;
-        if (this.exitT >= EXIT_S) {
-          this.exitT = -1;
-          serpentVisualState(this.arena, null, 1, v, -1);
-        } else serpentVisualState(this.arena, null, 1, v, this.exitT);
+        lane.exitT = 0;
+        serpentVisualState(this.arena, null, 1, v, lane.exitT, lane.tier);
+      } else if (lane.exitT >= 0) {
+        lane.exitT += dt;
+        if (lane.exitT >= EXIT_S) {
+          lane.exitT = -1;
+          serpentVisualState(this.arena, null, 1, v, -1, lane.tier);
+        } else serpentVisualState(this.arena, null, 1, v, lane.exitT, lane.tier);
       }
-    } else this.exitT = -1;
+    } else lane.exitT = -1;
+  }
 
+  private updateSerpents(dt: number): void {
+    const low = this.lanes.low;
+    const high = this.lanes.high;
+    this.stepLane(low, dt);
+    this.stepLane(high, dt);
     const g = this.glass.uniforms;
-    if (!v.active) {
-      this.serpentModel.root.visible = false;
-      this.serpentFx.update(v, dt, 9);
-      if (this.visualDirty) {
-        g.uCrack.value = 0;
-        g.uHole.value = 0;
-        g.uShudder.value = 0;
-        g.uFlash.value = 0;
-        this.shared.uAlarm.value = 0;
-        this.visualDirty = false;
+
+    // ── low serpent: glass breach near the ground, red-orange alarm ──
+    {
+      const v = low.visual;
+      if (!v.active) {
+        low.model.root.visible = false;
+        low.fx.update(v, dt, 9);
+        if (low.dirty) {
+          g.uCrack.value = 0;
+          g.uHole.value = 0;
+          g.uShudder.value = 0;
+          g.uFlash.value = 0;
+          this.shared.uAlarm.value = 0;
+          low.dirty = false;
+        }
+        low.shake = 0;
+      } else {
+        low.dirty = true;
+        low.model.update(this.arena, v, this.time);
+        low.fx.update(v, dt, v.phase === 'warn' ? v.t : 9);
+        // Glass: breach point on the dome surface at the strike direction (just above the ground), cracks / hole / shudder / flash.
+        const el = Math.asin(Math.min(0.9, 2.2 / DOME_HEIGHT));
+        g.uBreach.value.set(v.dirX * Math.cos(el), Math.sin(el), v.dirZ * Math.cos(el)).normalize();
+        g.uCrack.value = v.crack;
+        g.uHole.value = v.hole;
+        g.uShudder.value = v.shudder;
+        g.uFlash.value = v.flash;
+        this.shared.uAlarm.value = v.phase === 'warn' ? v.urgency * (0.5 + 0.5 * Math.sin(this.time * (10 + 22 * v.urgency))) : 0;
+        low.shake = serpentShake(v, this.focusX, this.focusZ, this.hasFocus, this.arena.wallRadius);
       }
-      this.hitShake = Math.max(0, this.hitShake - dt * 0.9);
-      this.strikeKick = Math.max(0, this.strikeKick - dt * 0.5);
-      arenaShake.amount = this.hitShake;
-      return;
     }
-    this.visualDirty = true;
-    this.serpentModel.update(this.arena, v, this.time);
-    this.serpentFx.update(v, dt, v.phase === 'warn' ? v.t : 9);
-    // Glass: breach point on the dome surface at the strike direction (just above the ground), cracks / hole / shudder / flash.
-    const el = Math.asin(Math.min(0.9, 2.2 / DOME_HEIGHT));
-    g.uBreach.value.set(v.dirX * Math.cos(el), Math.sin(el), v.dirZ * Math.cos(el)).normalize();
-    g.uCrack.value = v.crack;
-    g.uHole.value = v.hole;
-    g.uShudder.value = v.shudder;
-    g.uFlash.value = v.flash;
-    this.shared.uAlarm.value = v.phase === 'warn' ? v.urgency * (0.5 + 0.5 * Math.sin(this.time * (10 + 22 * v.urgency))) : 0;
+
+    // ── high serpent: glass breach at its flight height, violet alarm, its own pools ──
+    {
+      const v = high.visual;
+      if (!v.active) {
+        high.model.root.visible = false;
+        high.fx.update(v, dt, 9);
+        if (high.dirty) {
+          g.uCrack2.value = 0;
+          g.uHole2.value = 0;
+          g.uShudder2.value = 0;
+          g.uFlash2.value = 0;
+          this.shared.uAlarmHigh.value = 0;
+          high.dirty = false;
+        }
+        high.shake = 0;
+      } else {
+        high.dirty = true;
+        high.model.update(this.arena, v, this.time);
+        high.fx.update(v, dt, v.phase === 'warn' ? v.t : 9);
+        const el = Math.asin(Math.min(0.95, breachHeight(this.arena, 'high') / DOME_HEIGHT));
+        g.uBreach2.value.set(v.dirX * Math.cos(el), Math.sin(el), v.dirZ * Math.cos(el)).normalize();
+        g.uCrack2.value = v.crack;
+        g.uHole2.value = v.hole;
+        g.uShudder2.value = v.shudder;
+        g.uFlash2.value = v.flash;
+        this.shared.uAlarmHigh.value = v.phase === 'warn' ? v.urgency * (0.5 + 0.5 * Math.sin(this.time * (9 + 20 * v.urgency) + 1.3)) : 0;
+        high.shake = serpentShake(v, this.focusX, this.focusZ, this.hasFocus, this.arena.wallRadius);
+      }
+    }
+
     this.hitShake = Math.max(0, this.hitShake - dt * 0.9);
+    this.fallShake = Math.max(0, this.fallShake - dt * 0.7);
     this.strikeKick = Math.max(0, this.strikeKick - dt * 0.5);
-    arenaShake.amount = serpentShake(v, this.focusX, this.focusZ, this.hasFocus, this.arena.wallRadius) + this.hitShake;
+    // (the rig caps the sum at its own 0.15 m)
+    arenaShake.amount = low.shake + high.shake + this.hitShake + this.fallShake;
   }
 
   private updateDebris(dt: number): void {

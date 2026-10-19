@@ -73,6 +73,7 @@ function variantIndex(e: GameEvent): number {
     case 'serpentStrike':
     case 'serpentHit':
     case 'serpentEnd':
+    case 'fall':
       return EVENT_CODECS[e.type].tag;
     default: {
       const unhandled: never = e;
@@ -91,7 +92,7 @@ describe('event codec', () => {
     expect([...EVENT_TYPES].sort()).toEqual(types);
     const tags = new Set(types.map((t) => EVENT_CODECS[t as GameEvent['type']].tag));
     expect(tags.size).toBe(types.length);
-    expect(types.length).toBe(26);
+    expect(types.length).toBe(27);
   });
 
   it.each(Object.keys(SAMPLES))('round-trips %s', (type) => {
@@ -221,12 +222,84 @@ describe('event codec', () => {
     expect('cause' in trap).toBe(false);
     const melee = batchOf({ type: 'death', targetId: 2, killerId: 5, placement: 3 });
     expect('cause' in melee).toBe(false);
+    // v1.10: cause byte 2 = fall damage
+    const fall = batchOf({ type: 'death', targetId: 4, killerId: -1, placement: 6, cause: 'fall' });
+    expect(fall).toEqual({ type: 'death', targetId: 4, killerId: -1, placement: 6, cause: 'fall' });
     // a corrupt cause byte drops the packet
     const ok = encodeEventBatch({ firstSeq: 1, timeMs: 0, events: [{ type: 'death', targetId: 4, killerId: -1, placement: 8 }] });
     const bad = ok.slice();
-    bad[bad.length - 1] = 2;
+    bad[bad.length - 1] = 3;
     expect(decodeEventBatch(ok)).not.toBeNull();
     expect(decodeEventBatch(bad)).toBeNull();
+    const okFall = encodeEventBatch({ firstSeq: 1, timeMs: 0, events: [{ type: 'death', targetId: 4, killerId: -1, placement: 8, cause: 'fall' }] });
+    expect(okFall[okFall.length - 1]).toBe(2);
+    expect(decodeEventBatch(okFall)).not.toBeNull();
+  });
+
+  it("v1.10 tier bit: the high serpent's four events keep tier 'high' through the wire at no extra byte; the low serpent's have no tier key", () => {
+    const roundTrip = (ev: GameEvent): GameEvent => {
+      const out = decodeEventBatch(encodeEventBatch({ firstSeq: 1, timeMs: 0, events: [ev] }));
+      expect(out?.events).toHaveLength(1);
+      return out?.events[0] as GameEvent;
+    };
+    const size = (ev: GameEvent): number => encodeEventBatch({ firstSeq: 1, timeMs: 0, events: [ev] }).length - 6;
+    const lows: GameEvent[] = [
+      { type: 'serpentWarning', angleDeg: 211.37, warnS: 1.1 },
+      { type: 'serpentStrike', angleDeg: 211.37 },
+      { type: 'serpentHit', fighterId: 6, damage: 300, pos: { x: 1, y: 6.5, z: -2 } },
+      { type: 'serpentEnd' },
+    ];
+    for (const low of lows) {
+      const high = { ...low, tier: 'high' } as GameEvent;
+      const lo = roundTrip(low);
+      const hi = roundTrip(high);
+      expect('tier' in lo, `${low.type} low has no tier key`).toBe(false);
+      expect((hi as { tier?: string }).tier, `${low.type} high`).toBe('high');
+      expect(eventMismatches(low, lo)).toEqual([]);
+      expect(eventMismatches(high, hi)).toEqual([]);
+      expect(size(high), `${low.type} size`).toBe(size(low)); // the tier is a bit of the tag byte
+      // an explicit tier 'low' is the same as none
+      expect('tier' in roundTrip({ ...low, tier: 'low' } as GameEvent)).toBe(false);
+    }
+    // tags stay below 128 so the bit is free, and only the four serpent events may carry it
+    for (const t of EVENT_TYPES) expect(EVENT_CODECS[t].tag).toBeLessThan(128);
+    const plain = encodeEventBatch({ firstSeq: 1, timeMs: 0, events: [{ type: 'comboFinisher', fighterId: 2 }] });
+    const stray = plain.slice();
+    stray[6] |= 0x80; // the tag byte of the only event
+    expect(decodeEventBatch(plain)).not.toBeNull();
+    expect(decodeEventBatch(stray)).toBeNull();
+    // a tag that does not exist stays unknown with the bit set (0x80 | 99)
+    const unknown = plain.slice();
+    unknown[6] = 0x80 | 99;
+    expect(decodeEventBatch(unknown)).toBeNull();
+    // a mixed batch keeps order and tiers
+    const mixed = decodeEventBatch(
+      encodeEventBatch({ firstSeq: 9, timeMs: 5, events: [lows[0], { ...lows[0], tier: 'high' } as GameEvent, lows[3], { ...lows[3], tier: 'high' } as GameEvent] }),
+    );
+    expect(mixed?.events.map((e) => (e as { tier?: string }).tier ?? 'low')).toEqual(['low', 'high', 'low', 'high']);
+  });
+
+  it('v1.10 fall event: exact fields, 12 bytes, drop in cm, clamps; a truncated packet is dropped', () => {
+    const batchOf = (ev: GameEvent): Extract<GameEvent, { type: 'fall' }> => {
+      const out = decodeEventBatch(encodeEventBatch({ firstSeq: 1, timeMs: 0, events: [ev] }));
+      expect(out?.events).toHaveLength(1);
+      return out?.events[0] as Extract<GameEvent, { type: 'fall' }>;
+    };
+    const size = (ev: GameEvent): number => encodeEventBatch({ firstSeq: 1, timeMs: 0, events: [ev] }).length - 6;
+    const ev: GameEvent = { type: 'fall', fighterId: 7, damage: 50, drop: 3.5, pos: { x: -12.5, y: 3, z: 7.75 } };
+    expect(size(ev)).toBe(1 + 1 + 2 + 2 + 6);
+    expect(batchOf(ev)).toEqual(ev);
+    for (const drop of [3.4, 3.4000000000000004, 6.5, 6.4999, 12.345]) {
+      expect(Math.abs(batchOf({ ...ev, drop } as GameEvent).drop - drop)).toBeLessThanOrEqual(0.5 / 100 + 1e-9);
+    }
+    // hp actually removed may be below the fixed 50 (a fighter with 12 hp left)
+    expect(batchOf({ ...ev, damage: 12 } as GameEvent).damage).toBe(12);
+    expect(batchOf({ ...ev, damage: Number.NaN } as GameEvent).damage).toBe(0);
+    expect(batchOf({ ...ev, drop: Number.NaN } as GameEvent).drop).toBe(0);
+    const bytes = encodeEventBatch({ firstSeq: 1, timeMs: 0, events: [ev] });
+    for (let len = 0; len < bytes.length; len++) expect(decodeEventBatch(bytes.subarray(0, len))).toBeNull();
+    // fighter id -1 (none) survives, like every optional fighter field
+    expect(batchOf({ ...ev, fighterId: -1 } as GameEvent).fighterId).toBe(-1);
   });
 
   it('splits oversized event lists into consecutive batches', () => {

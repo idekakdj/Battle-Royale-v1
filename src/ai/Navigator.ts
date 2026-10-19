@@ -50,13 +50,15 @@ export interface NavAiLevel {
   dropMinHp: number;
   /** Scale of the cross-level penalty in target scoring (0 = ignores levels). */
   levelBias: number;
+  /** v1.10: how much nearer a pad on the upper tier (the Ocean's towers) counts when collecting pickups (0 = no pull, 0.3 = 30 % nearer). */
+  upperPull: number;
 }
 
 export const NAV_AI: Record<Difficulty, NavAiLevel> = {
-  1: { replanS: 1.1, margin: 0, smooth: false, lookahead: 3, dropMinHp: 0, levelBias: 0 },
-  2: { replanS: 0.6, margin: 0.15, smooth: true, lookahead: 6, dropMinHp: 0.3, levelBias: 0.4 },
-  3: { replanS: 0.35, margin: 0.3, smooth: true, lookahead: 9, dropMinHp: 0.55, levelBias: 1 },
-  4: { replanS: 0.25, margin: 0.3, smooth: true, lookahead: 10, dropMinHp: 0.6, levelBias: 1 },
+  1: { replanS: 1.1, margin: 0, smooth: false, lookahead: 3, dropMinHp: 0, levelBias: 0, upperPull: 0 },
+  2: { replanS: 0.6, margin: 0.15, smooth: true, lookahead: 6, dropMinHp: 0.3, levelBias: 0.4, upperPull: 0.15 },
+  3: { replanS: 0.35, margin: 0.3, smooth: true, lookahead: 9, dropMinHp: 0.55, levelBias: 1, upperPull: 0.3 },
+  4: { replanS: 0.25, margin: 0.3, smooth: true, lookahead: 10, dropMinHp: 0.6, levelBias: 1, upperPull: 0.35 },
 };
 
 /** Extra A* cost (m) of walking off a ledge, by mode. */
@@ -70,6 +72,8 @@ const STALL_MIN_M = 0.35;
 const CROSS_LEVEL_M = 7;
 /** Two heights are the same level when they differ by less than this (m). */
 const SAME_LEVEL = 0.7;
+/** v1.10: string-pulled shortcuts keep at least this far (m) from a deadly edge (a tower rim, the side of a tower ramp) unless the bot already stands nearer. */
+const RIM_LINE_MIN = 0.9;
 
 export class Navigator {
   /** False on flat arenas: nothing below ever runs. */
@@ -90,6 +94,13 @@ export class Navigator {
   private fallback: NavGrid | null = null;
   private search: NavSearch | null = null;
   private searchFb: NavSearch | null = null;
+  /** v1.10: the HOP grid (low arches do not block) and its search, used only when the ordinary grids have no route. */
+  private hopGrid: NavGrid | null = null;
+  private searchHop: NavSearch | null = null;
+  /** True while the followed path was planned on the hop grid (the follower presses jump at an arch ahead). */
+  private pathHop = false;
+  /** Jumpable low walls of the arena (the arches), for the hop follower. */
+  private readonly hurdles: { ax: number; az: number; bx: number; bz: number; r: number }[] = [];
 
   private planAt = -1e9;
   private planGoal = -1;
@@ -112,6 +123,7 @@ export class Navigator {
     this.arena = arena;
     this.radius = bodyRadius;
     this.active = arena.heightfield !== undefined;
+    for (const ob of arena.solids) if (ob.shape === 'segment' && ob.jumpable) this.hurdles.push({ ax: ob.ax, az: ob.az, bx: ob.bx, bz: ob.bz, r: ob.thickness * 0.5 });
     this.level = NAV_AI[difficulty];
   }
 
@@ -252,6 +264,20 @@ export class Navigator {
         return true;
       }
     }
+    if (!ok && this.hurdles.length > 0) {
+      // shut in (a crevice closed by a low coral arch)? plan on the grid where a jump clears the arches
+      if (this.hopGrid === null) this.hopGrid = getNavGrid(this.arena, grid.radius, 0, true);
+      const hg = this.hopGrid;
+      const s3 = nearestWalkCell(hg, sx, sz, 4, this.heightAt(sx, sz));
+      const g3 = nearestWalkCell(hg, cellX(grid, goalCell), cellZ(grid, goalCell), 4, grid.h[goalCell]);
+      if (this.searchHop === null) this.searchHop = new NavSearch(hg.n * hg.n);
+      if (this.searchHop.find(hg, s3, g3, dropExtra, true)) {
+        this.adoptPath(this.searchHop, true);
+        this.pathStraight = Math.hypot(cellX(grid, goalCell) - sx, cellZ(grid, goalCell) - sz);
+        this.planGoal = goalCell;
+        return true;
+      }
+    }
     if (!ok) {
       this.pathCells = 0;
       this.planGoal = -1;
@@ -263,7 +289,8 @@ export class Navigator {
     return true;
   }
 
-  private adoptPath(search: NavSearch): void {
+  private adoptPath(search: NavSearch, hop = false): void {
+    this.pathHop = hop;
     // cell indices are valid on every grid of the arena (same cell size/origin/heights, only walkability differs)
     if (this.path.length < search.pathLen) this.path = new Int32Array(search.pathLen * 2);
     for (let i = 0; i < search.pathLen; i++) this.path[i] = search.path[i];
@@ -317,16 +344,21 @@ export class Navigator {
         const ez = cellZ(grid, this.path[k]) - cellZ(grid, this.path[k - 1]);
         metres += Math.sqrt(ex * ex + ez * ez);
         if (kind !== 0) {
-          // ledge or jump: stop at the far side of it (the bot walks off / hops there in a straight line)
+          // ledge or jump: stop at the far side of it (the bot walks off / hops there in a straight line) - but only once it stands at
+          // the edge's top; from afar it walks to the top cell first (a straight line to the far side would leave a ramp by its side
+          // many metres higher up: v1.10, where that is a fall)
+          const tx = cellX(grid, this.path[k - 1]);
+          const tz = cellZ(grid, this.path[k - 1]);
+          if (k - 1 > this.ptr && Math.hypot(tx - sx, tz - sz) > 1.1) break;
           pick = k;
           break;
         }
         if (metres > this.level.lookahead) break;
         const cx = cellX(grid, this.path[k]);
         const cz = cellZ(grid, this.path[k]);
-        if (lineWalk(grid, sx, sz, cx, cz, false, true) === LINE_OK) pick = k;
+        if (lineWalk(grid, sx, sz, cx, cz, false, true, RIM_LINE_MIN) === LINE_OK) pick = k;
       }
-      if (pick === last && lineWalk(grid, sx, sz, gx, gz, false, true) === LINE_OK) {
+      if (pick === last && lineWalk(grid, sx, sz, gx, gz, false, true, RIM_LINE_MIN) === LINE_OK) {
         setDir(out, gx - sx, gz - sz);
         return true;
       }
@@ -339,7 +371,24 @@ export class Navigator {
       if (Math.hypot(fx - sx, fz - sz) < 1.1) this.wantJump = true;
     }
     setDir(out, cellX(grid, this.path[pick]) - sx, cellZ(grid, this.path[pick]) - sz);
+    if (this.pathHop && this.hurdleAhead(sx, sz, out.x, out.z)) this.wantJump = true;
     return true;
+  }
+
+  /** Is a low arch within a jump's reach right ahead along the unit heading (hx, hz)? (followers of a hop path press jump) */
+  private hurdleAhead(sx: number, sz: number, hx: number, hz: number): boolean {
+    for (const w of this.hurdles) {
+      for (const d of [0.7, 1.3, 1.9]) {
+        const px = sx + hx * d;
+        const pz = sz + hz * d;
+        const ex = w.bx - w.ax;
+        const ez = w.bz - w.az;
+        const l2 = ex * ex + ez * ez;
+        const t = l2 > 1e-9 ? Math.max(0, Math.min(1, ((px - w.ax) * ex + (pz - w.az) * ez) / l2)) : 0;
+        if (Math.hypot(px - (w.ax + ex * t), pz - (w.az + ez * t)) < w.r + this.radius + 0.1) return true;
+      }
+    }
+    return false;
   }
 
   /** Kind of the path edge from cell index k to k+1 (0 walk, EDGE_DROP, EDGE_JUMP), read from the heights. */

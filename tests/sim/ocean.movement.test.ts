@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { ArenaDef, ElevationPiece } from '../../src/config/arenas';
-import { OCEAN_ARENA, arenaGroundHeight, staticObstaclesOf } from '../../src/config/arenas';
+import { OCEAN_ARENA, OCEAN_UPPER_HEIGHT, arenaGroundHeight, staticObstaclesOf } from '../../src/config/arenas';
 import { ANIMALS } from '../../src/config/animals';
 import { Fighter } from '../../src/sim/Fighter';
 import { chargeStep, locomote, pushOutOfCliffs, resolveFighterCollisions } from '../../src/sim/MovementSystem';
@@ -17,6 +17,14 @@ import { createPickups, updatePickups } from '../../src/sim/PickupSystem';
 import { mulberry32 } from '../../src/core/math';
 import type { AnimalId, FighterIntent, GameEvent, PickupState } from '../../src/core/types';
 import { DT, liveWorld, makeSim, neutral } from './helpers';
+import { rampRole, upperRoutes } from '../config/oceanRules';
+
+/** v1.10: the west axis is a sea-stack now; these tests use the PLAIN RAY (308 degrees: no ramp, tower or cover; asserted in tests/config/ocean.layout.test.ts). */
+const TH = (308 * Math.PI) / 180;
+const U = { x: Math.cos(TH), z: Math.sin(TH) };
+const at = (r: number) => ({ x: U.x * r, z: U.z * r });
+const YAW_IN = Math.atan2(-U.x, -U.z); // direction (sin yaw, cos yaw)
+const radial = (p: { x: number; z: number }): number => Math.hypot(p.x, p.z);
 
 /** A bare test arena (no cover, no pads in the way) with the given elevation pieces. */
 function bare(pieces: readonly ElevationPiece[]): ArenaDef {
@@ -137,9 +145,9 @@ describe('ramps: climbed at full speed, no airborne flicker, the feet follow the
     }
   });
 
-  it('the largest body (r 1.2) climbs the real Ocean ramps at every angle without being pushed back', () => {
-    const ramps = (OCEAN_ARENA.heightfield as readonly ElevationPiece[]).filter((p) => p.kind === 'ramp') as Extract<ElevationPiece, { kind: 'ramp' }>[];
-    expect(ramps.length).toBe(9);
+  it('the largest body (r 1.2) climbs the real Ocean level ramps at every angle without being pushed back', () => {
+    const ramps = (OCEAN_ARENA.heightfield as readonly ElevationPiece[]).filter((p) => p.kind === 'ramp' && ['outer', 'inner'].includes(rampRole(p))) as Extract<ElevationPiece, { kind: 'ramp' }>[];
+    expect(ramps.length).toBe(8); // 5 seabed -> terrace + 3 terrace -> plateau
     for (const rp of ramps) {
       const a = (rp.dirDeg * Math.PI) / 180;
       const c = Math.cos(a);
@@ -150,15 +158,70 @@ describe('ramps: climbed at full speed, no airborne flicker, the feet follow the
       const { f, sim } = rig(OCEAN_ARENA, 'hippo', sx, sz, Math.atan2(c, s));
       let maxBack = 0;
       let prevAlong = (f.state.pos.x - rp.x) * c + (f.state.pos.z - rp.z) * s;
-      for (let i = 0; i < 200; i++) {
+      // walk up the ramp and 0.5 m onto the level above (past that the real arena's walls / cover are not the ramp's business)
+      for (let i = 0; i < 200 && prevAlong < rp.length / 2 + 0.5; i++) {
         tick(sim, f, { moveX: c, moveZ: s });
         const along = (f.state.pos.x - rp.x) * c + (f.state.pos.z - rp.z) * s;
         maxBack = Math.max(maxBack, prevAlong - along);
         prevAlong = along;
         expect(f.state.airborne).toBe(false);
       }
+      expect(prevAlong).toBeGreaterThanOrEqual(rp.length / 2 + 0.5);
       expect(maxBack).toBeLessThan(1e-6);
       expect(f.state.pos.y).toBeGreaterThanOrEqual(rp.h1 - 1e-6);
+    }
+  });
+});
+
+describe('the upper tier: the largest body walks up every route onto the tower top and back down', () => {
+  const routes = upperRoutes(OCEAN_ARENA);
+
+  it('5 routes (3 causeways from the plateau, 2 chords from the terrace): a hippo (r 1.2) from the foot to the tower centre, grounded all the way, never pushed back, ends at 6.5', () => {
+    expect(routes.length).toBe(5);
+    for (const rt of routes) {
+      const dx = rt.stack.x - rt.foot.x;
+      const dz = rt.stack.z - rt.foot.z;
+      const len = Math.hypot(dx, dz);
+      const c = dx / len;
+      const s = dz / len;
+      // start 2 m before the foot on the level below, walk along the route axis (through the tower centre)
+      const sx = rt.foot.x - c * 2;
+      const sz = rt.foot.z - s * 2;
+      const { f, sim } = rig(OCEAN_ARENA, 'hippo', sx, sz, Math.atan2(c, s));
+      let prevAlong = (f.state.pos.x - rt.foot.x) * c + (f.state.pos.z - rt.foot.z) * s;
+      let maxBack = 0;
+      // walk up to the tower's centre (stop there: the far rim is a real drop)
+      for (let i = 0; i < 400 && Math.hypot(f.state.pos.x - rt.stack.x, f.state.pos.z - rt.stack.z) > 0.4; i++) {
+        tick(sim, f, { moveX: c, moveZ: s });
+        const along = (f.state.pos.x - rt.foot.x) * c + (f.state.pos.z - rt.foot.z) * s;
+        maxBack = Math.max(maxBack, prevAlong - along);
+        prevAlong = along;
+        expect(f.state.airborne, 'route at ' + rt.foot.x.toFixed(1) + ',' + rt.foot.z.toFixed(1) + ' tick ' + i).toBe(false);
+        expect(f.state.pos.y).toBeCloseTo(arenaGroundHeight(OCEAN_ARENA, f.state.pos.x, f.state.pos.z), 6);
+      }
+      expect(maxBack).toBeLessThan(1e-6);
+      expect(f.state.pos.y).toBeCloseTo(OCEAN_UPPER_HEIGHT, 6);
+      expect(Math.hypot(f.state.pos.x - rt.stack.x, f.state.pos.z - rt.stack.z)).toBeLessThan(0.5);
+    }
+  });
+
+  it('and back down the same way: walking off the top along the route is a smooth, grounded descent to the foot (no fall)', () => {
+    for (const rt of routes) {
+      const dx = rt.stack.x - rt.foot.x;
+      const dz = rt.stack.z - rt.foot.z;
+      const len = Math.hypot(dx, dz);
+      const c = dx / len;
+      const s = dz / len;
+      const { f, sim } = rig(OCEAN_ARENA, 'rhino', rt.stack.x, rt.stack.z, Math.atan2(-c, -s));
+      // walk down to 1.5 m past the foot, then stop (beyond it the level below has its own edges)
+      let along = len;
+      for (let i = 0; i < 400 && along > -1.5; i++) {
+        tick(sim, f, { moveX: -c, moveZ: -s });
+        along = (f.state.pos.x - rt.foot.x) * c + (f.state.pos.z - rt.foot.z) * s;
+        expect(f.state.airborne).toBe(false);
+      }
+      expect(along).toBeLessThanOrEqual(-1.5);
+      expect(f.state.pos.y).toBeCloseTo(rt.baseHeight, 6);
     }
   });
 });
@@ -311,14 +374,17 @@ describe('the Ocean Dome in a real World', () => {
     const snap = world.snapshot();
     for (const f of snap.fighters) expect(f.pos.y).toBe(0);
     expect(snap.pickups.map((p) => p.pos.y)).toEqual(OCEAN_ARENA.pickupPads.map((p) => arenaGroundHeight(OCEAN_ARENA, p.x, p.z)));
-    expect(new Set(snap.pickups.map((p) => p.pos.y))).toEqual(new Set([0, 1.5, 3]));
+    expect(new Set(snap.pickups.map((p) => p.pos.y))).toEqual(new Set([0, 1.5, 3, 6.5]));
     expect(snap.crates.map((c) => c.pos.y)).toEqual(OCEAN_ARENA.crates.map((c) => c.baseY));
     expect(new Set(snap.crates.map((c) => c.pos.y))).toEqual(new Set([0, 1.5]));
     // put three fighters on the three levels (away from any cover) and step: their y follows the ground
+    const terracePad = OCEAN_ARENA.pickupPads.find((p) => arenaGroundHeight(OCEAN_ARENA, p.x, p.z) === 1.5) as { x: number; z: number };
+    const topPad = OCEAN_ARENA.pickupPads.find((p) => arenaGroundHeight(OCEAN_ARENA, p.x, p.z) === OCEAN_UPPER_HEIGHT) as { x: number; z: number };
     const spots: [number, number, number][] = [
-      [-15, 0, 1.5],
+      [terracePad.x, terracePad.z, 1.5],
       [0, 0.2, 3],
-      [-26, 0, 0],
+      [at(25).x, at(25).z, 0],
+      [topPad.x, topPad.z, OCEAN_UPPER_HEIGHT],
     ];
     spots.forEach(([x, z, h], i) => {
       world.fighters[i].state.pos.x = x;
@@ -333,6 +399,7 @@ describe('the Ocean Dome in a real World', () => {
     // altitude on raised ground is relative to the ground, not to 0
     expect(altitudeOf(world.fighters[0])).toBeCloseTo(0, 9);
     expect(altitudeOf(world.fighters[1])).toBeCloseTo(0, 9);
+    expect(altitudeOf(world.fighters[3])).toBeCloseTo(0, 9); // on a tower top
   });
 
   it('pickups: a pad on a raised level triggers for a fighter on that level, not for one at another height', () => {
@@ -353,41 +420,58 @@ describe('the Ocean Dome in a real World', () => {
     expect(hi.active).toBe(false);
   });
 
+  it('a tower-top pad triggers only for a fighter ON the tower (6.5 m up), not for one at the plateau height or below', () => {
+    const rng = mulberry32(5);
+    const pickups = createPickups(rng, OCEAN_ARENA);
+    const hi = pickups.find((p) => p.pos.y === OCEAN_UPPER_HEIGHT) as PickupState;
+    expect(hi).toBeDefined();
+    const f = new Fighter(0, 'lion', ANIMALS.lion, true, { x: hi.pos.x, y: 3, z: hi.pos.z }, 0, OCEAN_ARENA);
+    const events: GameEvent[] = [];
+    const sim = makeSim([f], events, staticObstaclesOf(OCEAN_ARENA));
+    (sim as { arena: ArenaDef }).arena = OCEAN_ARENA;
+    updatePickups(sim, pickups, DT); // 3.5 m below the pad: nothing
+    expect(events.filter((e) => e.type === 'pickup')).toHaveLength(0);
+    f.state.pos.y = OCEAN_UPPER_HEIGHT;
+    updatePickups(sim, pickups, DT);
+    expect(events.filter((e) => e.type === 'pickup')).toHaveLength(1);
+    expect(hi.active).toBe(false);
+  });
+
   it('a lion leap toward the terrace stops at the foot of the cliff (no climbing by leap)', () => {
     const { world } = liveWorld(['lion', 'lion'], 9, [], { arena: 'ocean' });
     const f = world.fighters[0];
-    f.state.pos.x = -22;
-    f.state.pos.z = 0;
+    f.state.pos.x = at(22).x;
+    f.state.pos.z = at(22).z;
     f.state.pos.y = 0;
-    f.state.yaw = Math.PI / 2;
+    f.state.yaw = YAW_IN;
     world.fighters[1].state.pos.x = 20; // far away on the other side
     world.fighters[1].state.pos.z = 20;
-    const intent = { ...neutral(), aimYaw: Math.PI / 2 };
+    const intent = { ...neutral(), aimYaw: YAW_IN };
     world.setIntent(0, { ...intent, special: true });
     world.step(DT);
     world.setIntent(0, intent);
     for (let i = 0; i < 120; i++) world.step(DT);
-    expect(f.state.pos.x).toBeLessThanOrEqual(-(19 + f.def.radius) + 0.05);
-    expect(f.state.pos.x).toBeGreaterThan(-22); // it did leap forward
+    expect(radial(f.state.pos)).toBeGreaterThanOrEqual(19 + f.def.radius - 0.05);
+    expect(radial(f.state.pos)).toBeLessThan(22); // it did leap forward
     expect(f.state.pos.y).toBe(0);
   });
 
   it('the eagle soars onto the terrace and the plateau (fliers ignore cliffs); landing sits on that level', () => {
     const { world } = liveWorld(['eagle', 'lion'], 3, [], { arena: 'ocean' });
     const f = world.fighters[0];
-    f.state.pos.x = -26;
-    f.state.pos.z = 0;
+    f.state.pos.x = at(26).x;
+    f.state.pos.z = at(26).z;
     f.state.pos.y = 0;
     world.fighters[1].state.pos.x = 20;
     world.fighters[1].state.pos.z = 20;
     let maxY = 0;
     // jump + hold jump to glide, flying toward the centre
     for (let i = 0; i < 150; i++) {
-      world.setIntent(0, { ...neutral(), moveX: 1, jump: true, aimYaw: Math.PI / 2 });
+      world.setIntent(0, { ...neutral(), moveX: -U.x, moveZ: -U.z, jump: true, aimYaw: YAW_IN });
       world.step(DT);
       maxY = Math.max(maxY, f.state.pos.y);
     }
-    expect(f.state.pos.x).toBeGreaterThan(-19 + 0.5); // crossed the terrace rim
+    expect(radial(f.state.pos)).toBeLessThan(19 - 0.5); // crossed the terrace rim
     expect(maxY).toBeGreaterThan(1.5);
     // release and land: grounded on a raised level, standing on it
     for (let i = 0; i < 240; i++) {

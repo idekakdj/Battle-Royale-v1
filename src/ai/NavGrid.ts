@@ -14,12 +14,30 @@
  * them). The sim's jump (apex 1.2 m) cannot clear the Ocean's 1.5 m cliffs, but an up-step in (0.6, 1.0] m is generated as a JUMP edge
  * for arenas that have one (none today).
  *
+ * v1.10 (docs/OCEAN-HEIGHTS-PLAN.md): the Ocean has a fourth level (three 6.5 m towers, reached by 0.39-grade ramps) and a FALL rule
+ * (a landing after a drop of `hazards.fallDamage.minDrop` = 3.4 m costs 50 HP). Ledge drops stay capped at {@link DROP_MAX} (1.9 m), a
+ * planned drop is dropped altogether when a running body would overshoot the level below and land {@link FALL_SAFETY_M} short of the
+ * deadly drop ({@link deadlyEdgeAhead}: the 1.5 m terrace beside a ramp that is 3.7 m up is NOT a safe landing), `rimD` is the distance
+ * from each cell to the nearest such edge (paths keep to the middle of a tower ramp; string-pulled shortcuts keep 0.9 m off it; the
+ * FallGuard in the steering reads it), and nothing here changes on the flat arenas.
+ *
  * Everything is pure and deterministic (no randomness, typed arrays, stable tie-breaks) and cached per (arena, radius, margin).
  */
 
 import { ARENA_STEP_UP, arenaCliffDistance, arenaGroundHeight, arenaSolidDistance, type ArenaDef } from '../config/arenas';
 
 export const NAV_CELL = 0.75;
+/**
+ * v1.10: how much shallower than the arena's fall-damage threshold (`hazards.fallDamage.minDrop`) a drop must already be to count as
+ * DEADLY for the bots (a landing is measured from the last standing height, a ramp or a seam can add a few cm). The Ocean's 3.4 m
+ * rule makes a 3.0 m drop deadly: every tower top, the upper half of a tower's ramps (beside them the ground is 3-6 m lower).
+ */
+export const FALL_SAFETY_M = 0.4;
+/** `NavGrid.rimD` is capped here (m): farther than this from every deadly edge the distance is not tracked. */
+export const RIM_FAR = 4;
+/** Cells nearer than this (m) to a deadly edge cost extra to plan through (a path keeps to the middle of a tower ramp / top). */
+const RIM_PEN_R = 2.0;
+const RIM_PEN_W = 1.0;
 /** A height LOSS larger than this between two samples is a ledge (ramp slopes are 0.25 rise/run: 0.19 m per 0.75 m cell). */
 export const DROP_MIN = 0.45;
 /** Tallest ledge a bot will deliberately walk off (the Ocean's levels are 1.5 m apart). */
@@ -49,6 +67,14 @@ export interface NavGrid {
   readonly cliffOk: Uint8Array;
   /** Ground height at each cell centre. */
   readonly h: Float32Array;
+  /**
+   * v1.10: distance (m, capped at {@link RIM_FAR}) from each cell to the nearest DEADLY edge on its own level: a cell of the same level
+   * (the ground changes by less than {@link DROP_MIN} per step) whose neighbour is lower by `deadly` or more. All {@link RIM_FAR} on
+   * arenas without a fall rule (colosseum, jungle: no grid is ever built there anyway).
+   */
+  readonly rimD: Float32Array;
+  /** The drop (m) that counts as deadly on this arena (`minDrop - FALL_SAFETY_M`), Infinity when it has no fall damage. */
+  readonly deadly: number;
   /** CSR adjacency: edges of cell i are adjStart[i] .. adjStart[i+1]-1. */
   readonly adjStart: Int32Array;
   readonly adjTo: Int32Array;
@@ -56,28 +82,103 @@ export interface NavGrid {
   readonly adjKind: Uint8Array;
 }
 
+/** Horizontal speed (m/s) assumed for a fall off a ledge (the fastest runners: panther 7.0, lion 6.5). */
+export const FALL_RUN_SPEED = 7;
+/** Gravity of the sim (MOVE.gravity). */
+const FALL_G = 20;
+/** A drop of at least this much between two samples 0.25 m apart is a ledge (the sim snaps down 0.2 m per tick and falls beyond). */
+const LEDGE_STEP_M = 0.2;
+
+/**
+ * v1.10 FALL TEST: walking from (x, z) along the unit heading (dx, dz), is there a LEDGE within `maxS` metres off which the body
+ * lands at least `deadly` metres below the height it last stood on? A walker that steps off keeps its run speed while it falls (the
+ * sim's air control does not stop it), so the landing is found by flying it ballistically (gravity 20, `speed` m/s) over the real height
+ * field: a 3.7 m drop beside a chord ramp that first clears a 1.5 m terrace and lands on the 0 m seabed beyond is deadly, a 1.5 m
+ * ledge never is. Returns the distance to that ledge (m), or -1 when the way is safe within `maxS` (a cliff ahead stops the walk).
+ */
+export function deadlyEdgeAhead(
+  arena: ArenaDef,
+  x: number,
+  z: number,
+  dx: number,
+  dz: number,
+  maxS: number,
+  deadly: number,
+  speed = FALL_RUN_SPEED,
+): number {
+  if (deadly === Infinity) return -1;
+  let prev = arenaGroundHeight(arena, x, z);
+  for (let s = 0.25; s <= maxS + 1e-9; s += 0.25) {
+    const px = x + dx * s;
+    const pz = z + dz * s;
+    const gy = arenaGroundHeight(arena, px, pz);
+    if (gy > prev + ARENA_STEP_UP * 0.99) return -1; // a cliff in the way: the walk stops there
+    if (gy < prev - LEDGE_STEP_M) {
+      // stepped off at s - 0.125 from the height `prev`: fly it
+      const ex = x + dx * (s - 0.125);
+      const ez = z + dz * (s - 0.125);
+      for (let t = 0.03; t <= 2.5; t += 0.03) {
+        const y = prev - 0.5 * FALL_G * t * t;
+        const gl = arenaGroundHeight(arena, ex + dx * speed * t, ez + dz * speed * t);
+        if (y <= gl) return prev - gl >= deadly ? s - 0.125 : -1;
+      }
+      return -1;
+    }
+    prev = gy;
+  }
+  return -1;
+}
+
 const CACHE = new WeakMap<ArenaDef, Map<string, NavGrid>>();
 
-/** The (cached) grid for a body of `radius` plus `margin` on `arena`. Only meaningful for arenas with a heightfield. */
-export function getNavGrid(arena: ArenaDef, radius: number, margin: number): NavGrid {
+/**
+ * The (cached) grid for a body of `radius` plus `margin` on `arena`. Only meaningful for arenas with a heightfield. `hop` = the HOP
+ * grid: low jumpable solids (the Ocean's coral arches, 0.9 m high against a 1.2 m jump) do not block it; the navigator plans on it only
+ * when the ordinary grid has no route (a fighter shut in a crevice by an arch), and presses jump at the arch.
+ */
+export function getNavGrid(arena: ArenaDef, radius: number, margin: number, hop = false): NavGrid {
   let byKey = CACHE.get(arena);
   if (byKey === undefined) {
     byKey = new Map();
     CACHE.set(arena, byKey);
   }
-  const key = `${radius.toFixed(2)}:${margin.toFixed(2)}`;
+  const key = `${radius.toFixed(2)}:${margin.toFixed(2)}${hop ? ':hop' : ''}`;
   let g = byKey.get(key);
   if (g === undefined) {
-    g = buildGrid(arena, radius, margin);
+    g = buildGrid(arena, radius, margin, hop);
     byKey.set(key, g);
   }
   return g;
 }
 
+/** {@link arenaSolidDistance} without the jumpable segments (coral arches): the HOP grid's solids. */
+function solidDistanceHop(arena: ArenaDef, x: number, z: number): number {
+  let best = Infinity;
+  const solids = arena.solids;
+  for (let i = 0; i < solids.length; i++) {
+    const ob = solids[i];
+    let d: number;
+    if (ob.shape === 'circle') {
+      d = Math.hypot(x - ob.x, z - ob.z) - ob.radius;
+    } else if (ob.shape === 'segment') {
+      if (ob.jumpable) continue;
+      const abx = ob.bx - ob.ax;
+      const abz = ob.bz - ob.az;
+      const l2 = abx * abx + abz * abz;
+      const t = l2 > 1e-9 ? Math.max(0, Math.min(1, ((x - ob.ax) * abx + (z - ob.az) * abz) / l2)) : 0;
+      d = Math.hypot(x - (ob.ax + abx * t), z - (ob.az + abz * t)) - ob.thickness * 0.5;
+    } else {
+      d = Math.hypot(Math.max(0, Math.abs(x - ob.x) - ob.halfX), Math.max(0, Math.abs(z - ob.z) - ob.halfZ));
+    }
+    if (d < best) best = d;
+  }
+  return best;
+}
+
 const NB_DX = [1, -1, 0, 0, 1, 1, -1, -1];
 const NB_DZ = [0, 0, 1, -1, 1, -1, 1, -1];
 
-function buildGrid(arena: ArenaDef, radius: number, margin: number): NavGrid {
+function buildGrid(arena: ArenaDef, radius: number, margin: number, hop: boolean): NavGrid {
   const cell = NAV_CELL;
   const n = Math.ceil((arena.wallRadius * 2) / cell);
   const origin = -(n * cell) / 2;
@@ -95,7 +196,7 @@ function buildGrid(arena: ArenaDef, radius: number, margin: number): NavGrid {
       const z = origin + (iz + 0.5) * cell;
       h[i] = arenaGroundHeight(arena, x, z);
       const inside = Math.hypot(x, z) <= arena.wallRadius - R;
-      const sd = arenaSolidDistance(arena, x, z);
+      const sd = hop ? solidDistanceHop(arena, x, z) : arenaSolidDistance(arena, x, z);
       const cd = arenaCliffDistance(arena, x, z);
       solidOk[i] = inside && sd >= R ? 1 : 0;
       cliffOk[i] = Math.hypot(x, z) <= arena.wallRadius - radius && cd >= radius - 0.05 ? 1 : 0;
@@ -103,6 +204,50 @@ function buildGrid(arena: ArenaDef, radius: number, margin: number): NavGrid {
       clr[i] = Math.min(cd, sd, 4);
     }
   }
+  // v1.10 deadly edges: for every cell high enough to fall `deadly` metres, the distance to the nearest ledge (8 headings, up to
+  // RIM_FAR metres) off which a running body lands that far below ({@link deadlyEdgeAhead}); every other cell is far (or spreads below).
+  const fall = arena.hazards?.fallDamage;
+  const deadly = fall === undefined ? Infinity : fall.minDrop - FALL_SAFETY_M;
+  const rimD = new Float32Array(N).fill(RIM_FAR);
+  if (deadly < Infinity) {
+    for (let iz = 0; iz < n; iz++) {
+      for (let ix = 0; ix < n; ix++) {
+        const i = iz * n + ix;
+        if (h[i] < deadly) continue;
+        const x = origin + (ix + 0.5) * cell;
+        const z = origin + (iz + 0.5) * cell;
+        for (let d = 0; d < 8; d++) {
+          const ux = NB_DX[d] / (d < 4 ? 1 : Math.SQRT2);
+          const uz = NB_DZ[d] / (d < 4 ? 1 : Math.SQRT2);
+          const e = deadlyEdgeAhead(arena, x, z, ux, uz, RIM_FAR, deadly);
+          if (e >= 0 && e < rimD[i]) rimD[i] = Math.max(0.1, e);
+        }
+      }
+    }
+    // relax: spread the distance over cells of the same level (a ramp keeps its slope), a few chamfer passes
+    for (let pass = 0; pass < 12; pass++) {
+      let changed = false;
+      for (let iz = 0; iz < n; iz++) {
+        for (let ix = 0; ix < n; ix++) {
+          const i = iz * n + ix;
+          for (let d = 0; d < 8; d++) {
+            const jx = ix + NB_DX[d];
+            const jz = iz + NB_DZ[d];
+            if (jx < 0 || jz < 0 || jx >= n || jz >= n) continue;
+            const j = jz * n + jx;
+            if (Math.abs(h[j] - h[i]) >= DROP_MIN) continue; // another level: the edge is not "near" on this one
+            const nd = rimD[j] + (d < 4 ? cell : cell * Math.SQRT2);
+            if (nd < rimD[i] - 1e-6) {
+              rimD[i] = nd;
+              changed = true;
+            }
+          }
+        }
+      }
+      if (!changed) break;
+    }
+  }
+
   // Penalty for entering a cell near a cliff / solid, and beside a ledge (so paths use the middle of a ramp).
   const pen = new Float32Array(N);
   for (let iz = 0; iz < n; iz++) {
@@ -119,6 +264,7 @@ function buildGrid(arena: ArenaDef, radius: number, margin: number): NavGrid {
           break;
         }
       }
+      if (rimD[i] < RIM_PEN_R) p += (RIM_PEN_R - rimD[i]) * RIM_PEN_W;
       pen[i] = p;
     }
   }
@@ -155,7 +301,7 @@ function buildGrid(arena: ArenaDef, radius: number, margin: number): NavGrid {
         costList.push(len + pen[j]);
         kindList.push(EDGE_WALK);
       }
-      if (hasLedge) addDropEdges(arena, walk, solidOk, h, n, origin, cell, ix, iz, toList, costList, kindList);
+      if (hasLedge) addDropEdges(arena, walk, solidOk, h, n, origin, cell, ix, iz, toList, costList, kindList, deadly);
     }
   }
   adjStart[N] = toList.length;
@@ -170,6 +316,8 @@ function buildGrid(arena: ArenaDef, radius: number, margin: number): NavGrid {
     solidOk,
     cliffOk,
     h,
+    rimD,
+    deadly,
     adjStart,
     adjTo: Int32Array.from(toList),
     adjCost: Float32Array.from(costList),
@@ -202,6 +350,7 @@ function addDropEdges(
   toList: number[],
   costList: number[],
   kindList: number[],
+  deadly: number,
 ): void {
   const i = iz * n + ix;
   const x0 = origin + (ix + 0.5) * cell;
@@ -236,7 +385,8 @@ function addDropEdges(
         break;
       }
     }
-    if (found >= 0) {
+    // v1.10: a body that steps off keeps running while it falls - a "1.5 m ledge" beside a narrow strip lands it on the level below that
+    if (found >= 0 && deadlyEdgeAhead(arena, x0, z0, ux, uz, foundLen + 0.25, deadly) < 0) {
       toList.push(found);
       costList.push(foundLen + 1.0);
       kindList.push(EDGE_DROP);
@@ -251,6 +401,27 @@ export function cellOf(g: NavGrid, x: number, z: number): number {
   const iz = Math.floor((z - g.origin) / g.cell);
   if (ix < 0 || iz < 0 || ix >= g.n || iz >= g.n) return -1;
   return iz * g.n + ix;
+}
+
+/**
+ * v1.10: distance (m) from (x, z) to the nearest deadly edge on its level: the smallest {@link NavGrid.rimD} over the 3 x 3 cells
+ * around the point (a body standing on a ramp's edge or a tower's rim sits in a cell whose CENTRE is off the platform), capped at
+ * {@link RIM_FAR}; RIM_FAR for a point outside the grid.
+ */
+export function rimAt(g: NavGrid, x: number, z: number): number {
+  const ix = Math.floor((x - g.origin) / g.cell);
+  const iz = Math.floor((z - g.origin) / g.cell);
+  let best = RIM_FAR;
+  for (let dz = -1; dz <= 1; dz++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const jx = ix + dx;
+      const jz = iz + dz;
+      if (jx < 0 || jz < 0 || jx >= g.n || jz >= g.n) continue;
+      const v = g.rimD[jz * g.n + jx];
+      if (v < best) best = v;
+    }
+  }
+  return best;
 }
 
 export function cellX(g: NavGrid, i: number): number {
@@ -312,9 +483,12 @@ export const LINE_DROP = 2;
  *  - a height LOSS over a ledge (> DROP_MIN within 0.6 m) is allowed only with `allowDrop` (result LINE_DROP) and only down to
  *    DROP_MAX in total; samples AFTER the first drop need only be clear of solids (the sim's push-out settles the landing);
  *  - samples before the first drop must be `walk` cells (clear of cliffs and solids) unless `solids` is false (then only the
- *    cliff-clearance part is tested: used to ask "is TERRAIN in the way?", leaving solids to the steering feelers).
+ *    cliff-clearance part is tested: used to ask "is TERRAIN in the way?", leaving solids to the steering feelers);
+ *  - v1.10 `rimMin` > 0: a sample nearer than `rimMin` to a deadly edge ({@link NavGrid.rimD}) blocks the line unless it is no nearer
+ *    than where the line started (a bot standing at a tower rim may always walk AWAY from it); string-pulled shortcuts use it so a
+ *    path never cuts the corner of a tower top or of a tower ramp's side.
  */
-export function lineWalk(g: NavGrid, x0: number, z0: number, x1: number, z1: number, allowDrop: boolean, solids = true): number {
+export function lineWalk(g: NavGrid, x0: number, z0: number, x1: number, z1: number, allowDrop: boolean, solids = true, rimMin = 0): number {
   const dx = x1 - x0;
   const dz = z1 - z0;
   const len = Math.sqrt(dx * dx + dz * dz);
@@ -322,6 +496,11 @@ export function lineWalk(g: NavGrid, x0: number, z0: number, x1: number, z1: num
   let prevG = arenaGroundHeight(g.arena, x0, z0);
   let top = prevG;
   let dropped = false;
+  let rimFloor = 0;
+  if (rimMin > 0) {
+    const c0 = cellOf(g, x0, z0);
+    rimFloor = c0 >= 0 ? Math.min(rimMin, g.rimD[c0]) : rimMin;
+  }
   for (let k = 1; k <= steps; k++) {
     const t = k / steps;
     const x = x0 + dx * t;
@@ -331,6 +510,12 @@ export function lineWalk(g: NavGrid, x0: number, z0: number, x1: number, z1: num
     if (gy < top - DROP_MIN) {
       if (!allowDrop) return LINE_BLOCKED;
       if (top - gy > DROP_MAX) return LINE_BLOCKED;
+      if (!dropped && g.deadly < Infinity && len > 1e-6) {
+        // v1.10: ... and the flight from this ledge must not end a deadly drop below (see deadlyEdgeAhead)
+        const fx = x0 + dx * ((k - 1) / steps);
+        const fz = z0 + dz * ((k - 1) / steps);
+        if (deadlyEdgeAhead(g.arena, fx, fz, dx / len, dz / len, 0.9, g.deadly) >= 0) return LINE_BLOCKED;
+      }
       dropped = true;
     }
     prevG = gy;
@@ -338,6 +523,7 @@ export function lineWalk(g: NavGrid, x0: number, z0: number, x1: number, z1: num
     if (c < 0) return LINE_BLOCKED;
     if (!dropped) {
       if (solids ? g.walk[c] === 0 : g.cliffOk[c] === 0) return LINE_BLOCKED;
+      if (rimMin > 0 && g.rimD[c] < rimFloor - 1e-6) return LINE_BLOCKED;
     } else if (solids && g.solidOk[c] === 0) {
       return LINE_BLOCKED;
     }
@@ -477,6 +663,53 @@ export class NavSearch {
       }
     }
     return false;
+  }
+
+  /**
+   * Dijkstra from cell `s` over walk edges (and ledge drops when `dropOk`; never jumps) until the first cell for which `goal(cell)` is
+   * true is popped, giving up beyond total cost `maxCost`. `extra(cell)` is added to the cost of entering a cell. Returns that cell (the
+   * path `s` -> it is in {@link path}) or -1. Used by the serpent dodge to find the nearest safe cell.
+   */
+  findNearest(g: NavGrid, s: number, maxCost: number, goal: (c: number) => boolean, extra: (c: number) => number, dropOk: boolean): number {
+    this.pathLen = 0;
+    this.hasDrop = false;
+    if (s < 0) return -1;
+    this.serial++;
+    const ser = this.serial;
+    heapLen = 0;
+    this.gs[s] = 0;
+    this.stamp[s] = ser;
+    this.parent[s] = -1;
+    heapPush(0, s);
+    let expanded = 0;
+    while (heapLen > 0) {
+      const u = heapPop();
+      if (this.closed[u] === ser) continue;
+      this.closed[u] = ser;
+      if (u !== s && goal(u)) {
+        this.reconstruct(g, s, u);
+        return u;
+      }
+      expanded++;
+      if (expanded > 4000) break;
+      const gu = this.gs[u];
+      for (let e = g.adjStart[u]; e < g.adjStart[u + 1]; e++) {
+        const kind = g.adjKind[e];
+        if (kind === EDGE_JUMP || (kind === EDGE_DROP && !dropOk)) continue;
+        const v = g.adjTo[e];
+        const nc = gu + g.adjCost[e] + (kind === EDGE_DROP ? 1.5 : 0) + extra(v);
+        if (nc > maxCost) continue;
+        if (this.stamp[v] !== ser) {
+          this.stamp[v] = ser;
+        } else if (nc >= this.gs[v] - 1e-6) {
+          continue;
+        }
+        this.gs[v] = nc;
+        this.parent[v] = u;
+        heapPush(nc, v);
+      }
+    }
+    return -1;
   }
 
   private reconstruct(g: NavGrid, s: number, goal: number): void {

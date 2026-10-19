@@ -34,6 +34,7 @@ import * as THREE from 'three';
 import { DEG2RAD, clamp, wrapAngle } from '../core/math';
 import { fovKick } from './fxBus';
 import { arenaShake, getRenderArena, renderGroundHeight } from './arenaContext';
+import { domeExitDistance } from './ocean/domeShape';
 import { arenaGroundHeight, type ArenaDef } from '../config/arenas';
 import type { FpEyeSample } from './animals/fp/types';
 import { UltCamOut } from './animals/fp/ultCam'; // v1.3 FP ult: ultimate camera director output
@@ -100,7 +101,7 @@ const _target = new THREE.Vector3();
 const _pivot = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _camPos = new THREE.Vector3();
-const _hit: { hard: number; soft: number; terrain?: number } = { hard: 0, soft: 0 };
+const _hit: { hard: number; soft: number; terrain?: number; dome?: number } = { hard: 0, soft: 0 };
 
 // First-person scratch.
 const FP_REL_TAU = 0.035; // eye-offset smoothing (s); root position is NOT smoothed
@@ -333,6 +334,10 @@ export class CameraRig {
     const terrain = _hit.terrain;
     if (terrain !== undefined && terrain < desired && this.dist > terrain) this.dist += (terrain - this.dist) * (1 - Math.exp(-dt / TERRAIN_TAU)); // v1.9
     if (this.dist > hard) this.dist = hard;
+    // v1.10: the glass dome is a hard limit for the boom (a camera on a 6.5 m tower, pitched up, would otherwise leave the dome); like
+    // the ground it is not eased - the pivot moves smoothly, so the limit does too - and it does not feed the squeeze assist.
+    const dome = _hit.dome;
+    if (dome !== undefined && this.dist > dome) this.dist = dome;
     if (this.dist < MIN_DIST) this.dist = MIN_DIST;
 
     _camPos.copy(_pivot).addScaledVector(_dir, this.dist);
@@ -535,11 +540,12 @@ export function boomCast(
   ox: number, oy: number, oz: number,
   dx: number, dy: number, dz: number,
   maxDist: number,
-  out: { hard: number; soft: number; terrain?: number },
+  out: { hard: number; soft: number; terrain?: number; dome?: number },
 ): void {
   let hard = maxDist;
   let soft = maxDist;
   out.terrain = maxDist;
+  if (out.dome !== undefined) delete out.dome;
   const a = dx * dx + dz * dz;
 
   if (a > 1e-8) {
@@ -590,6 +596,8 @@ export function boomCast(
   // `TERRAIN_MARGIN` above the ground under every point of it, so a cliff / terrace / plateau between the player and the camera pulls
   // it in (`out.terrain`, eased by the rig and also feeding the wall-style squeeze assist that lifts the camera over the edge).
   if (arena.heightfield !== undefined) {
+    // The glass dome (v1.10): the boom end stays inside 94 % of the ellipsoid (radius wall + 2, height 22) - see `render/ocean/domeShape`.
+    out.dome = domeExitDistance(arena.wallRadius, ox, oy, oz, dx, dy, dz, maxDist);
     // The player's mid-body point the camera has to SEE (a cliff edge must not hide the fighter standing at its foot).
     const tx = ox;
     const ty = oy - TERRAIN_SIGHT_DROP;

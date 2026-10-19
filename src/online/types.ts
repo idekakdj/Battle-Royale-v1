@@ -19,8 +19,11 @@ import type { StageId } from '../brawl/types';
  *  2  v1.8 Jungle: BR snapshot fighter flags `inWater` (flags bit 7) / `onMoss` (opt bit 12) and the `splash` event (tag 22).
  *  3  v1.9 Ocean Dome: BR snapshot header flag 64 + the 6-byte sea-serpent block, events `serpentWarning`/`serpentStrike`/
  *     `serpentHit`/`serpentEnd` (tags 23-26) and a trailing cause byte on the `death` event.
+ *  4  v1.10 Ocean heights: BR snapshot header flag 128 = the second (HIGH) serpent's 6-byte block, the TIER BIT (bit 7 of the tag
+ *     byte) on the four serpent events, event `fall` (tag 27) and death cause byte 2 = fall; the data fingerprint also covers the
+ *     serpent lanes (`SERPENT_LANES`) and every arena's `hazards` (`serpentSplitY`, `fallDamage`).
  */
-export const ONLINE_PROTOCOL_VERSION = 3;
+export const ONLINE_PROTOCOL_VERSION = 4;
 
 export type OnlineMode = 'battleRoyale' | 'championsLeague';
 

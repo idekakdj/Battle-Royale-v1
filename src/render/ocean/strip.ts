@@ -7,10 +7,17 @@
  *
  * `buildStrip` returns plain arrays so the scene can copy them into a preallocated BufferGeometry (no allocation per frame - the strip
  * is rebuilt only when the strike angle changes, once per event).
+ *
+ * v1.10: the HIGH serpent's strip (`tier: 'high'`) is drawn ONLY where the ground is high (>= `hazards.serpentSplitY`): the same draped
+ * rows, but a quad is emitted only when all four corners stand on high ground, so the tower tops and the upper part of their ramps get
+ * a strip and the low ground (and the cliffs between) do not. The low strip is untouched (the lanes keep it off high ground anyway).
+ * `buildOverheadRibbon` is the faint flat band at the high serpent's flight height, wall -> centre, that tells players on low ground it
+ * passes overhead.
  */
 
 import { arenaGroundHeight, type ArenaDef } from '../../config/arenas';
 import { SERPENT } from '../../config/serpent';
+import type { SerpentTier } from '../../core/types';
 
 /** Columns across the strip (lateral fractions -1 .. 1). */
 export const STRIP_COLUMNS = 5;
@@ -61,7 +68,7 @@ function rowSignature(arena: ArenaDef, dx: number, dz: number, r: number, halfW:
 /**
  * Build the strip for a strike at `angleDeg` into `out` (reused). Rows are listed from the OUTER end (r = wall + 0.5) toward the centre.
  */
-export function buildStrip(arena: ArenaDef, angleDeg: number, out: StripGeometry = allocStrip()): StripGeometry {
+export function buildStrip(arena: ArenaDef, angleDeg: number, out: StripGeometry = allocStrip(), tier: SerpentTier = 'low'): StripGeometry {
   const a = (angleDeg * Math.PI) / 180;
   const dx = Math.cos(a);
   const dz = Math.sin(a);
@@ -124,6 +131,58 @@ export function buildStrip(arena: ArenaDef, angleDeg: number, out: StripGeometry
       out.positions[v * 3] = x;
       out.positions[v * 3 + 1] = y;
       out.positions[v * 3 + 2] = z;
+      out.rl[v * 2] = r;
+      out.rl[v * 2 + 1] = lat;
+      v++;
+    }
+  }
+  let k = 0;
+  const split = tier === 'high' ? arena.hazards?.serpentSplitY : undefined;
+  const high = (vi: number): boolean => out.positions[vi * 3 + 1] - STRIP_LIFT >= (split as number) - 1e-6;
+  for (let i = 0; i < rows - 1; i++) {
+    for (let c = 0; c < STRIP_COLUMNS - 1; c++) {
+      const a0 = i * STRIP_COLUMNS + c;
+      const b0 = a0 + 1;
+      const c0 = a0 + STRIP_COLUMNS;
+      const d0 = c0 + 1;
+      if (split !== undefined && !(high(a0) && high(b0) && high(c0) && high(d0))) continue;
+      out.indices[k++] = a0;
+      out.indices[k++] = c0;
+      out.indices[k++] = b0;
+      out.indices[k++] = b0;
+      out.indices[k++] = c0;
+      out.indices[k++] = d0;
+    }
+  }
+  out.rows = rows;
+  out.vertexCount = v;
+  out.indexCount = k;
+  return out;
+}
+
+
+/** Rows of the overhead ribbon (one every 0.5 m, wall + 0.5 -> centre). */
+export const RIBBON_STEP = 0.5;
+
+/**
+ * The faint flat ribbon of the HIGH serpent at height `y`, centre line wall -> centre, same half-width as the strip: 5 columns, rows
+ * every 0.5 m from `wall + 0.5` to 0 (same vertex layout and (r, lateral) attribute as the strip, so the same pooled buffers fit).
+ */
+export function buildOverheadRibbon(arena: ArenaDef, angleDeg: number, y: number, out: StripGeometry = allocStrip()): StripGeometry {
+  const a = (angleDeg * Math.PI) / 180;
+  const dx = Math.cos(a);
+  const dz = Math.sin(a);
+  const halfW = SERPENT.stripHalfWidth;
+  const r0 = arena.wallRadius + 0.5;
+  const rows = Math.min(STRIP_MAX_ROWS, Math.ceil(r0 / RIBBON_STEP) + 1);
+  let v = 0;
+  for (let i = 0; i < rows; i++) {
+    const r = Math.max(0, r0 - i * RIBBON_STEP);
+    for (let c = 0; c < STRIP_COLUMNS; c++) {
+      const lat = (c / (STRIP_COLUMNS - 1)) * 2 - 1;
+      out.positions[v * 3] = dx * r - dz * lat * halfW;
+      out.positions[v * 3 + 1] = y;
+      out.positions[v * 3 + 2] = dz * r + dx * lat * halfW;
       out.rl[v * 2] = r;
       out.rl[v * 2 + 1] = lat;
       v++;

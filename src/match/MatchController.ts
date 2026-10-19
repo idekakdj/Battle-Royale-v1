@@ -973,8 +973,11 @@ export class MatchController implements Screen {
         victimIsPlayer: e.targetId === 0,
         ...(killerName !== null ? { killerName } : {}),
         ...(victimName !== null ? { victimName } : {}),
-        ...(e.killerId === -1 ? { cause: e.cause === 'serpent' ? ('serpent' as const) : ('trap' as const) } : {}), // v1.9: serpent kills
-        ...(e.killerId === -1 && e.cause !== 'serpent' && this.lastTrapKind[e.targetId] !== undefined
+        // v1.9: serpent kills; v1.10: fatal falls off the upper platforms (both killerId −1; no cause = a trap)
+        ...(e.killerId === -1
+          ? { cause: e.cause === 'serpent' ? ('serpent' as const) : e.cause === 'fall' ? ('fall' as const) : ('trap' as const) }
+          : {}),
+        ...(e.killerId === -1 && e.cause === undefined && this.lastTrapKind[e.targetId] !== undefined
           ? { trapKind: this.lastTrapKind[e.targetId] }
           : {}),
       });
@@ -1070,16 +1073,23 @@ export class MatchController implements Screen {
     // v1.8 jungle: a fighter crossed the pool's waterline → splash rings + droplets (the audio engine hears it through the same bus).
     bus.on('splash', (e) => this.effects.handleSplashEvent(e));
 
-    // v1.9 Ocean Dome (WP-O4 HUD): the warning starts the "SEA SERPENT!" banner; the end clears it (also on a match-end abort).
+    // v1.9 Ocean Dome (WP-O4 HUD): the warning starts the lane's "SEA SERPENT! — … GROUND" banner; the end clears it (also on a
+    // match-end abort). v1.10: two serpents — the tier travels inside the event (absent = the LOW one), so one handler serves both.
     // (The alarm sound / scene set piece are other layers' own handlers on the same events.)
-    bus.on('serpentWarning', () => this.serpentHud?.onWarning(performance.now()));
-    bus.on('serpentEnd', () => this.serpentHud?.onEnd());
+    bus.on('serpentWarning', (e) => this.serpentHud?.onWarning(performance.now(), e.tier ?? 'low'));
+    bus.on('serpentEnd', (e) => this.serpentHud?.onEnd(e.tier ?? 'low'));
     // v1.9 Ocean Dome (WP-O3 scene): the same events fire the one-shot FX (glass shards + splash, hit flash); the persistent set piece
-    // (strip, serpent, cracks) is rendered from snapshot.serpent via `stadium.setSnapshot` above.
+    // (strip, serpent, cracks) is rendered from snapshot.serpent / snapshot.serpentHigh via `stadium.setSnapshot` above.
     bus.on('serpentWarning', (e) => this.stadium.onEvent?.(e));
     bus.on('serpentStrike', (e) => this.stadium.onEvent?.(e));
     bus.on('serpentHit', (e) => this.stadium.onEvent?.(e));
     bus.on('serpentEnd', (e) => this.stadium.onEvent?.(e));
+    // v1.10 fall damage (Ocean Dome): the scene shows the landing FX; the LOCAL player also gets the screen-edge flash, a floating
+    // "-50" and (once per match) the "use the ramps" hint. Bots' falls show up in the kill feed only when fatal.
+    bus.on('fall', (e) => {
+      this.stadium.onEvent?.(e);
+      if (e.fighterId === 0) this.hud.fallHit(e.damage);
+    });
   }
 
   /** Fighter the camera follows: the player, or the spectated bot once dead. */

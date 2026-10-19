@@ -25,6 +25,8 @@ export interface OceanShared {
   uDome: { value: THREE.Vector2 };
   /** 0..1 red-orange alarm tint on the interior surfaces (serpent warning). */
   uAlarm: { value: number };
+  /** 0..1 violet alarm tint (the HIGH serpent's warning, v1.10). */
+  uAlarmHigh: { value: number };
 }
 
 export function createShared(domeRadius: number, domeHeight: number): OceanShared {
@@ -34,6 +36,7 @@ export function createShared(domeRadius: number, domeHeight: number): OceanShare
     uWaterDens: { value: 0.017 },
     uDome: { value: new THREE.Vector2(domeRadius, domeHeight) },
     uAlarm: { value: 0 },
+    uAlarmHigh: { value: 0 },
   };
 }
 
@@ -45,6 +48,7 @@ uniform vec3 uWaterCol;
 uniform float uWaterDens;
 uniform vec2 uDome;
 uniform float uAlarm;
+uniform float uAlarmHigh;
 varying vec3 gkW;
 varying vec3 gkWN;
 float gkHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -103,6 +107,7 @@ export function patchLit(mat: THREE.MeshStandardMaterial, shared: OceanShared, o
     shader.uniforms.uWaterDens = shared.uWaterDens;
     shader.uniforms.uDome = shared.uDome;
     shader.uniforms.uAlarm = shared.uAlarm;
+    shader.uniforms.uAlarmHigh = shared.uAlarmHigh;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 gkW;\nvarying vec3 gkWN;')
       .replace(
@@ -149,6 +154,7 @@ diffuseColor.rgb *= 1.0 + gkUp * 0.075 * sin(gkRA);`,
   float gkMask = (gkTop + (1.0 - gkTop) * 0.3) * gkInside;
   totalEmissiveRadiance += diffuseColor.rgb * vec3(0.5, 0.95, 0.9) * gkC * gkMask * ${caus.toFixed(2)};
   totalEmissiveRadiance += diffuseColor.rgb * vec3(1.0, 0.22, 0.08) * uAlarm * 0.2 * gkInside;
+  totalEmissiveRadiance += diffuseColor.rgb * vec3(0.75, 0.2, 1.0) * uAlarmHigh * 0.2 * gkInside;
 }`,
       );
     }

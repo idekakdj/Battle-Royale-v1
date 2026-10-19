@@ -14,6 +14,7 @@
  *   traps    u8 phase|hasTime · u8 triggeredBy+1 · [timeLeft]
  *   projectiles (when present/non-empty) varu n · each id/kind/pos/vel/radius/owner
  *   serpent  (header flag 64; v1.9 Ocean Dome event, absent otherwise) u16 angle·360/65536 · u16 phase<<14 | t ms · u16 headR cm = 6 bytes
+ *   serpentHigh (header flag 128; v1.10: the HIGH serpent's block, same 6 bytes, written after the low one; the flags are independent)
  *   stats   (flag; keyframes, every 8th seq, match over) per fighter kills · damageDealt · damageBlocked · ultsUsed
  *
  * Absent optional data costs nothing (ult fields, buffs, grab links, glide/burrow clocks, cooldown timers, …).
@@ -69,7 +70,7 @@ const H_PROJ_DEFINED = 8;
 const H_PROJ_NONEMPTY = 16;
 const H_EXPLICIT_IDS = 32;
 const H_SERPENT = 64; // v1.9: a sea-serpent block follows the projectiles (6 bytes; absent most of the time)
-const H_UNKNOWN = 128; // reserved: a packet carrying it is rejected
+const H_SERPENT_HIGH = 128; // v1.10: the high serpent's block follows the low one (the last header bit; protocol 4)
 
 // ── Fighter flag bits ────────────────────────────────────────────────────────
 const F_ALIVE = 1;
@@ -161,6 +162,7 @@ export function encodeSnapshot(s: WorldSnapshot, opts: EncodeOptions): Uint8Arra
   if (projNonEmpty) flags |= H_PROJ_NONEMPTY;
   if (explicitIds) flags |= H_EXPLICIT_IDS;
   if (s.serpent !== undefined) flags |= H_SERPENT;
+  if (s.serpentHigh !== undefined) flags |= H_SERPENT_HIGH;
   w.u8(flags);
   w.u8(nF).u8(s.pickups.length).u8(s.crates.length).u8(s.traps.length);
   w.u16(qU16(s.bloodlustMult, Q.SMALL));
@@ -199,12 +201,8 @@ export function encodeSnapshot(s: WorldSnapshot, opts: EncodeOptions): Uint8Arra
       writeOptId(w, p.ownerId);
     }
   }
-  if (s.serpent !== undefined) {
-    const sp = s.serpent;
-    w.u16(angleDegToU16(sp.angleDeg));
-    w.u16((encEnum(SERPENT_PHASE_TABLE, sp.phase) << 14) | Math.min(SERPENT_T_MAX, qU16(sp.t, Q.TIME)));
-    w.u16(qU16(sp.headR, Q.POS));
-  }
+  if (s.serpent !== undefined) writeSerpent(w, s.serpent);
+  if (s.serpentHigh !== undefined) writeSerpent(w, s.serpentHigh);
   if (stats) {
     for (let i = 0; i < nF; i++) {
       const f = s.fighters[i];
@@ -215,6 +213,18 @@ export function encodeSnapshot(s: WorldSnapshot, opts: EncodeOptions): Uint8Arra
     }
   }
   return w.finish();
+}
+
+function writeSerpent(w: ByteWriter, sp: SerpentState): void {
+  w.u16(angleDegToU16(sp.angleDeg));
+  w.u16((encEnum(SERPENT_PHASE_TABLE, sp.phase) << 14) | Math.min(SERPENT_T_MAX, qU16(sp.t, Q.TIME)));
+  w.u16(qU16(sp.headR, Q.POS));
+}
+
+function readSerpent(r: ByteReader): SerpentState {
+  const angleDeg = u16ToAngleDeg(r.u16());
+  const pt = r.u16();
+  return { phase: decEnum(SERPENT_PHASE_TABLE, pt >> 14), angleDeg, t: (pt & SERPENT_T_MAX) / Q.TIME, headR: r.u16() / Q.POS };
 }
 
 function qCount(v: number): number {
@@ -347,7 +357,6 @@ export class SnapshotDecoder {
     const seq = r.u16();
     const timeMs = r.i32();
     const flags = r.u8();
-    if ((flags & H_UNKNOWN) !== 0) return null;
     const nF = r.u8();
     const nP = r.u8();
     const nC = r.u8();
@@ -430,12 +439,8 @@ export class SnapshotDecoder {
         }
       }
     }
-    let serpent: SerpentState | undefined;
-    if ((flags & H_SERPENT) !== 0) {
-      const angleDeg = u16ToAngleDeg(r.u16());
-      const pt = r.u16();
-      serpent = { phase: decEnum(SERPENT_PHASE_TABLE, pt >> 14), angleDeg, t: (pt & SERPENT_T_MAX) / Q.TIME, headR: r.u16() / Q.POS };
-    }
+    const serpent: SerpentState | undefined = (flags & H_SERPENT) !== 0 ? readSerpent(r) : undefined;
+    const serpentHigh: SerpentState | undefined = (flags & H_SERPENT_HIGH) !== 0 ? readSerpent(r) : undefined;
     const newCarry: { kills: number; dmg: number; blk: number; ults: number }[] = [];
     if (hasStats) {
       for (let i = 0; i < nF; i++) {
@@ -477,6 +482,7 @@ export class SnapshotDecoder {
     };
     if (projectiles !== undefined) snapshot.projectiles = projectiles;
     if (serpent !== undefined) snapshot.serpent = serpent;
+    if (serpentHigh !== undefined) snapshot.serpentHigh = serpentHigh;
     return { seq, keyframe, snapshot };
   }
 }

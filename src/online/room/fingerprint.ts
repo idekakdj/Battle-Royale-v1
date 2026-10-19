@@ -7,7 +7,9 @@
  *   battleRoyale     ANIMALS (incl. ultimates + the v1.8 `swim` attribute) + balance + traps + arena + ARENAS + terrain
  *                    (everything host AND client read; `arena` = the colosseum constants, `arenas` = the v1.8 registry incl.
  *                    the jungle's trees/logs/terrain zones, `terrain` = the v1.8 moss / water / splash tuning numbers,
- *                    `serpent` = the v1.9 sea-serpent event numbers)
+ *                    `serpent` = the v1.9 sea-serpent event numbers, v1.10: `serpentLanes` = the two-lane tuning (seed salt of the
+ *                    high serpent, lane margins) and `hazards` = every arena's `hazards` (`serpent`, `serpentSplitY`, `fallDamage`),
+ *                    listed explicitly on top of the registry so a changed split height / fall rule can never go unnoticed)
  *
  * VERSION COMPATIBILITY RULE (v1.5.1+): two builds can play together when they have the same
  * `ONLINE_PROTOCOL_VERSION`, the same data fingerprint AND the same app major.minor (1.5.0 <-> 1.5.2 are compatible,
@@ -23,6 +25,7 @@ import * as traps from '../../config/traps';
 import * as arena from '../../config/arena';
 import * as terrain from '../../config/terrain';
 import * as serpent from '../../config/serpent';
+import { SERPENT_LANES } from '../../config/serpentLanes';
 import { ARENAS } from '../../config/arenas';
 import { PHYS } from '../../brawl/config';
 import { MOVESETS, STAGES } from '../../brawl/data';
@@ -118,6 +121,8 @@ export function fingerprintData(mode: OnlineMode): unknown {
     arenas: ARENAS,
     terrain: { ...terrain },
     serpent: { ...serpent }, // v1.9: the sea-serpent timeline / damage / strip numbers
+    serpentLanes: { ...SERPENT_LANES }, // v1.10: lane tuning (the high serpent's seed salt, lane margins, sampling step)
+    hazards: Object.fromEntries(Object.entries(ARENAS).map(([id, a]) => [id, a.hazards ?? null])), // v1.10: serpentSplitY / fallDamage per arena
   };
 }
 

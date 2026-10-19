@@ -99,7 +99,13 @@ describe('roll statistics (own RNG stream)', () => {
     for (const seed of [1, 7, 12345, 0xdeadbeef]) {
       const rng = mulberry32((seed ^ SERPENT.seedSalt) >>> 0);
       const wantStart = rng() < SERPENT.chance;
-      const wantAngle = wantStart ? rng() * 360 : -1;
+      // v1.10: the angle is drawn by `pickLaneAngle` (exactly two draws: a bin, then a fraction inside it); on an arena without a
+      // serpent split every one of the 360 one-degree bins is allowed
+      let wantAngle = -1;
+      if (wantStart) {
+        const bin = Math.min(359, Math.floor(rng() * 360));
+        wantAngle = bin + rng();
+      }
       const { sim } = stubSim([]);
       const sys = new SerpentSystem(seed, FLAT_ARENA);
       sim.time = SERPENT.intervalS;
@@ -186,9 +192,15 @@ describe('World: rolls happen on exact live-time multiples of the interval', () 
     for (let i = 0; i < 29; i++) world.step(DT); // 0.48 s of fight
     expect(world.serpent?.rollLog).toHaveLength(0);
     for (let i = 0; i < 3; i++) world.step(DT);
+    // v1.10: the Ocean Dome runs two lanes; each rolls once, at 0.5 s, and each starts (chance 1): one warning per lane
+    const lanes = world.serpent?.lanes ?? [];
+    expect(lanes.length).toBe(world.serpent?.high !== null ? 2 : 1);
+    for (const lane of lanes) {
+      expect(lane.rollLog).toHaveLength(1);
+      expect(lane.rollLog[0].at).toBe(0.5);
+    }
     expect(world.serpent?.rollLog).toHaveLength(1);
-    expect(world.serpent?.rollLog[0].at).toBe(0.5);
-    expect(events.filter((e) => e.type === 'serpentWarning')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'serpentWarning')).toHaveLength(lanes.length);
   });
 
   it('the serpent never perturbs the sim RNG: forced events or not, world.rng() is the same stream', () => {

@@ -155,6 +155,8 @@ export function lerpSnapshots(a: WorldSnapshot, b: WorldSnapshot, alphaIn: numbe
   }
   const serpent = lerpSerpent(a.serpent, b.serpent, alpha, b.time - a.time);
   if (serpent !== undefined) out.serpent = serpent;
+  const serpentHigh = lerpSerpent(a.serpentHigh, b.serpentHigh, alpha, b.time - a.time); // v1.10: the second (high) serpent, same rule
+  if (serpentHigh !== undefined) out.serpentHigh = serpentHigh;
   return out;
 }
 
@@ -235,5 +237,6 @@ export function extrapolateSnapshot(s: WorldSnapshot, dtS: number): WorldSnapsho
     }));
   }
   if (s.serpent !== undefined) out.serpent = { ...s.serpent, t: s.serpent.t + dtS }; // never aliases; the clock keeps running
+  if (s.serpentHigh !== undefined) out.serpentHigh = { ...s.serpentHigh, t: s.serpentHigh.t + dtS };
   return out;
 }

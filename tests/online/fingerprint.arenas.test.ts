@@ -5,18 +5,30 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { computeFingerprint, fingerprintData, fnv1a32, hex32, stableStringify } from '../../src/online/room/fingerprint';
-import { ARENAS, JUNGLE_ARENA } from '../../src/config/arenas';
+import { computeFingerprint, diffVersions, fingerprintData, fnv1a32, hex32, localVersions, stableStringify } from '../../src/online/room/fingerprint';
+import { ARENAS, JUNGLE_ARENA, OCEAN_ARENA } from '../../src/config/arenas';
 import * as arena from '../../src/config/arena';
 import * as serpentCfg from '../../src/config/serpent';
+import { SERPENT_LANES } from '../../src/config/serpentLanes';
+import { ONLINE_PROTOCOL_VERSION } from '../../src/online/types';
 
-type BrData = { animals: unknown; balance: unknown; traps: unknown; arena: unknown; arenas: typeof ARENAS; terrain: unknown; serpent: Record<string, unknown> };
+type BrData = {
+  animals: unknown;
+  balance: unknown;
+  traps: unknown;
+  arena: unknown;
+  arenas: typeof ARENAS;
+  terrain: unknown;
+  serpent: Record<string, unknown>;
+  serpentLanes: Record<string, number>;
+  hazards: Record<string, unknown>;
+};
 
 describe('battleRoyale fingerprint covers the arena registry', () => {
   const data = fingerprintData('battleRoyale') as BrData;
 
   it('hashes the ARENAS registry as an additive key; the original inputs are still all there', () => {
-    expect(Object.keys(data).sort()).toEqual(['animals', 'arena', 'arenas', 'balance', 'serpent', 'terrain', 'traps']);
+    expect(Object.keys(data).sort()).toEqual(['animals', 'arena', 'arenas', 'balance', 'hazards', 'serpent', 'serpentLanes', 'terrain', 'traps']);
     expect(data.arenas).toBe(ARENAS);
     expect(Object.keys(data.arenas).sort()).toEqual(['colosseum', 'jungle', 'ocean']);
     expect(stableStringify(data.arena)).toBe(stableStringify({ ...arena }));
@@ -88,5 +100,61 @@ describe('battleRoyale fingerprint covers the arena registry', () => {
   it('Champions League data does not include the arenas', () => {
     const cl = fingerprintData('championsLeague') as Record<string, unknown>;
     expect(Object.keys(cl).sort()).toEqual(['movesets', 'phys', 'stages']);
+  });
+});
+
+describe('v1.10 the fingerprint covers the serpent lanes, the split height and the fall rule', () => {
+  const data = fingerprintData('battleRoyale') as BrData;
+  const hash = (v: unknown): string => hex32(fnv1a32(stableStringify(v)));
+  const baseHash = hash(data);
+
+  it('speaks protocol 4 (snapshot flag 128, the tier bit, the fall event, death cause 2)', () => {
+    expect(ONLINE_PROTOCOL_VERSION).toBe(4);
+    expect(localVersions().protocol).toBe(4);
+  });
+
+  it('hashes SERPENT_LANES: changing any lane number changes the fingerprint', () => {
+    expect(stableStringify(data.serpentLanes)).toBe(stableStringify({ ...SERPENT_LANES }));
+    for (const key of Object.keys(SERPENT_LANES) as Array<keyof typeof SERPENT_LANES>) {
+      expect(typeof data.serpentLanes[key], key).toBe('number');
+      const changed = { ...data, serpentLanes: { ...data.serpentLanes, [key]: data.serpentLanes[key] + 1 } };
+      expect(hash(changed), key).not.toBe(baseHash);
+    }
+  });
+
+  it("lists every arena's hazards explicitly: the split height and the fall rule are part of the hash on their own (arenas unchanged)", () => {
+    expect(Object.keys(data.hazards).sort()).toEqual(['colosseum', 'jungle', 'ocean']);
+    for (const id of ['colosseum', 'jungle', 'ocean'] as const) expect(data.hazards[id]).toEqual(ARENAS[id].hazards ?? null);
+    const base = OCEAN_ARENA.hazards ?? {};
+    const split = (base as { serpentSplitY?: number }).serpentSplitY ?? 4.5;
+    const fall = (base as { fallDamage?: { minDrop: number; damage: number } }).fallDamage ?? { minDrop: 3.4, damage: 50 };
+    const variants: Array<[string, unknown]> = [
+      ['serpentSplitY', { ...base, serpentSplitY: split + 0.1 }],
+      ['fallDamage.damage', { ...base, fallDamage: { ...fall, damage: fall.damage + 1 } }],
+      ['fallDamage.minDrop', { ...base, fallDamage: { ...fall, minDrop: fall.minDrop + 0.1 } }],
+      ['fallDamage removed', { serpent: true, serpentSplitY: split }],
+      ['serpentSplitY removed', { serpent: true, fallDamage: fall }],
+      ['hazards removed', null],
+    ];
+    for (const [name, h] of variants) {
+      const changed = { ...data, hazards: { ...data.hazards, ocean: h } };
+      expect(hash(changed), name).not.toBe(baseHash);
+    }
+    // another arena's hazards count too
+    expect(hash({ ...data, hazards: { ...data.hazards, jungle: { serpent: true } } })).not.toBe(baseHash);
+  });
+
+  it('a peer whose lane / hazard data differs is refused by the handshake (diffVersions reports the battleRoyale fingerprint)', () => {
+    const mine = localVersions();
+    const theirs = { ...mine, fingerprints: { ...mine.fingerprints, battleRoyale: hash({ ...data, serpentLanes: { ...data.serpentLanes, highSeedSalt: 1 } }) } };
+    expect(diffVersions(mine, theirs)).toEqual(['fingerprint:battleRoyale']);
+    expect(diffVersions(mine, { ...mine })).toEqual([]);
+    expect(diffVersions(mine, { ...mine, protocol: 3 })).toEqual(['protocol']);
+  });
+
+  it('Champions League is untouched by all of it', () => {
+    const cl = fingerprintData('championsLeague') as Record<string, unknown>;
+    expect(Object.keys(cl)).not.toContain('serpentLanes');
+    expect(Object.keys(cl)).not.toContain('hazards');
   });
 });

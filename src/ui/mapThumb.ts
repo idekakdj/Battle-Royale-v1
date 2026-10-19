@@ -9,9 +9,16 @@
  * v1.9 Ocean Dome: the arena's `heightfield` is drawn level by level (the terrace ring and the plateau shaded lighter with height,
  * every ramp as a short stepped wedge that blends from its low end's shade to its high end's), and an arena with a sea-serpent
  * hazard gets a faint red strip hint (the telegraphed strike line) with a small head chevron outside the dome.
+ *
+ * v1.10 upper tier: the sea-stack towers (flat pieces at or above {@link UPPER_FROM_M}) get their own pale-violet tone with a dark
+ * cliff edge, and the ramps that climb to them blend from the plateau's shade into that tone (the pad dot on each top is the usual
+ * pad). An arena with the second (high) serpent shows a violet strip hint too, along a lane the high serpent really uses, next to
+ * the red one along a lane the low serpent really uses (both picked from `serpentLaneBins`, so the picture never lies).
  */
 
 import type { ArenaDef, ElevationPiece } from '../config/arenas';
+import { arenaHasHighSerpent } from '../config/arenas';
+import { serpentLaneBins } from '../config/serpentLanes';
 
 /** Per-arena palette (CSS colours). Unknown arena ids use the colosseum's. */
 interface ThumbPalette {
@@ -34,6 +41,11 @@ interface ThumbPalette {
   top?: string;
   /** The faint strike-strip hint colour (arenas with a sea-serpent hazard). */
   hazard?: string;
+  /** Tone of the upper tier (flat pieces at or above {@link UPPER_FROM_M}) and its cliff edge. */
+  upper?: string;
+  upperEdge?: string;
+  /** The faint strike-strip hint colour of the HIGH serpent (arenas with the second serpent). */
+  hazardHigh?: string;
 }
 
 const COLOSSEUM_PALETTE: ThumbPalette = {
@@ -83,7 +95,13 @@ const OCEAN_PALETTE: ThumbPalette = {
   rock: '#8a98a6',
   top: '#c4f1e6',
   hazard: '#ff4a3a',
+  upper: '#cfa8ff',
+  upperEdge: '#3b1d73',
+  hazardHigh: '#c36bff',
 };
+
+/** Flat pieces at least this high (metres) are the upper tier (the sea-stack towers, 6.5 m): drawn in the `upper` tone. */
+export const UPPER_FROM_M = 6;
 
 function r1(v: number): string {
   return String(Math.round(v * 10) / 10);
@@ -110,6 +128,13 @@ function maxLevel(hf: readonly ElevationPiece[]): number {
   return m;
 }
 
+/** Highest FLAT level below {@link UPPER_FROM_M} (the plateau, 3 m): the lightest of the ordinary mint shades. */
+function maxLowLevel(hf: readonly ElevationPiece[]): number {
+  let m = 0;
+  for (const p of hf) if (p.kind !== 'ramp' && p.height < UPPER_FROM_M) m = Math.max(m, p.height);
+  return m;
+}
+
 /** SVG path of a full circle (so an annulus can use `fill-rule: evenodd`). */
 function circlePath(x: number, z: number, r: number): string {
   return `M${r1(x - r)} ${r1(z)}a${r1(r)} ${r1(r)} 0 1 0 ${r1(r * 2)} 0a${r1(r)} ${r1(r)} 0 1 0 ${r1(-r * 2)} 0`;
@@ -122,17 +147,27 @@ function elevationMarkup(arena: ArenaDef, p: ThumbPalette): string[] {
   const hf = arena.heightfield;
   if (hf === undefined || hf.length === 0) return [];
   const top = p.top ?? '#ffffff';
-  const hMax = Math.max(0.001, maxLevel(hf));
-  const shade = (h: number): string => mixHex(p.ground, top, (h / hMax) * 0.85);
+  const hAll = Math.max(0.001, maxLevel(hf));
+  const hLow = maxLowLevel(hf);
+  const upper = p.upper ?? top;
+  // Ordinary levels: ground -> mint (the plateau is the lightest). Above the plateau (the towers' ramps and tops): mint -> `upper`.
+  const hMax = Math.max(0.001, hLow > 0 && hAll > hLow ? hLow : hAll);
+  const shade = (h: number): string =>
+    h <= hMax || hAll <= hMax
+      ? mixHex(p.ground, top, (Math.min(h, hMax) / hMax) * 0.85)
+      : mixHex(mixHex(p.ground, top, 0.85), upper, (h - hMax) / (hAll - hMax));
   const parts: string[] = [];
   const flats = hf
     .filter((e): e is Exclude<ElevationPiece, { kind: 'ramp' }> => e.kind !== 'ramp')
     .sort((a, b) => a.height - b.height);
   for (const e of flats) {
-    const fill = shade(e.height);
+    const isUpper = p.upper !== undefined && e.height >= UPPER_FROM_M;
+    const fill = isUpper ? upper : shade(e.height);
     if (e.kind === 'plateau') {
       parts.push(
-        `<circle cx="${r1(e.x)}" cy="${r1(e.z)}" r="${r1(e.radius)}" fill="${fill}" stroke="${p.groundEdge}" stroke-width="0.5" stroke-opacity="0.8"/>`,
+        isUpper
+          ? `<circle cx="${r1(e.x)}" cy="${r1(e.z)}" r="${r1(e.radius)}" fill="${fill}" stroke="${p.upperEdge ?? p.groundEdge}" stroke-width="0.9" data-tier="upper"/>`
+          : `<circle cx="${r1(e.x)}" cy="${r1(e.z)}" r="${r1(e.radius)}" fill="${fill}" stroke="${p.groundEdge}" stroke-width="0.5" stroke-opacity="0.8"/>`,
       );
     } else {
       parts.push(
@@ -160,19 +195,47 @@ function elevationMarkup(arena: ArenaDef, p: ThumbPalette): string[] {
 
 /** Strike angle of the faint serpent hint (degrees, direction (cos, sin) in (x, z)): up-right, clear of the player's seat at the bottom. */
 export const THUMB_SERPENT_DEG = 305;
+/** The HIGH serpent's hint points toward the left-hand tower (180 degrees), away from the low hint. */
+export const THUMB_SERPENT_HIGH_DEG = 180;
 
-/** The faint telegraphed-strip hint (a translucent bar centre -> edge) plus a small head chevron just outside the wall. */
-function hazardMarkup(arena: ArenaDef, p: ThumbPalette): string[] {
-  if (arena.hazards?.serpent !== true) return [];
-  const colour = p.hazard ?? '#ff4a3a';
+/** The allowed 1-degree bin nearest to `deg` (circular), as the angle of the bin's middle; `deg` itself when there are no bins. */
+function nearestBinMiddle(bins: readonly number[], deg: number): number {
+  let best = deg;
+  let bestD = Infinity;
+  for (const b of bins) {
+    const d = Math.abs((((b + 0.5 - deg) % 360) + 540) % 360 - 180);
+    if (d < bestD) {
+      bestD = d;
+      best = b + 0.5;
+    }
+  }
+  return best;
+}
+
+/** One faint telegraphed strip (a translucent bar centre -> edge at `deg`) plus a small head chevron just outside the wall. */
+function stripMarkup(arena: ArenaDef, colour: string, deg: number, tier: 'low' | 'high'): string {
   const R = arena.wallRadius;
   const len = R + 2;
   const half = 1.8;
   const chev = `M${r1(R + 1.6)} 0 L${r1(R + 5)} ${r1(-2.4)} L${r1(R + 3.6)} 0 L${r1(R + 5)} ${r1(2.4)} Z`;
+  return (
+    `<g transform="rotate(${r1(deg)})" data-hint="serpent" data-tier="${tier}">` +
+    `<rect x="0" y="${r1(-half)}" width="${r1(len)}" height="${r1(half * 2)}" fill="${colour}" fill-opacity="0.26"/>` +
+    `<path d="${chev}" fill="${colour}" fill-opacity="0.85"/></g>`
+  );
+}
+
+/**
+ * The faint telegraphed-strip hints: a red one for the low serpent and (v1.10, arenas with the high lane) a violet one for the high
+ * serpent, each along an angle its lane really uses (nearest allowed bin to the nominal hint angle).
+ */
+function hazardMarkup(arena: ArenaDef, p: ThumbPalette): string[] {
+  if (arena.hazards?.serpent !== true) return [];
+  if (!arenaHasHighSerpent(arena)) return [stripMarkup(arena, p.hazard ?? '#ff4a3a', THUMB_SERPENT_DEG, 'low')];
+  const bins = serpentLaneBins(arena);
   return [
-    `<g transform="rotate(${THUMB_SERPENT_DEG})" data-hint="serpent">` +
-      `<rect x="0" y="${r1(-half)}" width="${r1(len)}" height="${r1(half * 2)}" fill="${colour}" fill-opacity="0.26"/>` +
-      `<path d="${chev}" fill="${colour}" fill-opacity="0.85"/></g>`,
+    stripMarkup(arena, p.hazard ?? '#ff4a3a', nearestBinMiddle(bins.low, THUMB_SERPENT_DEG), 'low'),
+    stripMarkup(arena, p.hazardHigh ?? '#c36bff', nearestBinMiddle(bins.high, THUMB_SERPENT_HIGH_DEG), 'high'),
   ];
 }
 

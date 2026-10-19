@@ -16,6 +16,7 @@ import type {
   GameEvent,
   MatchConfig,
   PickupState,
+  SerpentTier,
   WorldSnapshot,
   BuffState,
 } from '../core/types';
@@ -26,7 +27,7 @@ import { MATCH, BLOODLUST, ULT } from '../config/balance';
 import type { Obstacle } from '../config/arena';
 import { getArena, spawnPositions, staticObstaclesOf, type ArenaDef } from '../config/arenas';
 import { Fighter, type Sim, type CrateRuntime } from './Fighter';
-import { groundHeightAt, locomote, resolveFighterCollisions, cancelFlight } from './MovementSystem';
+import { groundHeightAt, locomote, resolveFighterCollisions, cancelFlight, checkFallLanding } from './MovementSystem';
 import { flightLocked, landingSlam } from './soar';
 import { tickBuffs } from './StatusEffects';
 import { updateGuard, setBlocking, tryStartSwing, updateSwing, grantTakenCharge } from './CombatSystem';
@@ -52,6 +53,11 @@ export interface WorldOptions {
    * `hazards.serpent`; the defaults are the real rules of `config/serpent.ts`.
    */
   serpent?: SerpentOptions;
+  /**
+   * Test / QA fixture: play on this arena definition instead of `ARENAS[cfg.arena]` (`cfg.arena` is then only a label). Lets tests
+   * build a small synthetic heightfield (platform + ramp) without touching the shipped registry. Absent in every real match.
+   */
+  arena?: ArenaDef;
 }
 
 export class World implements Sim {
@@ -71,8 +77,15 @@ export class World implements Sim {
   private pickups: PickupState[];
   /** Arena traps (v1.2); empty when disabled or the difficulty places none. */
   traps: TrapRuntime[];
-  /** v1.9 sea-serpent event (Ocean Dome); null on arenas without `hazards.serpent`, which then never see it. */
+  /**
+   * v1.9 sea-serpent events (Ocean Dome); null on arenas without `hazards.serpent`, which then never see it. v1.10: two lanes
+   * (`serpent.low`, and `serpent.high` on arenas with `hazards.serpentSplitY`).
+   */
   readonly serpent: SerpentSystem | null;
+  /** v1.10 fall damage rule of the arena (`hazards.fallDamage`), null elsewhere: the colosseum / jungle never run the landing pass. */
+  private readonly fallRule: { minDrop: number; damage: number } | null;
+  /** Fighter ids that took fall damage during the CURRENT tick (`kill` reads it to tag `cause: 'fall'`). */
+  private readonly fallNow: number[] = [];
   /** v1.3 projectile system (nothing spawns projectiles yet; gorilla Boulder Hurl will). */
   readonly projectiles = new ProjectileSystem();
   /** v1.3 hippo mud: persistent ground zones (Riverlord's Flood pools). */
@@ -86,7 +99,7 @@ export class World implements Sim {
   constructor(cfg: MatchConfig, seed: number, bus: EventBus, opts: WorldOptions = {}) {
     this.bus = bus;
     this.rng = mulberry32(seed);
-    this.arena = getArena(cfg.arena);
+    this.arena = opts.arena ?? getArena(cfg.arena);
     this.staticObstacles = staticObstaclesOf(this.arena);
     this.terrain = new TerrainSystem(this.arena);
 
@@ -118,6 +131,7 @@ export class World implements Sim {
     this.traps = opts.traps === false ? [] : placeTraps(seed, cfg.difficulty, spawns, n, this.arena);
     // v1.9: own RNG stream (seed ^ salt) as well — the serpent never perturbs this.rng.
     this.serpent = this.arena.hazards?.serpent === true ? new SerpentSystem(seed, this.arena, opts.serpent) : null;
+    this.fallRule = this.arena.hazards?.fallDamage ?? null;
   }
 
   // ── Public API (§5.1) ──────────────────────────────────────────────────────
@@ -138,6 +152,7 @@ export class World implements Sim {
 
     this.time += dt;
     this.updateBloodlust();
+    this.fallNow.length = 0;
 
     const fs = this.fighters;
 
@@ -238,6 +253,9 @@ export class World implements Sim {
     }
     resolveFighterCollisions(this);
 
+    // 3-fall. v1.10 fall damage (Ocean Dome): a landing after a drop of at least `minDrop` costs the fixed true damage.
+    if (this.fallRule !== null) this.applyFallDamage(this.fallRule);
+
     // 3a. Eagle landing slams queued by this tick's touchdowns.
     for (let i = 0; i < fs.length; i++) {
       const f = fs[i];
@@ -307,17 +325,21 @@ export class World implements Sim {
     // v1.9: present ONLY while a serpent event runs, so every other arena/moment keeps the exact pre-1.9 snapshot.
     const serpent = this.serpent?.snapshot();
     if (serpent !== undefined) snap.serpent = serpent;
+    // v1.10: the HIGH serpent's event, same rule (absent unless it is attacking).
+    const serpentHigh = this.serpent?.snapshotHigh();
+    if (serpentHigh !== undefined) snap.serpentHigh = serpentHigh;
     return snap;
   }
 
   /**
    * v1.9 test / QA hook: queue a sea-serpent event that starts (the WARN phase, `serpentWarning`) at the beginning of the NEXT
    * `step`, ignoring the schedule and the chance (so its events are emitted inside a tick, like every other event, and nothing
-   * starts during the 3-2-1 countdown). `angleDeg` is the strike direction (default: drawn from the serpent's own RNG stream).
-   * Returns false when this arena has no serpent or an event is already running / queued.
+   * starts during the 3-2-1 countdown). `angleDeg` is the strike direction (default: drawn from the lane's own RNG stream).
+   * v1.10: `tier` picks the serpent — `'low'` (default, the v1.9 one) or `'high'` (arenas with `hazards.serpentSplitY`).
+   * Returns false when this arena has no such serpent or its event is already running / queued.
    */
-  debugTriggerSerpent(angleDeg?: number): boolean {
-    return this.serpent !== null && this.serpent.trigger(angleDeg);
+  debugTriggerSerpent(angleDeg?: number, tier: SerpentTier = 'low'): boolean {
+    return this.serpent !== null && this.serpent.trigger(angleDeg, tier);
   }
 
   /** Seconds remaining in the pre-fight countdown (0 once FIGHT begins). */
@@ -362,6 +384,31 @@ export class World implements Sim {
   }
 
   private readonly trapDamageFn = (target: Fighter, amount: number): number => this.applyTrapDamage(target, amount);
+
+  /**
+   * v1.10 fall damage pass: every alive fighter's landing is checked ({@link checkFallLanding}); a landing that crossed the arena's
+   * `minDrop` costs exactly `damage` TRUE damage through the same environment-damage path as traps and the serpent (no block /
+   * guard / armour / buff effect, no credit, no ult charge, no flinch) and emits one `fall` event (`damage` = hp actually removed).
+   */
+  private applyFallDamage(rule: { minDrop: number; damage: number }): void {
+    const fs = this.fighters;
+    for (let i = 0; i < fs.length; i++) {
+      const f = fs[i];
+      if (!f.state.alive) continue;
+      const drop = checkFallLanding(this.arena, f, rule.minDrop);
+      if (drop <= 0) continue;
+      const dealt = this.applyTrapDamage(f, rule.damage);
+      if (dealt <= 0) continue;
+      this.fallNow.push(f.id);
+      this.emit({
+        type: 'fall',
+        fighterId: f.id,
+        damage: Math.round(dealt),
+        drop,
+        pos: { x: f.state.pos.x, y: f.state.pos.y, z: f.state.pos.z },
+      });
+    }
+  }
 
   damageCrate(crate: CrateRuntime, amount: number): void {
     if (!crate.alive) return;
@@ -415,6 +462,11 @@ export class World implements Sim {
     // v1.9: a death the serpent's strike caused this very tick is tagged for the kill feed (killerId stays −1, like a trap).
     if (killerId === -1 && this.serpent !== null && this.serpent.wasHitThisTick(f.id)) {
       this.emit({ type: 'death', targetId: f.id, killerId, placement, cause: 'serpent' });
+      return;
+    }
+    // v1.10: ... and so is a death by fall damage this tick (the serpent, applied later in the tick, wins when both hit).
+    if (killerId === -1 && this.fallNow.indexOf(f.id) >= 0) {
+      this.emit({ type: 'death', targetId: f.id, killerId, placement, cause: 'fall' });
       return;
     }
     this.emit({ type: 'death', targetId: f.id, killerId, placement });

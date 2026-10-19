@@ -7,13 +7,17 @@
  * head radius mapped so the drawn head is never behind the hitbox: `rv = headR * (1 + GLASS_LEAD / wall)`, i.e. at the wall (30 m) the
  * drawn head sits 3.9 m out - against the glass, which is at 32 m - and at the centre it is exactly 0.
  *
+ * v1.10: the same pure mapping serves the HIGH serpent (`tier: 'high'`, driven only by `snapshot.serpentHigh`): its head sweeps FLAT at the
+ * upper-tier height (`highLaneY`: the tallest ground + 2 m, i.e. skimming the tower tops), it rests against the glass where the glass
+ * is at THAT height (`glassLead`), and everything else (phases, glass cracks, shockwave) follows the identical timeline.
+ *
  * No three / DOM imports: node-safe.
  */
 
-import type { SerpentPhase, SerpentState } from '../../core/types';
+import type { SerpentPhase, SerpentState, SerpentTier } from '../../core/types';
 import { SERPENT } from '../../config/serpent';
-import { arenaGroundHeight, type ArenaDef } from '../../config/arenas';
-import { DOME_MARGIN } from './terrain';
+import { arenaGroundHeight, type ArenaDef, type ElevationPiece } from '../../config/arenas';
+import { DOME_MARGIN, glassRadiusAt } from './domeShape';
 
 /** How far (m) the drawn head leads the sim head at the wall: the head rests against the OUTSIDE of the glass. */
 export const GLASS_LEAD = 3.9;
@@ -26,7 +30,36 @@ export const EXIT_S = 1.5;
 
 export type VisualPhase = SerpentPhase | 'exit' | 'none';
 
+const TOP_CACHE = new WeakMap<ArenaDef, number>();
+
+/** Height (m) of the tallest ground of the arena's height field (the tower tops on the Ocean Dome; 0 without one). */
+export function arenaTopHeight(arena: ArenaDef): number {
+  const hit = TOP_CACHE.get(arena);
+  if (hit !== undefined) return hit;
+  let top = 0;
+  for (const p of arena.heightfield ?? ([] as readonly ElevationPiece[])) {
+    const h = p.kind === 'ramp' ? Math.max(p.h0, p.h1) : p.height;
+    if (h > top) top = h;
+  }
+  TOP_CACHE.set(arena, top);
+  return top;
+}
+
+/** The HIGH serpent's flight height (head centre): the tallest ground + 2 m (so the head skims the tower tops, over the plateau too). */
+export function highLaneY(arena: ArenaDef): number {
+  return arenaTopHeight(arena) + 2;
+}
+
+/** How far (m) the drawn head leads the sim head at the wall for `tier`: the head rests against the OUTSIDE of the glass at its own height. */
+export function glassLead(arena: ArenaDef, tier: SerpentTier = 'low'): number {
+  if (tier === 'low') return GLASS_LEAD;
+  const rest = glassRadiusAt(arena.wallRadius, highLaneY(arena)) + HEAD_RADIUS + 0.3;
+  return Math.max(0.8, rest - arena.wallRadius);
+}
+
 export interface SerpentVisual {
+  /** Which serpent this picture is for. */
+  tier: SerpentTier;
   active: boolean;
   phase: VisualPhase;
   angleDeg: number;
@@ -119,12 +152,16 @@ export function serpentVisualState(
   alpha = 1,
   out: SerpentVisual = blank(),
   exitT = -1,
+  tier: SerpentTier = 'low',
 ): SerpentVisual {
   const wall = arena.wallRadius;
+  out.tier = tier;
   if (s === null || s === undefined) {
     if (exitT >= 0 && exitT < EXIT_S && out.angleDeg >= 0) return exitState(arena, out, exitT);
     return reset(out);
   }
+  const high = tier === 'high';
+  const laneY = highLaneY(arena);
   const len = phaseLength(s.phase);
   const t = Math.min(len, Math.max(0, s.t - (1 - alpha) / 60));
   const ang = (s.angleDeg * Math.PI) / 180;
@@ -136,7 +173,7 @@ export function serpentVisualState(
   out.t = t;
   out.alpha = 1;
   const simR = simHeadR(s.phase, t, wall);
-  const lead = GLASS_LEAD / wall;
+  const lead = glassLead(arena, tier) / wall;
   const wind = s.phase === 'warn' ? Math.sin(Math.PI * clamp01((t - 0.35) / Math.max(0.01, SERPENT.warnS - 0.35))) : 0;
   out.rv = simR * (1 + lead) + wind * 3.4;
   out.urgency = s.phase === 'warn' ? clamp01(t / SERPENT.warnS) : 0;
@@ -198,6 +235,11 @@ export function serpentVisualState(
     }
   }
   // Head height: skims the ground (a 3.5 m head: bottom ~ground), over the terrain profile ahead of it; rears up at the hold.
+  if (high) {
+    // The HIGH serpent flies level at the tower-top height (no ground-hugging), bobbing a little while it coils, rearing at the hold.
+    out.headY = laneY + (s.phase === 'warn' ? 0.35 * Math.sin(t * 6.5) : 1.6 * rear);
+    return out;
+  }
   const inward = s.phase === 'strike' || s.phase === 'warn';
   const rg = Math.min(out.rv, wall + 1);
   const g = pathGround(arena, out.dirX, out.dirZ, rg, inward ? -4 : -1, inward ? 1 : 4);
@@ -209,11 +251,12 @@ export function serpentVisualState(
 function exitState(arena: ArenaDef, out: SerpentVisual, exitT: number): SerpentVisual {
   const wall = arena.wallRadius;
   const k = exitT / EXIT_S;
+  const high = out.tier === 'high';
   out.active = true;
   out.phase = 'exit';
   out.t = exitT;
-  out.rv = wall * (1 + GLASS_LEAD / wall) + exitT * exitT * 26 + exitT * 8;
-  out.headY = 3.2 + 3.5 * smooth(k);
+  out.rv = wall * (1 + glassLead(arena, out.tier) / wall) + exitT * exitT * 26 + exitT * 8;
+  out.headY = high ? highLaneY(arena) + 2.5 * smooth(k) : 3.2 + 3.5 * smooth(k);
   out.pitch = 0.1;
   out.jaw = 0.1;
   out.coil = 0;
@@ -229,8 +272,9 @@ function exitState(arena: ArenaDef, out: SerpentVisual, exitT: number): SerpentV
   return out;
 }
 
-export function blank(): SerpentVisual {
+export function blank(tier: SerpentTier = 'low'): SerpentVisual {
   return {
+    tier,
     active: false,
     phase: 'none',
     angleDeg: -1,
@@ -268,7 +312,17 @@ function reset(out: SerpentVisual): SerpentVisual {
   return out;
 }
 
-/** Radius (m) of the dome's glass at ground level - where the head bursts through. */
+/** Radius (m) of the dome's glass at ground level - where the LOW head bursts through. */
 export function glassRadius(arena: ArenaDef): number {
   return arena.wallRadius + DOME_MARGIN;
+}
+
+/** Radius (m) of the dome's glass at the height the serpent of `tier` breaks through it. */
+export function breachRadius(arena: ArenaDef, tier: SerpentTier = 'low'): number {
+  return tier === 'high' ? glassRadiusAt(arena.wallRadius, highLaneY(arena)) : glassRadius(arena);
+}
+
+/** Height (m) at which the serpent of `tier` breaks through the glass (low: just above the ground; high: its flight height). */
+export function breachHeight(arena: ArenaDef, tier: SerpentTier = 'low'): number {
+  return tier === 'high' ? highLaneY(arena) : 2.3;
 }

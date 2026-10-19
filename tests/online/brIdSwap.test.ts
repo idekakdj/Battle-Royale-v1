@@ -53,6 +53,7 @@ function snapshotWith(v: number): WorldSnapshot {
     traps: [{ id: 6, kind: 'fire', pos: { x: 5, y: 0, z: 6 }, radius: 2, phase: 'active', timeLeft: 3, triggeredBy: v }],
     projectiles: [{ id: 8, kind: 'boulder', pos: { x: 1, y: 2, z: 3 }, vel: { x: 4, y: 5, z: 6 }, radius: 0.6, ownerId: v }],
     serpent: { phase: 'strike', angleDeg: 123.5, t: 0.25, headR: 12.5 }, // v1.9: carries no fighter ids, must survive the copy
+    serpentHigh: { phase: 'warn', angleDeg: 321.25, t: 0.75, headR: 30 }, // v1.10: the second serpent's block, same
     bloodlustMult: 1.25,
     matchOver: true,
     winnerId: v,
@@ -116,6 +117,8 @@ describe('swapIds(snapshot)', () => {
       expect({ ...sw, fighters: 0, traps: 0, projectiles: 0, winnerId: 0 }).toEqual({ ...orig, fighters: 0, traps: 0, projectiles: 0, winnerId: 0 });
       expect(sw.serpent).toEqual(orig.serpent); // v1.9: the event survives the swap unchanged ...
       expect(sw.serpent).not.toBe(orig.serpent); // ... as a copy
+      expect(sw.serpentHigh).toEqual(orig.serpentHigh); // v1.10: the high serpent's block too
+      expect(sw.serpentHigh).not.toBe(orig.serpentHigh);
       expect({ ...sw.traps[0], triggeredBy: 0 }).toEqual({ ...orig.traps[0], triggeredBy: 0 });
       expect({ ...(sw.projectiles?.[0] as object), ownerId: 0 }).toEqual({ ...(orig.projectiles?.[0] as object), ownerId: 0 });
       // its own inverse
@@ -156,6 +159,9 @@ describe('swapIds(snapshot)', () => {
       'serpent.angleDeg',
       'serpent.t',
       'serpent.headR',
+      'serpentHigh.angleDeg',
+      'serpentHigh.t',
+      'serpentHigh.headR',
       ...[
         'pos.x',
         'pos.y',
@@ -217,10 +223,12 @@ describe('swapIds(snapshot)', () => {
     const s = snapshotWith(A);
     delete s.projectiles;
     delete s.serpent;
+    delete s.serpentHigh;
     for (const f of s.fighters) delete f.ultTargetId;
     const out = swapIds(s, A, B);
     expect(out.projectiles).toBeUndefined();
     expect('serpent' in out).toBe(false); // v1.9: an absent event stays absent
+    expect('serpentHigh' in out).toBe(false); // v1.10: and so does the high one
     expect('ultTargetId' in out.fighters[0]).toBe(false);
   });
 
@@ -301,6 +309,25 @@ describe('swapEventIds', () => {
     for (const e of [SAMPLES.serpentWarning, SAMPLES.serpentStrike, SAMPLES.serpentEnd]) expect(swapEventIds(e, A, B)).toEqual(e);
     const d = swapEventIds({ type: 'death', targetId: A, killerId: -1, placement: 4, cause: 'serpent' }, A, B);
     expect(d).toEqual({ type: 'death', targetId: B, killerId: -1, placement: 4, cause: 'serpent' });
+    // v1.10: the high serpent's events keep their tier, and a fall death its cause
+    const hh = swapEventIds({ type: 'serpentHit', fighterId: B, damage: 300, pos: { x: 1, y: 6.5, z: 3 }, tier: 'high' }, A, B);
+    expect(hh).toEqual({ type: 'serpentHit', fighterId: A, damage: 300, pos: { x: 1, y: 6.5, z: 3 }, tier: 'high' });
+    for (const e of [{ ...SAMPLES.serpentWarning, tier: 'high' as const }, { ...SAMPLES.serpentStrike, tier: 'high' as const }, { type: 'serpentEnd' as const, tier: 'high' as const }]) {
+      expect(swapEventIds(e, A, B)).toEqual(e);
+    }
+    expect(swapEventIds({ type: 'death', targetId: B, killerId: -1, placement: 9, cause: 'fall' }, A, B)).toEqual({ type: 'death', targetId: A, killerId: -1, placement: 9, cause: 'fall' });
+  });
+
+  it('v1.10 fall: fighterId is remapped; damage / drop / pos are not; it is its own inverse', () => {
+    const ev: GameEvent = { type: 'fall', fighterId: A, damage: 50, drop: 3.5, pos: { x: 1, y: 3, z: -2 } };
+    const sw = swapEventIds(ev, A, B);
+    expect(sw).toEqual({ type: 'fall', fighterId: B, damage: 50, drop: 3.5, pos: { x: 1, y: 3, z: -2 } });
+    expect(sw).not.toBe(ev);
+    expect(swapEventIds(sw, A, B)).toEqual(ev);
+    expect(swapEventIds({ ...ev, fighterId: OTHER } as GameEvent, A, B)).toEqual({ ...ev, fighterId: OTHER });
+    expect(swapEventIds({ ...ev, fighterId: -1 } as GameEvent, A, B)).toEqual({ ...ev, fighterId: -1 });
+    expect(EVENT_ID_FIELDS.fall).toEqual(['fighterId']);
+    expect([...EVENT_NON_ID_NUMERIC_FIELDS.fall].sort()).toEqual(['damage', 'drop']);
   });
 
   it('death.placement and crate/trap ids are not fighter ids', () => {

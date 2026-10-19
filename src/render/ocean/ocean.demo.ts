@@ -3,21 +3,24 @@
  *
  * Builds SceneManager + the ocean `ArenaScene` (through the same `createArenaScene` entry point the match uses) + Effects + CameraRig
  * and stands the ten animal rigs on the three levels. WASD moves the selected animal (1..9, 0 select; ground height + cliff-free demo
- * collision), mouse look after a click, N cycles the camera presets, G plays a serpent event (random angle), H fires a hit flash.
+ * collision), mouse look after a click, N cycles the camera presets, G plays a LOW serpent event (random angle), J a HIGH serpent
+ * event, F makes the selected animal take a fall burst, H fires a hit flash.
  * The first click / key starts the AUDIO through a real AudioEngine + EventBus wired like the match controller. A `window.__oceanDemo`
  * API drives everything for screenshots / automated checks:
  *
- *   place(i, x, z, yaw?)   select(i)   preset('overview'|'chase'|'edge'|'plateau'|'terrace'|'strip'|'serpent'|'sky'|'fp')
+ *   place(i, x, z, yaw?)   select(i)   preset('overview'|'chase'|'edge'|'plateau'|'terrace'|'strip'|'serpent'|'sky'|'fp'|
+ *                                              'tower'|'towerEdge'|'causeway'|'chord'|'overhead'|'highStrip'|'highSerpent'|'towerBase')
  *   camera(x, y, z, tx, ty, tz)   releaseCamera()   orbit(yaw, pitch)   setTier('low'|'medium'|'high'|'auto')
- *   serpent(angleDeg, phase, t)  (pin the set piece at a phase / time)   play(angleDeg)  (run the real timeline)   clearSerpent()
- *   hit(i)   setTime(s)   pause(on)   step(seconds, dt?)   stats()   cycle(n)  (create/dispose leak probe)   arena('ocean'|'jungle'|'colosseum')
+ *   serpent(angleDeg, phase, t, tier = 'low')  (pin either serpent at a phase / time; both can be pinned at once)
+ *   play(angleDeg?, tier = 'low')  (run the real timeline + events)   clearSerpent(tier?)   fall(x, z, drop = 3.5)  (a fall burst + sound + shake)
+ *   hit(i, tier?)   setTime(s)   pause(on)   step(seconds, dt?)   stats()   cycle(n)  (create/dispose leak probe)   arena('ocean'|'jungle'|'colosseum')
  */
 
 import { registerDemo } from '../../core/demos';
 import { angleDelta, clamp, wrapAngle } from '../../core/math';
 import { ANIMAL_IDS, ANIMALS } from '../../config/animals';
-import type { AnimalId, FighterAction, FighterState, SerpentPhase } from '../../core/types';
-import { OCEAN_ARENA, JUNGLE_ARENA, COLOSSEUM_ARENA, arenaGroundHeight, type ArenaDef } from '../../config/arenas';
+import type { AnimalId, FighterAction, FighterState, SerpentPhase, SerpentTier } from '../../core/types';
+import { OCEAN_ARENA, OCEAN_STACKS, OCEAN_UPPER_HEIGHT, JUNGLE_ARENA, COLOSSEUM_ARENA, arenaGroundHeight, type ArenaDef } from '../../config/arenas';
 import { SERPENT } from '../../config/serpent';
 import { EventBus } from '../../core/EventBus';
 import { AudioEngine } from '../../audio/AudioEngine';
@@ -38,8 +41,8 @@ interface Actor {
   speed: number;
 }
 
-const HELP = `<b>OCEAN DEMO</b> - click for mouse look · WASD move · 1-9,0 pick animal · N next camera preset · G serpent event · H hit flash · V first person<br>
-<span style="opacity:.8">window.__oceanDemo: place / preset / camera / serpent / play / step / setTier / stats / cycle / arena</span>`;
+const HELP = `<b>OCEAN DEMO</b> - click for mouse look · WASD move · 1-9,0 pick animal · N next camera preset · G low serpent · J high serpent · F fall burst · H hit flash · V first person<br>
+<span style="opacity:.8">window.__oceanDemo: place / preset / camera / serpent(angle, phase, t, tier) / play / fall / step / setTier / stats / cycle / arena</span>`;
 
 function ensureCanvas(): HTMLCanvasElement {
   const existing = document.getElementById('gk-canvas');
@@ -50,7 +53,7 @@ function ensureCanvas(): HTMLCanvasElement {
   return canvas;
 }
 
-const PRESETS = ['chase', 'overview', 'edge', 'plateau', 'terrace', 'strip', 'serpent', 'sky'] as const;
+const PRESETS = ['chase', 'overview', 'edge', 'plateau', 'terrace', 'strip', 'serpent', 'sky', 'tower', 'towerEdge', 'causeway', 'chord', 'overhead', 'highStrip', 'highSerpent', 'towerBase'] as const;
 const PHASES: readonly SerpentPhase[] = ['warn', 'strike', 'hold', 'retreat'];
 const PHASE_LEN: Record<SerpentPhase, number> = { warn: SERPENT.warnS, strike: SERPENT.strikeS, hold: SERPENT.holdS, retreat: SERPENT.retreatS };
 
@@ -71,6 +74,7 @@ function runOcean(root: HTMLElement): () => void {
   bus.on('serpentHit', (e) => scene.onEvent?.(e));
   bus.on('serpentWarning', (e) => scene.onEvent?.(e));
   bus.on('serpentEnd', (e) => scene.onEvent?.(e));
+  bus.on('fall', (e) => scene.onEvent?.(e));
   let audioOn = false;
   const startAudio = (): void => {
     if (audioOn) return;
@@ -92,14 +96,17 @@ function runOcean(root: HTMLElement): () => void {
     state.isPlayer = i === 0;
     return { id, rig: r, state, radius: ANIMALS[id].radius ?? 0.6, speed: ANIMALS[id].speed ?? 5 };
   });
+  const T0 = OCEAN_STACKS[0];
+  const T1 = OCEAN_STACKS[1];
+  const T2 = OCEAN_STACKS[2];
   const SPOTS: [number, number, number][] = [
     [0, -24, 0],
     [-6, -18, 0.4],
     [1.2, 2.5, 2.5],
     [-2.5, -3, 1],
-    [5.6, 10.5, 4.2],
-    [-11, 6, 3],
-    [14, -5, 2],
+    [T0.x + 0.9, T0.z - 1.2, 3.6],
+    [T1.x + 1.3, T1.z + 0.6, 4.7],
+    [T2.x - 1.0, T2.z + 1.0, 0.4],
     [21, 12, 0.5],
     [-16, -14, 0],
     [3.5, -13, 1],
@@ -140,10 +147,18 @@ function runOcean(root: HTMLElement): () => void {
   let presetIdx = 0;
   const held = { w: false, a: false, s: false, d: false };
   let locked = false;
-  let serpClock = -1; // >= 0 while a real-time serpent event plays
-  let serpAngle = 0;
-  let serpPinned = false;
-  let lastPhaseIdx = -1;
+  /** Per-serpent run state: the real-time clock (>= 0 while an event plays), its angle, whether it is pinned, the last phase index. */
+  interface Run {
+    clock: number;
+    angle: number;
+    pinned: boolean;
+    last: number;
+  }
+  const runs: Record<SerpentTier, Run> = {
+    low: { clock: -1, angle: 0, pinned: false, last: -1 },
+    high: { clock: -1, angle: 0, pinned: false, last: -1 },
+  };
+  let serpAngle = 0; // the angle of the most recently started / pinned serpent (camera presets look along it)
   const onClick = (): void => {
     startAudio();
     if (!locked) canvas.requestPointerLock();
@@ -196,6 +211,62 @@ function runOcean(root: HTMLElement): () => void {
         sm.camera.position.set(0, 2.5, -10);
         sm.camera.lookAt(-12, 14, 22);
         break;
+      case 'tower':
+        // on the first tower's top (72 deg), by the rim, looking across the pad at the plateau and the other towers
+        freeCam = true;
+        sm.camera.position.set(T0.x - 0.4, OCEAN_UPPER_HEIGHT + 1.7, T0.z + 3.1);
+        sm.camera.lookAt(T0.x - 0.6, OCEAN_UPPER_HEIGHT + 0.6, T0.z - 6);
+        break;
+      case 'towerEdge':
+        // looking down the cliff of the second tower (180 deg) from just inside its parapet
+        freeCam = true;
+        sm.camera.position.set(T1.x - 2.2, OCEAN_UPPER_HEIGHT + 1.4, T1.z + 0.6);
+        sm.camera.lookAt(T1.x - 6.5, 0.5, T1.z + 1.5);
+        break;
+      case 'causeway': {
+        // from the plateau looking up the causeway to the first tower (the climb the bots take)
+        freeCam = true;
+        const ca = Math.cos((T0.deg * Math.PI) / 180);
+        const sa = Math.sin((T0.deg * Math.PI) / 180);
+        sm.camera.position.set(ca * 2.5 - sa * 1.2, 5.3, sa * 2.5 + ca * 1.2);
+        sm.camera.lookAt(ca * 15 - sa * 0.5, 5.4, sa * 15 + ca * 0.5);
+        break;
+      }
+      case 'chord': {
+        // from the terrace foot of the first tower's chord (clockwise of the tower) looking up it
+        freeCam = true;
+        sm.camera.position.set(17.6, 4.8, 3.6);
+        sm.camera.lookAt(T0.x + 2.0, 5.0, T0.z - 2.5);
+        break;
+      }
+      case 'overhead':
+        // a high wide view from inside the dome over the whole arena (towers, causeways, plateau)
+        freeCam = true;
+        sm.camera.position.set(-1, 20.5, -24.5);
+        sm.camera.lookAt(0, 1.5, 2);
+        break;
+      case 'towerBase':
+        // standing on the seabed at the foot of the third tower (288 deg): the cliff, the strata, the crown
+        freeCam = true;
+        sm.camera.position.set(T2.x + 9.5, 2.4, T2.z - 7.5);
+        sm.camera.lookAt(T2.x, 5, T2.z);
+        break;
+      case 'highStrip': {
+        // along the HIGH strike line from the far side, looking at the edge it comes from (the strip lies on the tower tops only)
+        freeCam = true;
+        const hd = { x: Math.cos((runs.high.angle * Math.PI) / 180), z: Math.sin((runs.high.angle * Math.PI) / 180) };
+        sm.camera.position.set(-hd.x * 12 - hd.z * 2, 10.5, -hd.z * 12 + hd.x * 2);
+        sm.camera.lookAt(hd.x * 12, 6, hd.z * 12);
+        break;
+      }
+      case 'highSerpent': {
+        // from the plateau looking out at the high head against the glass
+        freeCam = true;
+        const hd = { x: Math.cos((runs.high.angle * Math.PI) / 180), z: Math.sin((runs.high.angle * Math.PI) / 180) };
+        sm.camera.position.set(hd.x * 6 - hd.z * 5, 6.2, hd.z * 6 + hd.x * 5);
+        sm.camera.lookAt(hd.x * 36, OCEAN_UPPER_HEIGHT + 2, hd.z * 36);
+        break;
+      }
       case 'fp':
         freeCam = false;
         rig.setFirstPerson(true, true);
@@ -207,11 +278,16 @@ function runOcean(root: HTMLElement): () => void {
     }
   };
 
-  const playSerpent = (angleDeg?: number): void => {
-    serpAngle = angleDeg ?? Math.random() * 360;
-    serpClock = 0;
-    serpPinned = false;
-    lastPhaseIdx = -1;
+  const playSerpent = (angleDeg?: number, tier: SerpentTier = 'low'): void => {
+    const r = runs[tier];
+    r.angle = angleDeg ?? Math.random() * 360;
+    serpAngle = r.angle;
+    r.clock = 0;
+    r.pinned = false;
+    r.last = -1;
+  };
+  const fallAt = (x: number, z: number, drop = 3.5): void => {
+    bus.emit({ type: 'fall', fighterId: -1, damage: 50, drop, pos: { x, y: ground(x, z), z } });
   };
   const onKeyDown = (e: KeyboardEvent): void => {
     if (e.repeat) return;
@@ -222,7 +298,13 @@ function runOcean(root: HTMLElement): () => void {
       case 'KeyS': held.s = true; break;
       case 'KeyD': held.d = true; break;
       case 'KeyV': rig.setFirstPerson(!rig.isFirstPerson); break;
-      case 'KeyG': playSerpent(); break;
+      case 'KeyG': playSerpent(undefined, 'low'); break;
+      case 'KeyJ': playSerpent(undefined, 'high'); break;
+      case 'KeyF': {
+        const p = actors[sel].rig.root.position;
+        fallAt(p.x, p.z, 3.5);
+        break;
+      }
       case 'KeyH': {
         const p = actors[sel].rig.root.position;
         bus.emit({ type: 'serpentHit', fighterId: sel, damage: 300, pos: { x: p.x, y: p.y, z: p.z } });
@@ -319,35 +401,41 @@ function runOcean(root: HTMLElement): () => void {
     });
   };
 
-  // ── The serpent timeline: either pinned (QA) or played in real time with the real events ──
-  const serpentTick = (dt: number): void => {
+  // ── The serpent timelines: each serpent either pinned (QA) or played in real time with the real events ──
+  const serpentTickOne = (tier: SerpentTier, dt: number): void => {
     const os = scene as OceanScene;
+    const r = runs[tier];
     if (arena.id !== 'ocean' || typeof os.setSerpentBlock !== 'function') return;
-    if (serpPinned) return;
-    if (serpClock < 0) {
-      os.setSerpentBlock(null);
+    if (r.pinned) return;
+    if (r.clock < 0) {
+      os.setSerpentBlock(null, 1, tier);
       return;
     }
-    let t = serpClock;
+    let t = r.clock;
     let idx = 0;
     while (idx < PHASES.length && t >= PHASE_LEN[PHASES[idx]]) {
       t -= PHASE_LEN[PHASES[idx]];
       idx++;
     }
+    const tag = tier === 'high' ? ({ tier: 'high' } as const) : {};
     if (idx >= PHASES.length) {
-      os.setSerpentBlock(null);
-      if (lastPhaseIdx !== PHASES.length) bus.emit({ type: 'serpentEnd' });
-      lastPhaseIdx = PHASES.length;
-      serpClock = -1;
+      os.setSerpentBlock(null, 1, tier);
+      if (r.last !== PHASES.length) bus.emit({ type: 'serpentEnd', ...tag });
+      r.last = PHASES.length;
+      r.clock = -1;
       return;
     }
-    if (idx !== lastPhaseIdx) {
-      if (idx === 0) bus.emit({ type: 'serpentWarning', angleDeg: serpAngle, warnS: SERPENT.warnS });
-      if (idx === 1) bus.emit({ type: 'serpentStrike', angleDeg: serpAngle });
-      lastPhaseIdx = idx;
+    if (idx !== r.last) {
+      if (idx === 0) bus.emit({ type: 'serpentWarning', angleDeg: r.angle, warnS: SERPENT.warnS, ...tag });
+      if (idx === 1) bus.emit({ type: 'serpentStrike', angleDeg: r.angle, ...tag });
+      r.last = idx;
     }
-    os.setSerpentBlock({ phase: PHASES[idx], angleDeg: serpAngle, t }, 1);
-    serpClock += dt;
+    os.setSerpentBlock({ phase: PHASES[idx], angleDeg: r.angle, t }, 1, tier);
+    r.clock += dt;
+  };
+  const serpentTick = (dt: number): void => {
+    serpentTickOne('low', dt);
+    serpentTickOne('high', dt);
   };
 
   // ── Frame ──
@@ -430,25 +518,33 @@ function runOcean(root: HTMLElement): () => void {
         t -= d;
       }
     },
-    /** Pin the serpent set piece at (phase, t s into the phase) for strike angle `angleDeg`. */
-    serpent(angleDeg: number, phase: SerpentPhase, t: number): void {
+    /** Pin a serpent set piece at (phase, t s into the phase) for strike angle `angleDeg` (`tier` 'high' = the high serpent). */
+    serpent(angleDeg: number, phase: SerpentPhase, t: number, tier: SerpentTier = 'low'): void {
+      const r = runs[tier];
+      r.angle = angleDeg;
       serpAngle = angleDeg;
-      serpPinned = true;
-      serpClock = -1;
-      (scene as OceanScene).setSerpentBlock?.({ phase, angleDeg, t }, 1);
+      r.pinned = true;
+      r.clock = -1;
+      (scene as OceanScene).setSerpentBlock?.({ phase, angleDeg, t }, 1, tier);
     },
     /** Run the real event timeline in real time (events + snapshot block), starting now. */
-    play(angleDeg?: number): void {
-      playSerpent(angleDeg);
+    play(angleDeg?: number, tier: SerpentTier = 'low'): void {
+      playSerpent(angleDeg, tier);
     },
-    clearSerpent(): void {
-      serpPinned = false;
-      serpClock = -1;
-      (scene as OceanScene).setSerpentBlock?.(null);
+    clearSerpent(tier?: SerpentTier): void {
+      for (const t of tier === undefined ? (['low', 'high'] as const) : [tier]) {
+        runs[t].pinned = false;
+        runs[t].clock = -1;
+        (scene as OceanScene).setSerpentBlock?.(null, 1, t);
+      }
     },
-    hit(i: number): void {
+    hit(i: number, tier: SerpentTier = 'low'): void {
       const p = actors[clamp(i, 0, actors.length - 1)].rig.root.position;
-      bus.emit({ type: 'serpentHit', fighterId: i, damage: 300, pos: { x: p.x, y: p.y, z: p.z } });
+      bus.emit({ type: 'serpentHit', fighterId: i, damage: 300, pos: { x: p.x, y: p.y, z: p.z }, ...(tier === 'high' ? { tier: 'high' as const } : {}) });
+    },
+    /** A fall-damage landing at (x, z): the impact burst + the thud + (when the selected animal is within 2.2 m) the camera shake. */
+    fall(x: number, z: number, drop = 3.5): void {
+      fallAt(x, z, drop);
     },
     setTime(t: number): void {
       (scene as OceanScene).setTime?.(t);

@@ -8,7 +8,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { GameEvent, SerpentPhase, SerpentState } from '../../src/core/types';
 import { swapSample } from '../../src/online/br/BrNetClient';
-import { arenaGroundHeight, getArena } from '../../src/config/arenas';
+import { arenaGroundHeight, arenaSerpentBand, getArena } from '../../src/config/arenas';
+import { serpentLaneBins } from '../../src/config/serpentLanes';
 import { obstacleSurfaceDist } from '../../src/sim/TrapSystem';
 import { SERPENT } from '../../src/config/serpent';
 import { EVENT_ANGLE_DEG_TOLERANCE } from '../../src/online/br/eventCodec';
@@ -18,11 +19,21 @@ import { neutral } from './brTestUtil';
 const ARENA = getArena('ocean');
 const TRIGGER_TICK = 300; // 3 s countdown + 2 s of fight
 
-/** An angle whose strike line is clear of solids at the three radii the test stands on. */
+/**
+ * An angle whose strike line is clear of solids at the three radii the test stands on, is one of the LOW serpent's allowed lines
+ * (v1.10: it never runs over the upper platforms) and keeps the three spots on low ground (the low serpent only hurts the low band).
+ */
 function clearAngle(): number {
+  const lowBins = new Set(serpentLaneBins(ARENA).low);
   for (let a = 0; a < 360; a += 3) {
     const rad = (a * Math.PI) / 180;
-    if ([8, 12, 22].every((r) => obstacleSurfaceDist(r * Math.cos(rad), r * Math.sin(rad), ARENA) >= 3)) return a;
+    const spots = [8, 12, 22].map((r) => ({ x: r * Math.cos(rad), z: r * Math.sin(rad) }));
+    if (
+      lowBins.has(a) &&
+      spots.every((p) => obstacleSurfaceDist(p.x, p.z, ARENA) >= 3 && arenaSerpentBand(ARENA, p.x, p.z) === 'low')
+    ) {
+      return a;
+    }
   }
   throw new Error('no clear strike line on the ocean arena');
 }

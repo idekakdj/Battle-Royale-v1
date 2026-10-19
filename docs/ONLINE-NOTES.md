@@ -34,6 +34,31 @@ everybody goes back to the room; if the host closes the game the room ends ("The
   Some school/work networks block it.
 * The host is the only one who must be reachable "enough": see strict-NAT notes below.
 
+## Wire format history (Battle Royale; `ONLINE_PROTOCOL_VERSION` in `src/online/types.ts`)
+
+| Protocol | Release | What changed on the wire |
+|---|---|---|
+| 1 | v1.5 | Launch (Champions League rollback + Battle Royale host/client). |
+| 2 | v1.8 | Jungle: snapshot fighter flags `inWater` / `onMoss`, event `splash` (tag 22). |
+| 3 | v1.9 | Ocean Dome: snapshot header flag 64 + a 6-byte sea-serpent block, events `serpentWarning` / `serpentStrike` / `serpentHit` / `serpentEnd` (tags 23-26), a cause byte on `death`. |
+| 4 | v1.10 | Ocean Dome heights: a SECOND (high) sea serpent and fall damage (details below). |
+
+**v1.10 / protocol 4** (the host simulates both serpents and the falls; clients only render them, so nothing else is sent):
+
+* Snapshot header flag **128** = the high serpent's block (`WorldSnapshot.serpentHigh`), the same 6 bytes as the low one and written
+  right after it (flag 64 = `serpent`, the low serpent). Both flags are independent: neither, one or both can be present (0 / 6 / 12 extra
+  bytes, only while an event runs). The client view interpolates / extrapolates and id-swaps `serpentHigh` exactly like `serpent`.
+* The four serpent events carry the **tier** in bit 7 of their tag byte (set = the high serpent's event, decoded with `tier: 'high'`;
+  clear = the low serpent's, decoded WITHOUT a `tier` key, exactly the v1.9 event). The payloads and sizes are unchanged; every tag stays
+  below 128 and the bit on any other event is a corrupt packet.
+* New event **`fall`** (tag 27, 12 bytes): fighter id · u16 hp removed (50, or less on the last hit points) · u16 drop in centimetres ·
+  position. `death` cause byte **2** = a fall (`cause: 'fall'`, `killerId` -1 as for traps and the serpent). `swapEventIds` remaps
+  `fall.fighterId`.
+* The BR **data fingerprint** now also hashes the serpent lane tuning (`SERPENT_LANES`: the high serpent's seed salt, margins, sampling step)
+  and every arena's `hazards` (`serpentSplitY`, `fallDamage`) on top of the arena registry, so two builds with a different split height,
+  fall rule or lane setup refuse each other in the lobby. A v1.9.x build and a v1.10 build do not play together anyway (protocol 3 vs 4, and
+  the app major.minor differs).
+
 ## Troubleshooting
 
 | Symptom | What to do |

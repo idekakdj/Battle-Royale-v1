@@ -53,6 +53,7 @@ export const EVENT_ID_FIELDS: { [K in Type]: ReadonlyArray<NumKeys<GameEventOf<K
   serpentStrike: [],
   serpentHit: ['fighterId'],
   serpentEnd: [],
+  fall: ['fighterId'],
 };
 
 /**
@@ -87,6 +88,7 @@ export const EVENT_NON_ID_NUMERIC_FIELDS: { [K in Type]: ReadonlyArray<NumKeys<G
   serpentStrike: ['angleDeg'],
   serpentHit: ['damage'],
   serpentEnd: [],
+  fall: ['damage', 'drop'],
 };
 
 function cloneFighter(f: FighterState): FighterState {
@@ -129,6 +131,7 @@ export function swapIds(snap: WorldSnapshot, a: number, b: number): WorldSnapsho
     out.projectiles = snap.projectiles.map((p) => ({ ...p, pos: { ...p.pos }, vel: { ...p.vel }, ownerId: swapId(p.ownerId, a, b) }));
   }
   if (snap.serpent !== undefined) out.serpent = { ...snap.serpent }; // v1.9: no fighter ids in it, but it must survive the copy
+  if (snap.serpentHigh !== undefined) out.serpentHigh = { ...snap.serpentHigh }; // v1.10: the high serpent's block, same
   return out;
 }
 

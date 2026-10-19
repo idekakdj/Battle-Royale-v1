@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SnapshotDecoder, encodeSnapshot, STATS_EVERY } from '../../src/online/br/snapshotCodec';
 import { wrapSnapshot, SNAPSHOT_WRAPPER_BYTES } from '../../src/online/br/miscCodec';
 import type { FighterState, SerpentPhase, WorldSnapshot } from '../../src/core/types';
+import { OCEAN_ARENA } from '../../src/config/arenas';
 import { busyMatch, recordJungleWander, recordMatch, rng, snapshotMismatches } from './brTestUtil';
 
 /** A fighter with EVERY optional/rare field populated. */
@@ -441,9 +442,10 @@ describe('snapshot codec: v1.9 sea-serpent block', () => {
       const b = encodeSnapshot(withSerpent(base, { phase: 'strike', angleDeg: 77.7, t: 0.2, headR: 11.1 }), { seq: 4, keyframe }).length;
       expect(b - a).toBe(6);
     }
-    // header flag bit 64 marks it; bit 128 stays reserved and is rejected
+    // header flag bit 64 marks it; bit 128 (v1.10) is the SECOND serpent's block, so a packet that sets it without the extra bytes is truncated
     const bytes = encodeSnapshot(withSerpent(base, { phase: 'warn', angleDeg: 1, t: 0, headR: 30 }), { seq: 4, keyframe: true });
     expect(bytes[6] & 64).toBe(64);
+    expect(bytes[6] & 128).toBe(0);
     expect(encodeSnapshot(base, { seq: 4, keyframe: true })[6] & 64).toBe(0);
     const bad = bytes.slice();
     bad[6] |= 128;
@@ -504,6 +506,136 @@ describe('snapshot codec: v1.9 sea-serpent block', () => {
     expect(total / n).toBeLessThanOrEqual(1200);
     expect(max).toBeLessThanOrEqual(8192);
     expect(total / n).toBeLessThanOrEqual(700);
+  });
+});
+
+describe('snapshot codec: v1.10 second (high) sea-serpent block', () => {
+  const plain = (): WorldSnapshot => ({ ...fullSnapshot(), matchOver: false, winnerId: -1 });
+  const low = { phase: 'strike', angleDeg: 77.7, t: 0.2, headR: 11.1 } as const;
+  const high = { phase: 'warn', angleDeg: 331.25, t: 0.75, headR: 30 } as const;
+  const decodeKey = (s: WorldSnapshot): WorldSnapshot => {
+    const out = new SnapshotDecoder().decode(encodeSnapshot(s, { seq: 5, keyframe: true }));
+    expect(out).not.toBeNull();
+    return (out as { snapshot: WorldSnapshot }).snapshot;
+  };
+
+  it('round-trips every phase of the high serpent on its own: flag 128, 6 bytes, no serpent key', () => {
+    for (const phase of ['warn', 'strike', 'hold', 'retreat'] as SerpentPhase[]) {
+      for (const [angleDeg, t, headR] of [[0, 0, 30], [211.37, 0.4321, 12.345], [359.998, 1.0999, 0], [90, 0.0004, 29.999]] as const) {
+        const s: WorldSnapshot = { ...plain(), serpentHigh: { phase, angleDeg, t, headR } };
+        const got = decodeKey(s);
+        expect(got.serpentHigh?.phase).toBe(phase);
+        expect('serpent' in got).toBe(false);
+        expect(snapshotMismatches(s, got).filter((m) => !/kills|damage|ultsUsed/.test(m)), `${phase} ${angleDeg}`).toEqual([]);
+      }
+    }
+    const base = plain();
+    const bytes = encodeSnapshot({ ...base, serpentHigh: high }, { seq: 4, keyframe: true });
+    expect(bytes[6] & 128).toBe(128);
+    expect(bytes[6] & 64).toBe(0);
+    expect(bytes.length - encodeSnapshot(base, { seq: 4, keyframe: true }).length).toBe(6);
+    expect(encodeSnapshot(base, { seq: 4, keyframe: true })[6] & 128).toBe(0);
+  });
+
+  it('both blocks at once: 12 bytes, low first, each decodes to its own state; absent keys stay absent', () => {
+    const base = plain();
+    const both: WorldSnapshot = { ...base, serpent: low, serpentHigh: high };
+    for (const keyframe of [true, false]) {
+      const dec = new SnapshotDecoder();
+      if (!keyframe) dec.decode(encodeSnapshot(both, { seq: 1, keyframe: true }));
+      const bytes = encodeSnapshot(both, { seq: 2, keyframe });
+      const plainLen = encodeSnapshot(base, { seq: 2, keyframe }).length;
+      expect(bytes.length - plainLen).toBe(12);
+      expect(bytes[6] & 192).toBe(192);
+      const got = (dec.decode(bytes) as { snapshot: WorldSnapshot }).snapshot;
+      expect(got.serpent?.phase).toBe('strike');
+      expect(got.serpentHigh?.phase).toBe('warn');
+      expect(Math.abs((got.serpent?.angleDeg ?? 0) - 77.7)).toBeLessThan(0.003);
+      expect(Math.abs((got.serpentHigh?.angleDeg ?? 0) - 331.25)).toBeLessThan(0.003);
+      expect(snapshotMismatches(both, got).filter((m) => !/kills|damage|ultsUsed/.test(m))).toEqual([]);
+    }
+    // low only / high only / neither keep the other key absent
+    const lowOnly = decodeKey({ ...base, serpent: low });
+    expect('serpentHigh' in lowOnly).toBe(false);
+    const highOnly = decodeKey({ ...base, serpentHigh: high });
+    expect('serpent' in highOnly).toBe(false);
+    const none = decodeKey(base);
+    expect('serpent' in none).toBe(false);
+    expect('serpentHigh' in none).toBe(false);
+  });
+
+  it('works with the stats block, a match-over snapshot and explicit (non-contiguous) fighter ids', () => {
+    const s: WorldSnapshot = { ...plain(), serpent: low, serpentHigh: high, matchOver: true, winnerId: 3 };
+    const got = decodeKey(s);
+    expect(got.matchOver).toBe(true);
+    expect(got.winnerId).toBe(3);
+    expect(got.serpent?.phase).toBe('strike');
+    expect(got.serpentHigh?.phase).toBe('warn');
+    const odd: WorldSnapshot = { ...plain(), serpentHigh: high };
+    odd.fighters = odd.fighters.map((f, i) => ({ ...f, id: i + 4 }));
+    const out = decodeKey(odd);
+    expect(out.serpentHigh?.angleDeg).toBeCloseTo(331.25, 2);
+    expect(out.fighters.map((f) => f.id)).toEqual(odd.fighters.map((f) => f.id));
+  });
+
+  it('clamps nonsense and survives corruption: bit flips and truncations of a two-block packet never throw', () => {
+    const odd: WorldSnapshot = { ...plain(), serpentHigh: { phase: 'hold', angleDeg: Number.NaN, t: 1e9, headR: -5 } };
+    const got = decodeKey(odd);
+    expect(got.serpentHigh?.phase).toBe('hold');
+    expect(Number.isFinite(got.serpentHigh?.t)).toBe(true);
+    expect(got.serpentHigh?.headR).toBe(0);
+    const bytes = encodeSnapshot({ ...plain(), serpent: low, serpentHigh: high }, { seq: 1, keyframe: true });
+    for (let i = 0; i < bytes.length; i++) {
+      for (let bit = 0; bit < 8; bit++) {
+        const c = bytes.slice();
+        c[i] ^= 1 << bit;
+        const d = new SnapshotDecoder().decode(c);
+        for (const b of [d?.snapshot.serpent, d?.snapshot.serpentHigh]) {
+          if (b !== undefined) expect(Number.isFinite(b.angleDeg + b.t + b.headR)).toBe(true);
+        }
+      }
+    }
+    for (let len = 0; len < bytes.length; len++) expect(new SnapshotDecoder().decode(bytes.subarray(0, len))).toBeNull();
+  });
+
+  it('a real Ocean Dome bot match with both serpents forced: both blocks are on the wire for exactly their events (same tick), within the byte budget', () => {
+    const rec = recordMatch(515, 4, 14, 'ocean', { serpent: { chance: 1, firstAtS: 3, intervalS: 100 } });
+    const hasHigh = rec.snapshots.some((s) => s.serpentHigh !== undefined);
+    // the high lane only exists on an arena that sets a split height (the shipped Ocean Dome does since v1.10)
+    expect(hasHigh).toBe(OCEAN_ARENA.hazards?.serpentSplitY !== undefined);
+    let both = 0;
+    let n = 0;
+    let seq = 0;
+    let max = 0;
+    let total = 0;
+    const dec = new SnapshotDecoder();
+    const highPhases = new Set<string>();
+    for (let t = 0; t < rec.snapshots.length; t += 2) {
+      const snap = rec.snapshots[t];
+      const keyframe = n % 60 === 0;
+      const body = encodeSnapshot(snap, { seq, keyframe, stats: seq % STATS_EVERY === 0 });
+      const out = dec.decode(body);
+      expect(out, `tick ${t}`).not.toBeNull();
+      const got = (out as { snapshot: WorldSnapshot }).snapshot;
+      expect(snapshotMismatches(snap, got).filter((m) => !/\.(kills|damageDealt|damageBlocked|ultsUsed)/.test(m)), `tick ${t}`).toEqual([]);
+      if (snap.serpent !== undefined && snap.serpentHigh !== undefined) both++;
+      if (snap.serpentHigh !== undefined) {
+        highPhases.add(snap.serpentHigh.phase);
+        expect(got.serpentHigh?.phase).toBe(snap.serpentHigh.phase);
+      }
+      const wire = 1 + wrapSnapshot(0, 0, body).length;
+      total += wire;
+      max = Math.max(max, wire);
+      seq = (seq + 1) & 0xffff;
+      n++;
+    }
+    if (hasHigh) {
+      expect([...highPhases].sort()).toEqual(['hold', 'retreat', 'strike', 'warn']);
+      expect(both).toBeGreaterThan(40); // both events start on the same tick (chance 1, same first roll) and last the same 2.7 s
+    }
+    console.log(`[BR budget ocean 2 serpents] snapshots=${n} with both blocks=${both} avg=${(total / n).toFixed(0)} B max=${max} B`);
+    expect(total / n).toBeLessThanOrEqual(700);
+    expect(max).toBeLessThanOrEqual(8192);
   });
 });
 

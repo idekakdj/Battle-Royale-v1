@@ -1,5 +1,86 @@
 # Gladiator Kingdom — Balance Report (v1.3 ultimates on top of v1.2 WP-N and v1.1 WP-J)
 
+## v1.10 heights (WP-H3): bots on the towers, fall damage, two sea serpents
+
+Plan: `docs/OCEAN-HEIGHTS-PLAN.md` (layout = `OCEAN_ARENA` in `src/config/arenas.ts`: three 6.5 m towers at 72 / 180 / 288 deg, reached by 0.39-grade ramps; `hazards.fallDamage` = a landing after a drop of >= 3.4 m costs 50 true HP; two serpent lanes, `snapshot.serpent` = LOW, `snapshot.serpentHigh` = HIGH, band split at 4.5 m). Bot code: `src/ai/NavGrid.ts`, `Navigator.ts`, `SerpentSense.ts`, the new `src/ai/FallGuard.ts`, hooks in `BotBrain.ts` / `BotManager.ts`. **No animal stat, no arena datum, no sim rule and no serpent number was touched.** Everything new is gated on arena data (`hazards.fallDamage`, `hazards.serpentSplitY`, `heightfield`), so the colosseum and the jungle stay byte-identical (proof below).
+
+### What changed
+
+| Area | Change | Why |
+|---|---|---|
+| **Navigation on the tower tier** | The grid already planned ramps; what was missing was the new tier's geometry. `NavGrid.rimD`: for every cell high enough to fall 3.0 m (`minDrop - 0.4`), the distance to the nearest ledge off which a RUNNING body lands that far down; paths pay for cells within 2 m of it (they keep to the middle of a 3.8 m tower ramp), string-pulled shortcuts keep 0.9 m off it (`lineWalk(..., rimMin)`), and a bot that already stands at an edge may always walk away from it. A route exists for every body radius 0.5-1.2 and every berth (0 / 0.15 / 0.3) from the seabed to every tower pad (`tests/ai/towers.test.ts`: 5 radii x 3 berths x 3 starts x 3 pads). | A 3.8 m ramp is 1.6 m narrower than the v1.9 ones and the tower top is a disc of radius 3.6: a path that cuts a corner there is a fall. |
+| **Fall awareness** (the brief: "never plan a drop >= minDrop; steering must not walk a bot off a platform by accident; L1/L2 may blunder, L3/L4 essentially never") | (1) **Planned drops** are capped at 1.9 m as before AND must not overshoot: `deadlyEdgeAhead` flies a running body (7 m/s, g = 20) off the ledge over the real height field; a 1.5 m terrace beside a ramp that is 3.7 m up is NOT a safe landing (the body clears the terrace and lands 3.9 m down on the seabed: found in the first test, a Veteran lion left the chord ramp's side at 3.4 m and took 50). Such drop edges / straight-line drops are not generated. (2) A ledge edge on a path is approached to its TOP cell first (a straight line to the far side from afar left ramps by their side, metres higher). (3) **`FallGuard`**, the last pass on the final heading: probes the ledge ahead (reach 1.2 m + 0.25 x speed, ballistic landing test) and slides the heading to the nearest direction that does not run over a deadly edge; a bot that is already dropping lets go of the stick (a body keeps its run speed in the air; the sim's decel stops it within a metre); hops over a platform are steered like steps. L1: 30 % of the approaches to an edge are misjudged (the bot walks on for 0.9 s), L2: 10 %, L3 / L4: never. (4) A bot near an edge does not cast a MOVING special (lion / gorilla leap, croc lunge, hippo rush, rhino charge, panther dash) whose line runs over a deadly edge. | Knockback, melee push-out and non-moving abilities cannot be steered; everything the bot itself does can. |
+| **Two-lane `SerpentSense`** | One view per lane (own reaction draw, miss / wrong-way rolls). A bot reacts to the lane of the BAND it stands in (`arenaSerpentBand` at its position): a Veteran on a tower top ignores a LOW strike across its spot, a bot on the seabed ignores a HIGH one. On low open ground the exit is the v1.9.1 one (24 straight headings), so the tuned low-lane numbers did not move. Within 4 m of a deadly edge (tower top, tower ramp) the exit is a Dijkstra over the nav grid to the nearest cell that is safe from EVERY live strip, never over a deadly drop: along the platform when it can, down the ramp otherwise; a cell inside the other lane's live strip costs extra. When no safe cell is reachable before the head arrives (`warn + strike x (1 - along / R)` against metres / speed) a Veteran / Apex at >= 60 % health takes the 50-HP fall on purpose by the shortest way off the platform (50 true damage instead of 300); a hurt bot or a Fighter / Cub never does. Cub / Fighter check their way out for a rim only some of the time (50 % / 85 % of the events), otherwise they step off perpendicular and may fall. `repel` (Veteran / Apex): a bot standing outside a lane's band does not walk up / down a ramp INTO that lane's live strip - it holds at the foot until the strike is over. | The v1.9 rules (reaction, miss, wrong way, margin) are kept per level; only WHERE the exit leads is new. |
+| **Upper-pad pull** | `NAV_AI[level].upperPull` (0 / 0.15 / 0.3 / 0.35): a pad on the upper tier counts that much nearer in the pickup policies of the bots that collect pads (Fighter within range, Veteran proactive, Apex contest), only when no foe is within 8 m, health >= 50 % and the bot is not already up there; after a visit to the upper tier the pull is off for 25 s (a tower is a dead end, not a camp). | "They hold pickups; higher levels climb for them when safe." |
+| **Crevices (stall fix)** | Two Fighter-level pairs wedged for 60-109 s in the notch between the plateau cliff, a causeway's side wall and the 36 deg coral arch (a body of radius >= 0.7 cannot walk the 2.2 m gap, the arch is a hop). (a) The navigator now has a HOP grid (jumpable arches do not block it): used only when the ordinary grids have no route; the follower presses jump when an arch is right ahead. (b) The unstick detector (`updateStuck`) also runs while a bot is retreating or running to a pad with a foe in reach (it used to be off whenever the target was within reach, which is exactly the two-bots-in-a-crevice case). Both are Ocean-only (`nav.active`). | The sweep's stall readout: L2 worst 517 / 6531 / 3780 frames before, 141 after. |
+| Tooling | `scripts/balance-sweep.ts`: per-lane serpent readout (events, exposed - in the strip AND in the lane's band -, dodge, walked-in), fall readout (falls / match, HP lost, share of deaths and of all damage, deliberate vs accidental split by what the faller was doing: own ability / shoved, stunned or grabbed / jostled by a melee / walked alone), upper-tier readout (share of fighter-time above 4.5 m, tower-pad pickups), `TRACE_STALLS=1` and `TRACE_FALLS=1`. `scripts/serpentTrial.ts` / `serpent-dodge.ts`: lane-aware trials (angle drawn with `pickLaneAngle`, start point in the strip on the serpent's own band), `LANES=low,high`, falls and dives reported. | |
+
+### Serpent dodge table (isolated trials, `npx vite-node scripts/serpent-dodge.ts`, N = 100 per animal = 1000 per level and lane)
+
+Rate = no serpent damage taken (a fall off a tower is not a hit; its cost is the `fell` column). The v1.9.1 numbers were 33.6 / 60.0 / 83.5 / 93.8 %.
+
+| Level | LOW lane dodge | HIGH lane dodge | HIGH: fell | HIGH: chose the fall | Mean reaction | Target |
+|---|---|---|---|---|---|---|
+| L1 Cub | **36.0 %** | **34.2 %** | 6.7 % | 0 % | 809 / 844 ms | 25-40 % |
+| L2 Fighter | **59.8 %** | **59.6 %** | 3.0 % | 0 % | 617 / 628 ms | >= 50 % |
+| L3 Veteran | **83.2 %** | **86.2 %** | 17.9 % | 20.3 % | 409 / 410 ms | >= 75 % |
+| L4 Apex | **94.6 %** | **92.0 %** | 5.1 % | 4.6 % | 178 / 179 ms | >= 90 % |
+
+The low lane is the v1.9.1 behaviour (no knob was retuned). On a tower top a Veteran is often out of options in time (reaction 0.4 s, a platform 7.2 m across with a strip 3.6 m wide through it): 20 % of its trials choose the deliberate 50-HP fall (18 % end in one) instead of risking the 300, an Apex needs it in 5 %. The old `serpent.dodge.test` failure (Cub 0.467 against the 0.45 cap) came from the v1.9 TRIAL, not from the bot: it drew the angle uniformly and the start point anywhere in the strip, and with the towers a "low" event could start the fighter on a tower top, where the low serpent cannot hurt it. The lane-aware trial gives the Cub 36.0 % (the bound is now 0.2-0.5 at N = 140, the table above at N = 1000).
+
+### Ocean sweeps (final code)
+
+Real rules (`ARENA=ocean N=60 npm run balance`, shuffled seats, traps on, 50 % every 20 s per lane):
+
+| Level | Avg match | Timeouts | Worst stall (frames) | Runs >= 300 | Serpent events / match (low + high) | Dodge in matches (low / high lane) | Serpent share of deaths | Falls / match | HP lost to falls | Fall share of deaths | Fighter-time on the towers | Tower-pad pickups / match |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| L1 | 46 s | 0 | 159 | 0 | 0.87 + 1.02 | 50 % / - | 0.6 % | 0.00 | 0 % | 0 % | 0.2 % | 0.02 |
+| L2 | 66 s | 0 | 141 | 0 | 1.23 + 1.33 | 64 % / 80 % (1 of 5) | 1.9 % | 0.60 | 0.2 % | 0.7 % | 4.5 % | 2.55 |
+| L3 | 88 s | 0 | 224 | 0 | 2.17 + 1.88 | 84 % / 100 % (0 of 2) | 0.7 % | 0.85 | 0.3 % | 0.4 % | 6.0 % | 2.58 |
+| L4 | 100 s | 0 | 139 | 0 | 2.25 + 2.30 | 90 % / 100 % (0 of 4) | 1.5 % | 0.75 | 0.3 % | 0.0 % | 6.2 % | 3.07 |
+
+Forced events (`SERPENT_EVERY=20 SERPENT_CHANCE=1 ARENA=ocean N=40`, both lanes roll every 20 s): 0 timeouts, worst stall 158 / 125 / 237 / 192 frames (no run >= 300), serpent deaths 1.4 / 5.0 / 4.2 / 3.1 % of deaths (1.9-4.7 events per lane and match), low-lane dodge 57 / 66 / 79 / 89 %, high-lane dodge 100 % of 1 (L2), 67 % of 9 (L3), 100 % of 6 (L4), falls 0.00 / 0.78 / 0.85 / 0.68 per match, fall share of deaths 0 / 0.6 / 0 / 0 %. L4 over 180 matches (three windows of 60): worst stall 237, no run >= 300, falls 0.75-0.80 per match.
+
+Reading:
+- **Zero timeouts and no stall run >= 300 frames** in 240 real-rule matches, 160 forced-event matches and 180 more L4 matches. The sweeps run while this WP was being written found two more wedges (L2: 6531 frames; L4: 1011 frames, two bots bound for the same tower pad deadlocked beside an armed fire trap with the unstick detector off because the foe was within reach); both are fixed (`updateStuck` runs on pad runs and retreats on elevated arenas).
+- **Fall damage is a rounding error**: 0.0-0.7 % of deaths (< 3 %), 0.2-0.4 % of all damage. Falls per match 0.6-0.85 at L2-L4. By what the faller was doing in the last second (L3 / L4, 60 matches each): its own ability 30-35 % (a charge or an ultimate; only the six moving specials are gated), shoved / stunned / grabbed 23-33 %, jostled by a melee push-out ~15 %, none of those ("walked alone") 16-32 %, i.e. 0.13-0.23 per match - those are not confirmed steering errors (a projectile or an area effect displaces a body without a knockback flag), but they are the number to look at if L3 / L4 are to "essentially never" fall. The Apex chose the fall on purpose once in 60 matches (the serpent dive). The tower-duel test that found the steering falls (two bots dropped on one tower top, 25 s, six seeds x three towers): one fall per duel at every level before the work (mostly bots hopping or stepping over the rim and over the side of a ramp top, plus charges), 0.44-1.0 per duel (L1 0.56, L2 1.0, L3 0.78, L4 0.44) after the first round of fixes; the final code was only measured in the full-match sweeps above.
+- The high serpent is almost never a threat in matches (exposed per event 0.02-0.06): the towers are quiet, which is also why the tower falls cost more than the serpent does.
+- L2 average match time is **+60 %** over the colosseum (66 s against 41 s at N = 60; v1.9 was 49 s): Fighters spend 4.5 % of their time on the towers and 19 % of their pickups are tower pads (heal runs by straight-line distance); L3 / L4 are +-0-12 % (88 / 100 s against 89 / 89). Not tuned here (the task's targets do not cover it); a hurt bot choosing a heal pad by walking distance rather than straight distance would shorten it.
+
+Win % per animal (N = 60 per cell, +-4-6 points of noise per cell; bands: L3 / L4 4-18 %, L1 / L2 < 30 %):
+
+| Animal | L1 | L2 | L3 | L4 (N = 60) | L4 (N = 180) |
+|---|---|---|---|---|---|
+| crocodile | 15 | 12 | 12 | 15 | 11.7 |
+| eagle | 3 | 13 | 7 | 12 | 10.6 |
+| giraffe | 5 | 7 | 10 | 8 | 7.2 |
+| gorilla | 12 | 10 | 8 | 5 | 6.7 |
+| hippo | 10 | 13 | 7 | 5 | 5.6 |
+| lion | 13 | 7 | 13 | 10 | 11.1 |
+| mole | 5 | 5 | 15 | 7 | 10.0 |
+| panther | 10 | 7 | 10 | **20** | 17.2 |
+| python | 8 | 15 | 13 | 12 | 13.3 |
+| rhino | 17 | 12 | 5 | 7 | 6.1 |
+
+Every cell is inside its band except the **L4 panther at N = 60 (20 %)**; at N = 180 it is 17.2 % (inside, but the highest animal at that level) and the hippo is 5.6 % (an N = 60 cell showed 3 %): the extra seeds are what to trust. L1 spread 3-17, L2 5-15, L3 5-15, L4 5.6-17.2. No animal number was retuned (animal balance is not this WP's to touch).
+
+### Identity proof (colosseum and jungle unchanged)
+
+`scripts/identity-hash.ts` before the first edit and after the last (12 full matches per arena): **colosseum chain `cd997f25`, jungle chain `7ab4f15e`, both times**, every per-match hash identical (re-run after each of the last three bot edits). The nav grid, the navigator, the fall guard, the serpent sense and every new `BotBrain` branch are inactive without `heightfield` / `hazards.fallDamage` / `hazards.serpent`.
+
+### Findings for the other packages (not fixed here: sim / layout)
+
+- **A charge keeps its altitude over a void.** A fighter whose ability owns its position (hippo River Rush, rhino charge) that leaves a platform mid-charge hovers at its starting height until the charge ends (`locomote` is skipped, `followGround` does not run while `airborne`), then falls the full height: a rush that starts on a tower and runs off the rim hangs in the air for up to 1.2 s and lands a deadly drop below. The bots no longer cast movers toward a rim; a human can.
+- **Crevices at the causeway feet.** The notch between the plateau cliff (r = 8), a causeway's side wall and the coral arch at 36 deg (r 10.5) / the crate piles is a 1-5 m2 pocket for any body of radius >= 0.7 on the nav grid (the arch is a 0.9 m hop, the gap 2.2 m): animals can get in (by hopping the arch) and, without the hop planning above, could not get out. The bots now hop out; the layout could open it (move the arch 3 m outward).
+- **Tower fights are knockback fights**: a duel on a 3.6 m disc ends with a fighter over the edge in roughly every second duel even with the guard; the tower top is a hard place to stand next to a gorilla (by design, per the plan).
+
+### Not measured / limits
+
+- Ultimates are not gated against a deadly edge (only the six moving specials are); 12-18 of the 60-match falls at L3 / L4 follow the faller's own ability.
+- The deliberate fall exists only as a serpent emergency (no flee-by-falling, no chase-by-falling): a hurt bot never leaves a tower by the edge.
+- The upper-pad pull is light by design: its effect is hard to separate from heal runs (the same pads are the nearest heal pad for a retreating bot); `NAV_TUNE='{"2":{"upperPull":0}}'` leaves the L2 numbers unchanged, because the Fighter's range-8 policy rarely reaches a tower pad on pull alone.
+- Win rates carry +-4-6 points of noise per cell at N = 60.
+
 ## v1.9.1 serpent retune (50 % every 20 s)
 
 User request: the sea serpent rolls **50 % every 20 s of live match time** (was 10 % every 60 s). Only `src/config/serpent.ts` `intervalS`/`chance` changed. Ocean sweep, real rules, N=60 per level (`ARENA=ocean N=60 npm run balance`):

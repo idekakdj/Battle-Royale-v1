@@ -190,6 +190,14 @@ export interface TrapState {
 export type SerpentPhase = 'warn' | 'strike' | 'hold' | 'retreat';
 
 /**
+ * v1.10: the Ocean Dome has TWO sea serpents that run independently (docs/OCEAN-HEIGHTS-PLAN.md). The `low` serpent (the
+ * v1.9 one) hurts fighters standing over LOW ground (ground height < the arena's `hazards.serpentSplitY`: seabed, terrace,
+ * plateau and the lower parts of ramps); the `high` serpent hurts fighters over HIGH ground (>= the split: the upper platforms
+ * and the upper parts of their ramps). Events without a `tier` field are `low` (v1.9 behaviour).
+ */
+export type SerpentTier = 'low' | 'high';
+
+/**
  * v1.9 live state of the running sea-serpent event. Present in {@link WorldSnapshot.serpent} ONLY while an event runs.
  * The strike line runs from the dome edge at `angleDeg` to the centre: direction vector (cos θ, sin θ) in (x, z), θ in
  * [0, 360), the same convention as the ramps in `config/arenas.ts`.
@@ -213,8 +221,13 @@ export interface WorldSnapshot {
   traps: TrapState[];
   /** v1.3: projectiles in flight (absent/empty when none). */
   projectiles?: ProjectileState[];
-  /** v1.9: the sea-serpent event in progress (Ocean Dome only; absent when no event runs, so other arenas' snapshots are unchanged). */
+  /**
+   * v1.9: the sea-serpent event in progress (Ocean Dome only; absent when no event runs, so other arenas' snapshots are unchanged).
+   * v1.10: this block is the LOW serpent's ({@link SerpentTier}); the high serpent's is {@link WorldSnapshot.serpentHigh}.
+   */
   serpent?: SerpentState;
+  /** v1.10: the HIGH serpent's event in progress (Ocean Dome only; absent when it is not attacking). Same shape and phases as `serpent`. */
+  serpentHigh?: SerpentState;
   bloodlustMult: number;
   matchOver: boolean;
   winnerId: number;
@@ -228,7 +241,7 @@ export type GameEvent =
    * A fighter died. `killerId` −1 = the environment (trap, serpent). v1.9: `cause` is present ONLY for a sea-serpent kill
    * (`'serpent'`; killerId stays −1) so the kill feed can tell it from a trap kill (which stays "killerId −1, no cause").
    */
-  | { type: 'death'; targetId: number; killerId: number; placement: number; cause?: 'serpent' }
+  | { type: 'death'; targetId: number; killerId: number; placement: number; cause?: 'serpent' | 'fall' }
   | { type: 'ultimate'; fighterId: number; animal: AnimalId }
   | { type: 'special'; fighterId: number; animal: AnimalId }
   | {
@@ -296,17 +309,24 @@ export type GameEvent =
    * v1.9 sea-serpent event (Ocean Dome): the WARN phase begins. The strip along angleDeg (centre → edge) is the danger zone;
    * the strike lands `warnS` seconds from now. Fired once per event.
    */
-  | { type: 'serpentWarning'; angleDeg: number; warnS: number }
+  | { type: 'serpentWarning'; angleDeg: number; warnS: number; tier?: SerpentTier }
   /** v1.9: the head breaks through the dome edge at `angleDeg` and sweeps toward the centre (STRIKE begins). */
-  | { type: 'serpentStrike'; angleDeg: number }
+  | { type: 'serpentStrike'; angleDeg: number; tier?: SerpentTier }
   /**
    * v1.9: the swept strip hit one fighter (once per fighter per event). `damage` = hit points actually removed (≤ the
    * config damage); true damage — never reduced by block / guard / armour — and it grants nobody ult charge or credit.
    * `pos` = the fighter's position. A death caused by it follows as `death { killerId: −1, cause: 'serpent' }`.
    */
-  | { type: 'serpentHit'; fighterId: number; damage: number; pos: Vec3 }
+  | { type: 'serpentHit'; fighterId: number; damage: number; pos: Vec3; tier?: SerpentTier }
   /** v1.9: the event is over (the head has withdrawn); the snapshot's `serpent` disappears. */
-  | { type: 'serpentEnd' }
+  | { type: 'serpentEnd'; tier?: SerpentTier }
+  /**
+   * v1.10 FALL DAMAGE (Ocean Dome): a fighter landed after dropping at least the arena's `hazards.fallDamage.minDrop` from the
+   * height where it last stood (off an upper platform instead of taking the ramp) and lost the fixed `damage` (true damage,
+   * hit points actually removed; no block / guard / armour, no credit, no ult charge). `drop` = metres fallen, `pos` = where it
+   * landed. A death caused by it follows as `death { killerId: −1, cause: 'fall' }`.
+   */
+  | { type: 'fall'; fighterId: number; damage: number; drop: number; pos: Vec3 }
   | { type: 'matchEnd'; winnerId: number };
 
 /** Narrows {@link GameEvent} to a single variant by its `type` tag. */

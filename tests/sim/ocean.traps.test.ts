@@ -29,7 +29,7 @@ function rampDist(r: Ramp, x: number, z: number): number {
 }
 
 describe('ocean trap placement across seeds', () => {
-  it('places the full difficulty count for every seed at every difficulty', () => {
+  it('places the full difficulty count for every seed at every difficulty (150 seeds each)', () => {
     const short: string[] = [];
     for (const d of LEVELS) {
       for (let seed = 1; seed <= 150; seed++) {
@@ -100,7 +100,7 @@ describe('ocean trap placement across seeds', () => {
   it('a fighter standing on a terrace trap triggers it (altitude is relative to the ground), a seabed fighter below does not', () => {
     const cfg: MatchConfig = { roster: [{ animal: 'lion', isPlayer: true }, { animal: 'gorilla', isPlayer: false }], difficulty: 4, arena: 'ocean' };
     let w = new World(cfg, 1, new EventBus());
-    for (let seed = 2; seed < 40 && !w.traps.some((t) => t.pos.y === 1.5); seed++) w = new World(cfg, seed, new EventBus());
+    for (let seed = 2; seed < 600 && !w.traps.some((t) => t.pos.y === 1.5); seed++) w = new World(cfg, seed, new EventBus()); // (v1.10: most sites are on the seabed; a terrace trap turns up within a few dozen seeds)
     for (let i = 0; i < 190; i++) w.step(1 / 60);
     const terraceTrap = w.traps.find((t) => t.pos.y === 1.5);
     expect(terraceTrap).toBeDefined();

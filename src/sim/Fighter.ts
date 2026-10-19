@@ -245,6 +245,15 @@ export class Fighter {
    */
   airPeakY = 0;
 
+  /**
+   * v1.10 FALL DAMAGE (arenas with `hazards.fallDamage` only; see `checkFallLanding` in MovementSystem): the feet height where the
+   * fighter last stood on the ground. Updated every grounded tick, frozen while it is in the air; a landing that is
+   * `lastGroundY − feet ≥ minDrop` below it costs the fixed fall damage.
+   */
+  lastGroundY = 0;
+  /** v1.10: the fighter has been in the air (or is dropping off a ledge under an ability's control) since it last stood; its next touchdown is a landing to check. */
+  fallArmed = false;
+
   // ── v1.8 terrain (written ONLY by TerrainSystem; all stay at their neutral values in the colosseum) ──
   /** Grounded and centre inside a water disc (hysteresis at the shoreline). Snapshots carry it as `FighterState.inWater`. */
   inWater = false;
@@ -280,6 +289,7 @@ export class Fighter {
     this.def = def;
     this.arena = arena;
     this.state = makeState(id, animal, def, isPlayer, pos, yaw);
+    this.lastGroundY = pos.y;
   }
 
   /** Copy intent fields in (no aliasing, no per-tick allocation). */

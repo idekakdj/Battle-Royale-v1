@@ -73,6 +73,13 @@ const SERPENT_GLYPH = `<path ${S} d="M7 43 C7 31 38 37 38 25 C38 15 15 19 18 11"
   <circle fill="rgba(0,0,0,0.65)" cx="17" cy="10" r="2"/>
   <path ${S_THIN} d="M26 9 L32 5 M26 9 L32 13"/>`;
 
+/** v1.10 kill-feed glyph for a fatal fall off the Ocean Dome's upper platforms: a bold down arrow cracking the ground, speed lines beside it. */
+const FALL_GLYPH = `<path ${S} d="M24 4 V29"/>
+  <path ${S} d="M13 19 L24 30 L35 19"/>
+  <path ${S_THIN} d="M9 6 V16 M39 8 V18"/>
+  <path ${S} d="M4 38 H44"/>
+  <path ${S_THIN} d="M17 45 L21 39 M31 45 L27 39 M24 46 V40"/>`;
+
 function svg(body: string, cls: string): string {
   return `<svg class="${cls}" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${body}</svg>`;
 }
@@ -87,6 +94,10 @@ export function pickupIconSvg(kind: PickupKind, cls = 'gk-hud__toast-svg'): stri
 
 export function serpentGlyphSvg(cls = 'gk-hud__kf-head'): string {
   return svg(SERPENT_GLYPH, cls);
+}
+
+export function fallGlyphSvg(cls = 'gk-hud__kf-head'): string {
+  return svg(FALL_GLYPH, cls);
 }
 
 export function trapGlyphSvg(kind: TrapKind | undefined, cls = 'gk-hud__kf-head'): string {

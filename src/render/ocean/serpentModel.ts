@@ -11,12 +11,16 @@
  *     of the line, blurred), then out through the breach into the water where it swings in a slow S-curve.
  *   - COILED (warning): a neck going straight out from the head, then a rising spiral outside the dome.
  *   The two are blended by `v.coil` (1 -> 0 over the first 0.3 s of the strike: the body unfurls as the head shoots in).
+ *
+ * v1.10: `new SerpentModel(shared, 'high')` is the HIGH serpent: a violet / magenta palette (scales, fins, glowing eyes and flank dots) and
+ * a body that flies level at the head's height inside the dome (it skims the tower tops instead of hugging the floor).
  */
 
 import * as THREE from 'three';
 import { hash2, mix, rgb, smoothstep, VGeo, composeMat } from '../jungle/vgeo';
 import { arenaGroundHeight, type ArenaDef } from '../../config/arenas';
 import { addLoft, quadTri, tri } from './life';
+import type { SerpentTier } from '../../core/types';
 import { patchBasicFog, patchLit, type OceanShared } from './materials';
 import { BODY_LENGTH, HEAD_RADIUS, type SerpentVisual } from './serpentState';
 import type { QualityTier } from '../quality';
@@ -45,15 +49,54 @@ export function bodySegments(): Float32Array {
 
 // ── Geometry ─────────────────────────────────────────────────────────────────
 
-const C = {
-  scaleDark: rgb(0x143945),
-  scaleMid: rgb(0x1f5967),
-  belly: rgb(0x6fb0a6),
-  horn: rgb(0xe3c27c),
-  tooth: rgb(0xf6efd2),
-  fin: rgb(0xe56f3a),
-  finTip: rgb(0xffb04a),
-  mouth: rgb(0xb03a3c),
+type RGB3 = [number, number, number];
+interface Palette {
+  scaleDark: RGB3;
+  scaleMid: RGB3;
+  belly: RGB3;
+  horn: RGB3;
+  tooth: RGB3;
+  fin: RGB3;
+  finTip: RGB3;
+  mouth: RGB3;
+  /** Glowing eye colour (> 1: blooms). */
+  eye: RGB3;
+  /** The two flank-dot colours and the colour the tail end fades toward. */
+  dotA: RGB3;
+  dotB: RGB3;
+  tail: RGB3;
+}
+
+/** The low serpent (teal scales, orange fins) and the high serpent (deep violet scales, magenta fins, magenta eyes). */
+export const SERPENT_PALETTE: Record<SerpentTier, Palette> = {
+  low: {
+    scaleDark: rgb(0x143945),
+    scaleMid: rgb(0x1f5967),
+    belly: rgb(0x6fb0a6),
+    horn: rgb(0xe3c27c),
+    tooth: rgb(0xf6efd2),
+    fin: rgb(0xe56f3a),
+    finTip: rgb(0xffb04a),
+    mouth: rgb(0xb03a3c),
+    eye: [3.2, 2.9, 0.35],
+    dotA: [0.4, 2.4, 2.0],
+    dotB: [1.8, 0.9, 2.4],
+    tail: [0.7, 0.55, 1.0],
+  },
+  high: {
+    scaleDark: rgb(0x2a1856),
+    scaleMid: rgb(0x4d2a96),
+    belly: rgb(0xb98fe0),
+    horn: rgb(0xf3d9ff),
+    tooth: rgb(0xfff4ff),
+    fin: rgb(0xd1349f),
+    finTip: rgb(0xff8be6),
+    mouth: rgb(0x7a1c6e),
+    eye: [3.3, 0.55, 2.9],
+    dotA: [2.7, 0.5, 2.6],
+    dotB: [0.9, 1.1, 3.0],
+    tail: [1.0, 0.5, 0.8],
+  },
 };
 
 function hexAt(x: number, y: number, z: number): number {
@@ -61,7 +104,7 @@ function hexAt(x: number, y: number, z: number): number {
 }
 
 /** The head (everything but the jaw), local space: origin = head centre, +z = forward (snout), +y up. */
-export function buildHeadGeometry(): THREE.BufferGeometry {
+export function buildHeadGeometry(C: Palette = SERPENT_PALETTE.low): THREE.BufferGeometry {
   const vg = new VGeo();
   const skull = [
     { z: 2.95, rx: 0.06, ry: 0.05, cy: 0.05 },
@@ -141,7 +184,7 @@ export function buildHeadGeometry(): THREE.BufferGeometry {
 }
 
 /** The lower jaw, local space: origin = the hinge, +z forward. */
-export function buildJawGeometry(): THREE.BufferGeometry {
+export function buildJawGeometry(C: Palette = SERPENT_PALETTE.low): THREE.BufferGeometry {
   const vg = new VGeo();
   const jaw = [
     { z: 3.5, rx: 0.07, ry: 0.06, cy: -0.1 },
@@ -173,11 +216,11 @@ export function buildJawGeometry(): THREE.BufferGeometry {
 }
 
 /** Eyes: glowing yellow-green globes with dark slit pupils (unlit, colours > 1 so they bloom). */
-export function buildEyeGeometry(): THREE.BufferGeometry {
+export function buildEyeGeometry(C: Palette = SERPENT_PALETTE.low): THREE.BufferGeometry {
   const vg = new VGeo();
   for (const sx of [-1, 1]) {
     const eye = new THREE.IcosahedronGeometry(0.26, 1);
-    vg.add(eye, composeMat(sx * 0.92, 0.5, 1.15), [3.2, 2.9, 0.35]);
+    vg.add(eye, composeMat(sx * 0.92, 0.5, 1.15), C.eye);
     eye.dispose();
     const slit = new THREE.IcosahedronGeometry(1, 0);
     vg.add(slit, composeMat(sx * 1.1, 0.5, 1.3, 0, 0.4 * sx, 0, 0.045, 0.2, 0.09), [0.02, 0.03, 0.02]);
@@ -200,6 +243,7 @@ const _b2 = new THREE.Vector3();
 const _b3 = new THREE.Vector3();
 
 export class SerpentModel {
+  readonly tier: SerpentTier;
   readonly root = new THREE.Group();
   readonly head = new THREE.Group();
   private readonly jaw = new THREE.Group();
@@ -214,7 +258,9 @@ export class SerpentModel {
   private profileAngle = -999;
   private dots: number;
 
-  constructor(shared: OceanShared) {
+  constructor(shared: OceanShared, tier: SerpentTier = 'low') {
+    this.tier = tier;
+    const C = SERPENT_PALETTE[tier];
     this.root.visible = false;
     this.segU = bodySegments();
     const n = this.segU.length;
@@ -225,9 +271,9 @@ export class SerpentModel {
       this.materials.push(m);
       return m;
     };
-    const headGeo = buildHeadGeometry();
-    const jawGeo = buildJawGeometry();
-    const eyeGeo = buildEyeGeometry();
+    const headGeo = buildHeadGeometry(C);
+    const jawGeo = buildJawGeometry(C);
+    const eyeGeo = buildEyeGeometry(C);
     this.geometries.push(headGeo, jawGeo, eyeGeo);
     const headMesh = new THREE.Mesh(headGeo, lit('head'));
     const jawMesh = new THREE.Mesh(jawGeo, lit('jaw'));
@@ -259,7 +305,7 @@ export class SerpentModel {
     this.bodyMesh.frustumCulled = false;
     for (let i = 0; i < n; i++) {
       _c.setRGB(1, 1, 1).multiplyScalar(i % 2 === 0 ? 0.78 : 1.06);
-      if (i > n * 0.6) _c.lerp(new THREE.Color(0.7, 0.55, 1.0), (i / n - 0.6) * 0.8);
+      if (i > n * 0.6) _c.lerp(new THREE.Color(C.tail[0], C.tail[1], C.tail[2]), (i / n - 0.6) * 0.8);
       this.bodyMesh.setColorAt(i, _c);
     }
     if (this.bodyMesh.instanceColor !== null) this.bodyMesh.instanceColor.needsUpdate = true;
@@ -295,7 +341,7 @@ export class SerpentModel {
     this.dotMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.dotMesh.frustumCulled = false;
     for (let i = 0; i < this.dots; i++) {
-      const g = i % 4 < 2 ? new THREE.Color(0.4, 2.4, 2.0) : new THREE.Color(1.8, 0.9, 2.4);
+      const g = i % 4 < 2 ? new THREE.Color(C.dotA[0], C.dotA[1], C.dotA[2]) : new THREE.Color(C.dotB[0], C.dotB[1], C.dotB[2]);
       this.dotMesh.setColorAt(i, g);
     }
     if (this.dotMesh.instanceColor !== null) this.dotMesh.instanceColor.needsUpdate = true;
@@ -342,12 +388,20 @@ export class SerpentModel {
     // ── straight path ──
     const rs = v.rv + u;
     const lat = (7.5 * Math.sin((rs - 34) * 0.085 + 0.6) * smoothstep(33.5, 46, rs) + 0.4 * Math.sin(time * 3 + u * 0.45) * smoothstep(0, 10, u)) * 1;
-    const gIn = this.groundAt(Math.min(rs, wall + 1), 2) + rad * 0.92 + 0.15;
-    const yOut = 1.7 + rad + 1.9 * Math.sin((rs - 34) * 0.11 + 1.0) * smoothstep(33, 42, rs);
-    let y = mix(gIn, yOut, smoothstep(wall + 1, wall + 5, rs));
-    // keep the neck joined to a raised head
-    const headLift = v.headY - (this.groundAt(Math.min(v.rv, wall + 1), 2) + HEAD_RADIUS + 0.12);
-    y += headLift * (1 - smoothstep(0, 8, u)) * (v.rv < wall + 2 ? 1 : 0.4);
+    let y: number;
+    if (this.tier === 'high') {
+      // the high serpent flies level at the head's height (sagging a little behind the head), then S-curves outside the glass
+      const flight = v.headY - 0.25 - 0.9 * smoothstep(0, 14, u);
+      const yOutH = flight + 1.9 * Math.sin((rs - 34) * 0.11 + 1.0) * smoothstep(33, 42, rs);
+      y = mix(flight, yOutH, smoothstep(wall + 1, wall + 5, rs));
+    } else {
+      const gIn = this.groundAt(Math.min(rs, wall + 1), 2) + rad * 0.92 + 0.15;
+      const yOut = 1.7 + rad + 1.9 * Math.sin((rs - 34) * 0.11 + 1.0) * smoothstep(33, 42, rs);
+      y = mix(gIn, yOut, smoothstep(wall + 1, wall + 5, rs));
+      // keep the neck joined to a raised head
+      const headLift = v.headY - (this.groundAt(Math.min(v.rv, wall + 1), 2) + HEAD_RADIUS + 0.12);
+      y += headLift * (1 - smoothstep(0, 8, u)) * (v.rv < wall + 2 ? 1 : 0.4);
+    }
     const sx = dx * rs - dz * lat;
     const sz = dz * rs + dx * lat;
     if (v.coil <= 0.001) {

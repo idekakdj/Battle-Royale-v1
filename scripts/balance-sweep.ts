@@ -33,7 +33,7 @@ import { BotManager } from '../src/ai/BotManager';
 import { ANIMAL_IDS } from '../src/config/animals';
 import { mulberry32 } from '../src/core/math';
 import { ARENA_IDS } from '../src/core/types';
-import { getArena } from '../src/config/arenas';
+import { getArena, arenaSerpentBand } from '../src/config/arenas';
 import { SERPENT } from '../src/config/serpent';
 import { SERPENT_AI, stripDistance } from '../src/ai/SerpentSense';
 import { NAV_AI } from '../src/ai/Navigator';
@@ -51,6 +51,12 @@ const DUEL = process.env.DUEL === '1';
 const MAX_SIM_S = Number(process.env.MAX_S ?? 300);
 /** TRACE=1 prints the survivors of every timed-out match (stall hunting). */
 const TRACE = process.env.TRACE === '1';
+/** TRACE_FALLS=1 prints every fall nobody pushed or cast (where the fighter left the ground, what it was steering). */
+const TRACE_FALLS = process.env.TRACE_FALLS === '1';
+/** Ground at or above this height (m) is the upper tier of an elevated arena (the Ocean's tower tops; `hazards.serpentSplitY`). */
+const UPPER_Y = 4.5;
+/** TRACE_STALLS=1 prints every fighter that reaches a 300-frame stall (seed, animal, where, what it wanted). */
+const TRACE_STALLS = process.env.TRACE_STALLS === '1';
 /** TRAPS=0 disables arena traps (the v1.2 no-trap baseline). */
 const TRAPS_ON = process.env.TRAPS !== '0';
 /** COMPARE=1 runs every level twice (no traps, then traps) on the same seeds. */
@@ -131,13 +137,35 @@ interface LevelExtras {
   serpHitExposed: number;
   serpHitOther: number;
   serpDeaths: number;
+  /** v1.10 per lane (index 0 = low, 1 = high): events, exposed (in the strip AND in the lane's band when it appeared), hits on the exposed, hits on others. */
+  laneEvents: [number, number];
+  laneExposed: [number, number];
+  laneHitExposed: [number, number];
+  laneHitOther: [number, number];
+  /** v1.10 fall damage: falls, deaths by a fall, HP lost to falls, falls the bot chose (serpent dive) vs not, falls per level of the drop (m, summed). */
+  /** v1.10 upper tier (ground >= 4.5 m: the towers): seconds fighters spent up there, seconds alive, pickups taken on an upper pad, pickups in all. */
+  upperT: number;
+  aliveT: number;
+  upperPickups: number;
+  pickups: number;
+  falls: number;
+  fallDeaths: number;
+  fallHp: number;
+  fallsDeliberate: number;
+  fallDrop: number;
+  /** v1.10 falls by what the faller was doing in the last second: an ability that moves it, a shove / stun / grab, or just walking. */
+  fallByAbility: number;
+  fallByShove: number;
+  fallByWalk: number;
+  /** ... and falls with another fighter within 0.6 m of the faller's last footing (shoved by the soft push-out of a melee). */
+  fallByJostle: number;
   /** v1.9 stall hunt: the longest run of frames one fighter tried to move (|intent| > 0.5, run/idle) and stayed within 0.75 m, and how many runs reached 300 frames (5 s). */
   worstStall: number;
   stalls300: number;
 }
 
 function blankExtras(): LevelExtras {
-  return { trapTriggers: 0, trapDmg: 0, allDmg: 0, trapDeaths: 0, deaths: 0, slams: 0, slamDmg: 0, serpEvents: 0, serpExposed: 0, serpHitExposed: 0, serpHitOther: 0, serpDeaths: 0, worstStall: 0, stalls300: 0 };
+  return { trapTriggers: 0, trapDmg: 0, allDmg: 0, trapDeaths: 0, deaths: 0, slams: 0, slamDmg: 0, serpEvents: 0, serpExposed: 0, serpHitExposed: 0, serpHitOther: 0, serpDeaths: 0, laneEvents: [0, 0], laneExposed: [0, 0], laneHitExposed: [0, 0], laneHitOther: [0, 0], upperT: 0, aliveT: 0, upperPickups: 0, pickups: 0, falls: 0, fallDeaths: 0, fallHp: 0, fallsDeliberate: 0, fallDrop: 0, fallByAbility: 0, fallByShove: 0, fallByJostle: 0, fallByWalk: 0, worstStall: 0, stalls300: 0 };
 }
 
 interface Outcome {
@@ -202,6 +230,10 @@ function play(
   bus.on('special', (e) => {
     if (stats !== null) stats[IDX.get(animals[e.fighterId]) as number].specials++;
   });
+  bus.on('pickup', (e) => {
+    mx.pickups++;
+    if (e.pos.y >= UPPER_Y) mx.upperPickups++;
+  });
   bus.on('trapTriggered', () => {
     mx.trapTriggers++;
   });
@@ -213,30 +245,65 @@ function play(
     mx.slams++;
     mx.slamDmg += e.damage;
   });
-  // v1.9 serpent exposure: who stands in the strip when the warning appears?
-  const exposed = new Array<boolean>(animals.length).fill(false);
+  // v1.9 serpent exposure: who stands in the strip when the warning appears? (v1.10: per lane; exposed = in the strip AND in the lane's band)
+  const exposed = [new Array<boolean>(animals.length).fill(false), new Array<boolean>(animals.length).fill(false)];
   bus.on('serpentWarning', (e) => {
+    const lane = e.tier === 'high' ? 1 : 0;
     mx.serpEvents++;
-    exposed.fill(false);
+    mx.laneEvents[lane]++;
+    exposed[lane].fill(false);
     const rad = (e.angleDeg * Math.PI) / 180;
     for (let i = 0; i < animals.length; i++) {
       const f = world.fighters[i];
       if (!f.state.alive) continue;
       const d = stripDistance(f.state.pos.x, f.state.pos.z, Math.cos(rad), Math.sin(rad), world.arena.wallRadius);
-      if (d < SERPENT.headRadius + f.def.radius) {
-        exposed[i] = true;
+      if (d < SERPENT.headRadius + f.def.radius && arenaSerpentBand(world.arena, f.state.pos.x, f.state.pos.z) === (lane === 1 ? 'high' : 'low')) {
+        exposed[lane][i] = true;
         mx.serpExposed++;
+        mx.laneExposed[lane]++;
       }
     }
   });
   bus.on('serpentHit', (e) => {
-    if (exposed[e.fighterId]) mx.serpHitExposed++;
-    else mx.serpHitOther++;
+    const lane = e.tier === 'high' ? 1 : 0;
+    if (exposed[lane][e.fighterId]) {
+      mx.serpHitExposed++;
+      mx.laneHitExposed[lane]++;
+    } else {
+      mx.serpHitOther++;
+      mx.laneHitOther[lane]++;
+    }
+  });
+  // v1.10 fall damage: was the fall on purpose (the bot was diving off the platform within the last 1.5 s)?
+  const lastDive = new Array<number>(animals.length).fill(-99);
+  const lastGround = animals.map(() => ({ x: 0, z: 0, y: 0, ix: 0, iz: 0, near: 99 }));
+  const lastAbility = new Array<number>(animals.length).fill(-99);
+  const lastShove = new Array<number>(animals.length).fill(-99);
+  bus.on('fall', (e) => {
+    mx.falls++;
+    if (world.time - lastDive[e.fighterId] > 1.5) {
+      if (world.time - lastAbility[e.fighterId] <= 1.0) mx.fallByAbility++;
+      else if (world.time - lastShove[e.fighterId] <= 1.0) mx.fallByShove++;
+      else if (lastGround[e.fighterId].near < 0.6) mx.fallByJostle++;
+      else {
+        mx.fallByWalk++;
+        if (TRACE_FALLS) {
+          const lg = lastGround[e.fighterId];
+          console.log(
+            `  WALKED-FALL seed=${seed} L${lvl} t=${world.time.toFixed(1)} ${world.fighters[e.fighterId].def.id} left (${lg.x.toFixed(1)}, ${lg.z.toFixed(1)}) y ${lg.y.toFixed(1)} intent (${lg.ix.toFixed(2)}, ${lg.iz.toFixed(2)}) landed (${e.pos.x.toFixed(1)}, ${e.pos.z.toFixed(1)}) nearest foe gap ${lg.near.toFixed(1)} drop ${e.drop.toFixed(1)}`,
+          );
+        }
+      }
+    }
+    mx.fallHp += e.damage;
+    mx.fallDrop += e.drop;
+    if (world.time - lastDive[e.fighterId] <= 1.5) mx.fallsDeliberate++;
   });
   bus.on('death', (e) => {
     mx.deaths++;
     if (e.killerId === -1) {
       if (e.cause === 'serpent') mx.serpDeaths++;
+      else if (e.cause === 'fall') mx.fallDeaths++;
       else mx.trapDeaths++;
     }
     place[e.targetId] = e.placement;
@@ -264,8 +331,39 @@ function play(
   }
   for (let tick = 0; tick < maxTicks && !ended; tick++) {
     bots.update(world.snapshot(), DT);
-    for (let id = 0; id < animals.length; id++) world.setIntent(id, bots.getIntent(id));
+    for (let id = 0; id < animals.length; id++) {
+      world.setIntent(id, bots.getIntent(id));
+      if (bots.isDiving(id)) lastDive[id] = world.time;
+    }
     world.step(DT);
+    for (let id = 0; id < animals.length; id++) {
+      const wf = world.fighters[id];
+      const act = wf.state.action;
+      if (!wf.state.airborne) {
+        const lg = lastGround[id];
+        lg.x = wf.state.pos.x;
+        lg.z = wf.state.pos.z;
+        lg.y = wf.state.pos.y;
+        lg.ix = wf.intent.moveX;
+        lg.iz = wf.intent.moveZ;
+        lg.near = 99;
+        for (let o = 0; o < animals.length; o++) {
+          if (o === id || !world.fighters[o].state.alive) continue;
+          const gap = Math.hypot(world.fighters[o].state.pos.x - wf.state.pos.x, world.fighters[o].state.pos.z - wf.state.pos.z) - wf.def.radius - world.fighters[o].def.radius;
+          if (gap < lg.near) lg.near = gap;
+        }
+      }
+      if (act === 'special' || act === 'ultimate' || wf.ability !== null) lastAbility[id] = world.time;
+      if (wf.knockTimer > 0 || act === 'stagger' || act === 'knockdown' || act === 'grabbed' || act === 'feared') lastShove[id] = world.time;
+    }
+    if (world.time > 0 && world.arena.hazards?.serpentSplitY !== undefined) {
+      for (let id = 0; id < animals.length; id++) {
+        const sy = world.fighters[id].state;
+        if (!sy.alive) continue;
+        mx.aliveT += DT;
+        if (sy.pos.y >= UPPER_Y) mx.upperT += DT;
+      }
+    }
     if (STALLS && world.time > 0) {
       for (let id = 0; id < animals.length; id++) {
         const wf = world.fighters[id];
@@ -279,7 +377,14 @@ function play(
         } else {
           stallN[id]++;
           if (stallN[id] > mx.worstStall) mx.worstStall = stallN[id];
-          if (stallN[id] === 300) mx.stalls300++;
+          if (stallN[id] === 300) {
+            mx.stalls300++;
+            if (TRACE_STALLS) {
+              console.log(
+                `  STALL seed=${seed} L${lvl} t=${world.time.toFixed(1)} ${wf.def.id} at (${st0.pos.x.toFixed(1)}, ${st0.pos.z.toFixed(1)}) y ${st0.pos.y.toFixed(1)} action ${st0.action} intent (${wf.intent.moveX.toFixed(2)}, ${wf.intent.moveZ.toFixed(2)}) hp ${st0.hp.toFixed(0)}`,
+              );
+            }
+          }
         }
       }
     }
@@ -326,6 +431,25 @@ function play(
     extras.serpHitExposed += mx.serpHitExposed;
     extras.serpHitOther += mx.serpHitOther;
     extras.serpDeaths += mx.serpDeaths;
+    for (let k = 0; k < 2; k++) {
+      extras.laneEvents[k] += mx.laneEvents[k];
+      extras.laneExposed[k] += mx.laneExposed[k];
+      extras.laneHitExposed[k] += mx.laneHitExposed[k];
+      extras.laneHitOther[k] += mx.laneHitOther[k];
+    }
+    extras.upperT += mx.upperT;
+    extras.aliveT += mx.aliveT;
+    extras.upperPickups += mx.upperPickups;
+    extras.pickups += mx.pickups;
+    extras.falls += mx.falls;
+    extras.fallDeaths += mx.fallDeaths;
+    extras.fallHp += mx.fallHp;
+    extras.fallsDeliberate += mx.fallsDeliberate;
+    extras.fallDrop += mx.fallDrop;
+    extras.fallByAbility += mx.fallByAbility;
+    extras.fallByShove += mx.fallByShove;
+    extras.fallByJostle += mx.fallByJostle;
+    extras.fallByWalk += mx.fallByWalk;
   }
   if (extras !== null) {
     extras.worstStall = Math.max(extras.worstStall, mx.worstStall);
@@ -411,6 +535,27 @@ function runFfa(lvl: Difficulty, traps: boolean = TRAPS_ON): PerAnimal[] {
       `serpent${SERPENT_EVERY > 0 ? ` (forced every ${SERPENT_EVERY}s, chance ${SERPENT_CHANCE})` : ' (real rules)'}: events/match ${(ex.serpEvents / e).toFixed(2)}  ` +
         `exposed/event ${(ex.serpExposed / Math.max(1, ex.serpEvents)).toFixed(2)}  dodge ${ex.serpExposed > 0 ? ((100 * dodged) / ex.serpExposed).toFixed(0) : '-'}% ` +
         `(hit ${ex.serpHitExposed}/${ex.serpExposed} exposed, ${ex.serpHitOther} walked in)  deaths/match ${(ex.serpDeaths / e).toFixed(2)} (${((100 * ex.serpDeaths) / Math.max(1, ex.deaths)).toFixed(1)}% of deaths)`,
+    );
+  }
+  if (getArena(ARENA).hazards?.serpentSplitY !== undefined) {
+    for (const [k, name] of [[0, 'low '], [1, 'high']] as const) {
+      const exp = ex.laneExposed[k];
+      console.log(
+        `  ${name} lane: events/match ${(ex.laneEvents[k] / e).toFixed(2)}  exposed/event ${(exp / Math.max(1, ex.laneEvents[k])).toFixed(2)}  dodge ${exp > 0 ? ((100 * (exp - ex.laneHitExposed[k])) / exp).toFixed(0) : '-'}% ` +
+          `(hit ${ex.laneHitExposed[k]}/${exp} exposed, ${ex.laneHitOther[k]} walked in)`,
+      );
+    }
+  }
+  if (getArena(ARENA).hazards?.fallDamage !== undefined) {
+    const fd = getArena(ARENA).hazards?.fallDamage;
+    console.log(
+      `falls (>= ${fd?.minDrop} m, ${fd?.damage} dmg): per match ${(ex.falls / e).toFixed(2)}  HP lost ${(ex.fallHp / e).toFixed(0)}/match (${((100 * ex.fallHp) / Math.max(1, ex.allDmg)).toFixed(1)}% of all damage)  ` +
+        `deaths by a fall ${ex.fallDeaths} (${((100 * ex.fallDeaths) / Math.max(1, ex.deaths)).toFixed(1)}% of deaths)  deliberate ${ex.fallsDeliberate} / accidental ${ex.falls - ex.fallsDeliberate} (ability ${ex.fallByAbility}, shove/stun/grab ${ex.fallByShove}, jostled in a melee ${ex.fallByJostle}, walked alone ${ex.fallByWalk})  mean drop ${(ex.fallDrop / Math.max(1, ex.falls)).toFixed(1)} m`,
+    );
+  }
+  if (getArena(ARENA).hazards?.serpentSplitY !== undefined) {
+    console.log(
+      `upper tier (ground >= ${UPPER_Y} m): ${((100 * ex.upperT) / Math.max(1, ex.aliveT)).toFixed(1)}% of fighter-time up there  pickups/match ${(ex.pickups / e).toFixed(1)}, on a tower pad ${(ex.upperPickups / e).toFixed(2)}/match (${((100 * ex.upperPickups) / Math.max(1, ex.pickups)).toFixed(0)}%)`,
     );
   }
   if (STALLS) console.log(`stalls: worst run ${ex.worstStall} frames, runs >= 300 frames: ${ex.stalls300} (over ${ended} matches)`);

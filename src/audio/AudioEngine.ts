@@ -22,7 +22,7 @@
  *   `serpentWarning` / `serpentStrike` / `serpentHit` events play the sea-serpent sounds (nothing happens on the other arenas).
  */
 
-import type { AnimalId, PickupState, TrapKind, Vec3 } from '../core/types';
+import type { AnimalId, PickupState, SerpentTier, TrapKind, Vec3 } from '../core/types';
 import type { EventBus } from '../core/EventBus';
 import { makeWhiteNoise, VoiceManager, type SynthCtx } from './synth';
 import { Sfx } from './sfx';
@@ -248,9 +248,11 @@ export class AudioEngine {
       bus.on('hit', () => this.oceanMod?.noteCombat(0.16)),
       bus.on('ultimate', () => this.oceanMod?.noteCombat(0.5)),
       bus.on('death', () => this.oceanMod?.noteCombat(0.6)),
-      bus.on('serpentWarning', () => this.serpentWarningSfx()),
-      bus.on('serpentStrike', () => this.serpentStrikeSfx()),
+      bus.on('serpentWarning', (ev) => this.serpentWarningSfx(ev.tier)),
+      bus.on('serpentStrike', (ev) => this.serpentStrikeSfx(ev.tier)),
       bus.on('serpentHit', (ev) => this.serpentHitSfx(ev.pos)),
+      // v1.10 fall damage: thud + crunch + a short grunt, distance-attenuated (ocean only)
+      bus.on('fall', (ev) => this.fallSfx(ev.pos)),
     ];
   }
 
@@ -330,16 +332,22 @@ export class AudioEngine {
     this.jungleMod.splash(strength, entering, this.distanceGain(pos));
   }
 
-  /** v1.9: the sea serpent's warning (klaxon + growl + rumble); only on the Ocean Dome. */
-  serpentWarningSfx(): void {
+  /** v1.9: the sea serpent's warning (klaxon + growl + rumble); only on the Ocean Dome. v1.10: `tier` 'high' = the high serpent's own variant. */
+  serpentWarningSfx(tier: SerpentTier = 'low'): void {
     if (this.ready() === null || this.oceanMod === null || !this.oceanArena) return;
-    this.oceanMod.warning();
+    this.oceanMod.warning(tier);
   }
 
   /** v1.9: the head bursts through the glass (shatter + crash + roar, then the hold thump and the retreat rumble). */
-  serpentStrikeSfx(): void {
+  serpentStrikeSfx(tier: SerpentTier = 'low'): void {
     if (this.ready() === null || this.oceanMod === null || !this.oceanArena) return;
-    this.oceanMod.strike();
+    this.oceanMod.strike(tier);
+  }
+
+  /** v1.10: a fighter landed after a big drop at `pos` (thud + crunch + grunt, attenuated by distance); only on the Ocean Dome. */
+  fallSfx(pos: Vec3): void {
+    if (this.ready() === null || this.oceanMod === null || !this.oceanArena) return;
+    this.oceanMod.fall(Math.max(0.35, this.distanceGain(pos)));
   }
 
   /** v1.9: the head caught a fighter at `pos` (heavy crunch + thud, attenuated by distance). */

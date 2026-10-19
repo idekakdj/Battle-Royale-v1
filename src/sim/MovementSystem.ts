@@ -192,6 +192,47 @@ export function chargeStep(
   return { stopped, hitCrate: res.hitCrate };
 }
 
+/** v1.10: animals that fly (the eagle's glide / soar) never take fall damage — they come down under their own control. */
+export function isFlyer(f: Fighter): boolean {
+  return f.def.perks.soar !== undefined || f.def.perks.glide !== undefined;
+}
+
+/**
+ * v1.10 FALL DAMAGE bookkeeping, run ONCE per tick per alive fighter after movement and collisions on arenas with
+ * `hazards.fallDamage` (World calls it; it owns the damage and the event). Returns the drop in metres when the fighter has just
+ * LANDED after dropping at least `minDrop` below the height where it last stood, else 0.
+ *
+ *  - `lastGroundY` follows the feet every tick the fighter is on the ground (walking a ramp, jumping and landing level, standing),
+ *    and is frozen while it is in the air, so the drop is measured from where the fighter last STOOD, not from the apex of a jump.
+ *  - "In the air" = `state.airborne`, or hovering more than {@link ARENA_SNAP_DOWN} above the ground without being airborne (an
+ *    ability that owns the position, e.g. a charge, dropping off a ledge at 0.3 m per tick).
+ *  - Only a touchdown that follows such a flight counts, so teleports and carries that merely change the grounded height never do,
+ *    and upward landings (drop <= 0) never do.
+ *  - Exempt: flyers ({@link isFlyer}), burrowed and untargetable fighters. They are treated as standing on the ground under them,
+ *    so a landing in that state restarts the measurement instead of charging a drop later.
+ */
+export function checkFallLanding(arena: ArenaDef, f: Fighter, minDrop: number): number {
+  const s = f.state;
+  const gy = arenaGroundHeight(arena, s.pos.x, s.pos.z);
+  if (isFlyer(f) || f.untargetable || s.burrowT > 0) {
+    f.fallArmed = false;
+    f.lastGroundY = gy;
+    return 0;
+  }
+  if (s.airborne || s.pos.y - gy > ARENA_SNAP_DOWN) {
+    f.fallArmed = true;
+    return 0;
+  }
+  let drop = 0;
+  if (f.fallArmed) {
+    f.fallArmed = false;
+    const d = f.lastGroundY - Math.min(s.pos.y, gy);
+    if (d >= minDrop - 1e-9) drop = d;
+  }
+  f.lastGroundY = s.pos.y;
+  return drop;
+}
+
 /**
  * v1.9: seat the feet of an ability-driven (position-owned) GROUNDED fighter on the ground under it: it rises with a ramp or step
  * (the cliff rule has already limited the climb to ≤ 0.6 m) and drops off a ledge at ≤ 0.3 m per tick. Airborne fighters keep their y.

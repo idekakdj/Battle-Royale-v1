@@ -14,6 +14,7 @@ import {
   COLOSSEUM_ARENA,
   JUNGLE_ARENA,
   OCEAN_ARENA,
+  OCEAN_STACKS,
   arenaCanWalk,
   arenaCliffDistance,
   arenaCliffPush,
@@ -32,6 +33,12 @@ import {
 function bare(pieces: readonly ElevationPiece[] | undefined): ArenaDef {
   return { ...OCEAN_ARENA, solids: [], circles: [], segments: [], crates: [], heightfield: pieces };
 }
+
+/**
+ * A point on the Ocean Dome's plain ray (angle 308 degrees: no ramp and no tower from the centre to the wall; the v1.9 tests used the west
+ * axis, which is a tower now): r = 20 is the seabed 1 m from the terrace rim (r = 19), r = 12 is the terrace, r = 0 the plateau.
+ */
+const oceanAt = (r: number): { x: number; z: number } => ({ x: r * Math.cos((308 * Math.PI) / 180), z: r * Math.sin((308 * Math.PI) / 180) });
 
 describe('elevation: constants', () => {
   it('step-up 0.6 m (the dais), air clearance 0.05, snap-down 0.2, ramps <= 25 degrees', () => {
@@ -182,8 +189,12 @@ describe('elevation: slope, walkable step, step limit', () => {
     expect(arenaIsLevel(o, 0, 0, 6.5)).toBe(true);
     expect(arenaIsLevel(o, 0, 0, 7.6)).toBe(false); // reaches the ramps tucked under the plateau rim (conservative)
     expect(arenaIsLevel(o, 0, 0, 8.3)).toBe(false); // reaches the terrace
-    expect(arenaIsLevel(o, -15, 0, 2)).toBe(true); // west terrace
-    expect(arenaIsLevel(o, -18.5, 0, 2)).toBe(false); // touches the terrace edge
+    expect(arenaIsLevel(o, oceanAt(14).x, oceanAt(14).z, 2)).toBe(true); // terrace
+    expect(arenaIsLevel(o, oceanAt(18.5).x, oceanAt(18.5).z, 2)).toBe(false); // touches the terrace edge
+    const top = OCEAN_STACKS[0];
+    expect(arenaIsLevel(o, top.x, top.z, 1)).toBe(false); // (conservative: the terrace ring's outer edge, r = 19, runs through a tower's top)
+    expect(arenaGroundHeight(o, top.x, top.z)).toBe(6.5); // ... although the top really is one flat level
+    expect(arenaIsLevel(o, top.x, top.z, top.radius + 0.5)).toBe(false); // reaches past the rim
     const ramp = o.heightfield?.find((p) => p.kind === 'ramp') as Extract<ElevationPiece, { kind: 'ramp' }>;
     expect(arenaIsLevel(o, ramp.x, ramp.z, 1)).toBe(false); // on a ramp
     expect(arenaIsLevel(COLOSSEUM_ARENA, 0, 0, 3.5)).toBe(true);
@@ -194,11 +205,13 @@ describe('elevation: slope, walkable step, step limit', () => {
 describe('elevation: walkability helpers for the bots (arenaStandable / arenaCanWalk / arenaSolidDistance)', () => {
   const o = OCEAN_ARENA;
   it('arenaStandable: the dome floor yes; inside a cliff, a solid or the wall no', () => {
-    expect(arenaStandable(o, -15, 0, 1.2)).toBe(true); // west terrace
+    const terracePad = o.pickupPads.find((p) => arenaGroundHeight(o, p.x, p.z) === 1.5) as { x: number; z: number };
+    expect(arenaStandable(o, terracePad.x, terracePad.z, 1.2)).toBe(true); // terrace (a pad: cleared of cover)
     expect(arenaStandable(o, 0, 0, 1.2)).toBe(true); // plateau centre
-    expect(arenaStandable(o, -19.3, 0, 1.2)).toBe(false); // seabed, 0.3 m from the terrace rim
-    expect(arenaStandable(o, -21, 0, 1.2)).toBe(true);
-    expect(arenaStandable(o, -29.5, 0, 1.2)).toBe(false); // wall
+    expect(arenaStandable(o, oceanAt(19.3).x, oceanAt(19.3).z, 1.2)).toBe(false); // seabed, 0.3 m from the terrace rim
+    expect(arenaStandable(o, oceanAt(21).x, oceanAt(21).z, 1.2)).toBe(true);
+    expect(arenaStandable(o, oceanAt(29.5).x, oceanAt(29.5).z, 1.2)).toBe(false); // wall
+    expect(arenaStandable(o, OCEAN_STACKS[1].x, OCEAN_STACKS[1].z, 1.2)).toBe(true); // a tower top
     const rock = o.circles.find((c) => c.kind === 'rock') as (typeof o.circles)[number];
     expect(arenaStandable(o, rock.x, rock.z, 0.5)).toBe(false);
     expect(arenaStandable(o, rock.x, rock.z, 0.5, false)).toBe(true); // (cliff / wall only)
@@ -213,9 +226,16 @@ describe('elevation: walkability helpers for the bots (arenaStandable / arenaCan
     const topZ = ramp.z + Math.sin(a) * (ramp.length / 2 + 2);
     expect(arenaCanWalk(o, lowX, lowZ, topX, topZ, 1.2)).toBe(true);
     expect(arenaCanWalk(o, topX, topZ, lowX, lowZ, 1.2)).toBe(true);
-    expect(arenaCanWalk(o, -22, 0, -15, 0, 1.2)).toBe(false); // straight at the west rim: no ramp
-    expect(arenaWalkableStep(o, -18.5, 0, -21, 0)).toBe(true); // stepping DOWN off the rim is free ...
-    expect(arenaCanWalk(o, -15, 0, -18, 0, 1.2)).toBe(true); // ... (the 1.2 m band at the cliff foot is not standable: you land there and are pushed clear)
+    const a22 = oceanAt(22);
+    const a15 = oceanAt(15);
+    expect(arenaCanWalk(o, a22.x, a22.z, a15.x, a15.z, 1.2)).toBe(false); // straight at the rim on the plain ray: no ramp
+    expect(arenaWalkableStep(o, oceanAt(18.5).x, oceanAt(18.5).z, oceanAt(21).x, oceanAt(21).z)).toBe(true); // stepping DOWN off the rim is free ...
+    expect(arenaCanWalk(o, oceanAt(21).x, oceanAt(21).z, oceanAt(25).x, oceanAt(25).z, 1.2)).toBe(true); // ... (the 1.2 m band at the cliff foot is not standable: you land there and are pushed clear)
+    expect(arenaCanWalk(o, oceanAt(19.3).x, oceanAt(19.3).z, oceanAt(21).x, oceanAt(21).z, 1.2)).toBe(false); // (that band)
+    expect(arenaCanWalk(o, 0, 0, 1.5, 0, 1.2)).toBe(true); // across the flat plateau
+    // and nobody walks straight up a tower from the seabed or the terrace
+    const tower = OCEAN_STACKS[2];
+    expect(arenaCanWalk(o, oceanAt(26).x, oceanAt(26).z, tower.x, tower.z, 1.2, false)).toBe(false);
     expect(arenaCanWalk(COLOSSEUM_ARENA, -20, 0, 20, 8, 1.2, false)).toBe(true); // flat arena: just the wall
   });
 });
@@ -283,9 +303,14 @@ describe('elevation: cliff geometry (arenaNearestCliff / arenaCliffPush / arenaC
 
   it('arenaCliffDistance default feet = the ground at the point', () => {
     const o = OCEAN_ARENA;
-    expect(arenaCliffDistance(o, -20, 0)).toBeCloseTo(1, 6); // seabed, 1 m from the terrace rim at r = 19
-    expect(arenaCliffDistance(o, -15, 0)).toBeCloseTo(7, 6); // terrace: the plateau (r 8) is the next cliff
-    expect(arenaCliffDistance(o, 0, 0)).toBe(Infinity); // plateau: nothing higher
-    expect(arenaCliffDistance(o, -15, 0, 3)).toBe(Infinity); // feet at 3.0: the plateau top is within the limit
+    const p20 = oceanAt(20);
+    const p12 = oceanAt(12);
+    expect(arenaCliffDistance(o, p20.x, p20.z)).toBeCloseTo(1, 6); // seabed, 1 m from the terrace rim at r = 19
+    expect(arenaCliffDistance(o, p12.x, p12.z)).toBeLessThanOrEqual(4 + 1e-6); // terrace: the plateau (r 8, 4 m away) or a ramp flank is the next cliff
+    expect(arenaCliffDistance(o, p12.x, p12.z)).toBeGreaterThan(1.5);
+    expect(arenaCliffDistance(o, 0, 0)).toBeGreaterThan(5); // plateau: only the towers' causeways (3+ m higher, 6+ m away) are higher
+    expect(arenaCliffDistance(o, OCEAN_STACKS[0].x, OCEAN_STACKS[0].z)).toBe(Infinity); // a tower top: nothing higher
+    // feet at 3.0 on the terrace: the plateau top is within the step limit, so only the causeways / towers still count (farther away)
+    expect(arenaCliffDistance(o, p12.x, p12.z, 3)).toBeGreaterThanOrEqual(arenaCliffDistance(o, p12.x, p12.z));
   });
 });

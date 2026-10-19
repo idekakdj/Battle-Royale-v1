@@ -189,7 +189,8 @@ describe('ocean headless smoke (10 bots, every difficulty, several seeds)', () =
     for (const r of reports) {
       const tag = `seed ${r.seed} L${r.level}`;
       expect(r.worstSeatError, tag + ' seat').toBeLessThan(0.21);
-      expect(r.worstAltitude, tag + ' altitude').toBeLessThan(3.5);
+      // v1.10: the highest drop is a tower top (6.5 m) to the seabed, so a falling fighter can be 6.5 m above the ground (+ a jump); v1.9 had 3 m at most
+      expect(r.worstAltitude, tag + ' altitude').toBeLessThan(7.7);
       expect(r.freeIntrusion, tag + ' solid').toBeLessThan(0.25);
       expect(r.worstCliffPen, tag + ' cliff').toBeLessThan(0.3);
     }

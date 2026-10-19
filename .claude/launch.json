@@ -48,6 +48,18 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "--port", "5701", "--strictPort"],
       "port": 5701
+    },
+    {
+      "name": "dev-wph4",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5801", "--strictPort"],
+      "port": 5801
+    },
+    {
+      "name": "dev-wph5",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5802", "--strictPort"],
+      "port": 5802
     }
   ]
 }

@@ -17,6 +17,23 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.10.0] - 2026-10-19
+
+### Added
+- **Ocean Dome gets a third altitude.** Three tall sea-stack **towers** now rise out of the dome floor, each topped with a plaza about 6.5 m up (more than twice the height of the old centre plateau) and each holding a pickup pad. You reach them by ramps: every tower has a steep causeway up from the centre plateau, and two of them also have a second ramp climbing across the terrace, so you can be flanked. Fight at the top for the high ground, or hold the plateau below. The map now has nine pickup pads.
+- **A second Sea Serpent, for the high ground.** The two serpents roll at the same moment, each with the same 50 % chance every 20 seconds, so you can see neither, one or both.
+  - The **low serpent** (red-orange strip, as before) only hurts fighters on the low ground: the sea floor, the terrace, the plateau and the lower parts of the ramps.
+  - The new **high serpent** (violet strip, it sweeps across at tower height) only hurts fighters on the tower tops and the upper parts of their ramps.
+  - Each serpent still gives about 1.1 seconds of warning and does 300 damage to everyone in its strip. The low serpent never attacks along a line that crosses a tower, and the high serpent always attacks along a line that crosses one, so towers and low ground never clash. Stand on the wrong level for the serpent that is coming and you are safe from it, but not from the other one.
+  - A banner for each serpent ("LOW GROUND" / "HIGH GROUND"), an edge arrow for each and a MOVE! / SAFE tag that follows the level you are standing on.
+- **Fall damage on the Ocean Dome.** Dropping 3.4 m or more (for instance stepping or being knocked off a tower instead of taking the ramp) costs a fixed **50 damage** when you land. Blocking and armour don't reduce it, the Eagle's wings protect it from falls, and walking down a ramp never hurts. A red flash and a floating "-50" mark the hit for you, there is a landing burst of dust and bubbles, and the kill feed reads "fell from the heights" if it finishes someone.
+- **Bots know the heights:** they climb the towers for the pickups, take the ramp rather than walk off a rim (lower-difficulty bots still blunder off sometimes), and dodge each serpent by its level. The dodge rates by difficulty are about the same as before: roughly a third for Cub bots, 60 % for Fighters, 85 % for Veterans and 93 % for Apex.
+
+### Changed
+- The Ocean Dome map card describes the new towers and the two serpents, and its map thumbnail shows the towers.
+- The jump-in test link for the ocean (`?br=1&arena=ocean&serpent=...`) accepts `serpent=low`, `high` or `both`.
+- Online: this update changes the game rules and the network format, so everyone in an online room needs to be on version 1.10.
+
 ## [1.9.1] - 2026-10-13
 
 ### Changed
@@ -229,7 +246,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.9.1...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.7.0...v1.8.0

@@ -37,6 +37,14 @@ function pol(r: number, deg: number): { x: number; z: number } {
   return { x: r * Math.cos(a), z: r * Math.sin(a) };
 }
 
+/**
+ * v1.10 layout: a spoke with no ramp, tower or chord beside it, from the terrace (r 14, height 1.5) straight out to the seabed
+ * (r 24): the terrace cliff and the 1.5 m ledge the v1.9 tests used at 36 deg now lie under the chord of the tower at 72 deg. 309 deg is
+ * the one spoke where the ground is clean (arenaIsLevel over a 3 m disc at both ends, heights never rising along it) AND the nav
+ * grid's cells line up with the ledge (a cell centred on the ledge itself has no cliff clearance, which poisons the line test).
+ */
+const SPOKE_DEG = 309;
+
 describe('Navigator is inactive on flat arenas', () => {
   it('colosseum and jungle: every call is a no-op (byte-identical behaviour)', () => {
     for (const arena of [COLOSSEUM_ARENA, JUNGLE_ARENA]) {
@@ -102,7 +110,7 @@ describe('NavGrid on the Ocean Dome', () => {
   it('drops are optional: planning from the plateau to the seabed is shorter with them, and they are real ledge edges', () => {
     const s = new NavSearch(grid.n * grid.n);
     const start = nearestWalkCell(grid, 0, 0, 4);
-    const goal = nearestWalkCell(grid, 24, -10, 4);
+    const goal = nearestWalkCell(grid, 24, 10, 4);
     expect(s.find(grid, start, goal, Infinity, false)).toBe(true);
     const noDrop = s.pathMetres;
     expect(s.hasDrop).toBe(false);
@@ -117,9 +125,9 @@ describe('NavGrid on the Ocean Dome', () => {
   it('lineWalk: flat ground is fine, a cliff blocks, a ledge needs allowDrop', () => {
     // seabed to seabed
     expect(lineWalk(grid, 24, -3, 24, 3, false, false)).toBe(LINE_OK);
-    // seabed (r 24, 36 deg) straight towards the centre runs into the terrace cliff
-    const a = pol(24, 36);
-    const b = pol(14, 36);
+    // seabed (r 24) straight towards the centre runs into the terrace cliff
+    const a = pol(24, SPOKE_DEG);
+    const b = pol(14, SPOKE_DEG);
     expect(lineWalk(grid, a.x, a.z, b.x, b.z, true, false)).toBe(LINE_BLOCKED);
     // terrace (r 14) straight out to the seabed: a 1.5 m ledge
     expect(lineWalk(grid, b.x, b.z, a.x, a.z, false, false)).toBe(LINE_BLOCKED);
@@ -133,8 +141,8 @@ describe('Navigator.steer on the Ocean Dome', () => {
   it('heads for the ramp, not at the cliff, when the target is on the terrace behind it; straight when the line is clear', () => {
     const nav = new Navigator(O, ANIMALS.lion.radius, 3);
     expect(nav.active).toBe(true);
-    const from = pol(24, 36);
-    const goal = pol(14, 36);
+    const from = pol(24, SPOKE_DEG);
+    const goal = pol(14, SPOKE_DEG);
     const out: Move2 = { x: 0, z: 0 };
     expect(nav.steer(out, 0, from.x, from.z, goal.x, goal.z, 'engage', 1)).toBe(true);
     const toGoal = { x: goal.x - from.x, z: goal.z - from.z };
@@ -151,8 +159,8 @@ describe('Navigator.steer on the Ocean Dome', () => {
   });
 
   it('a hurt Veteran / Apex does not plan a drop off a ledge (healthy bots and Cubs do)', () => {
-    const top = pol(14, 36);
-    const below = pol(24, 36);
+    const top = pol(14, SPOKE_DEG);
+    const below = pol(24, SPOKE_DEG);
     const apex = new Navigator(O, ANIMALS.lion.radius, 4);
     const cub = new Navigator(O, ANIMALS.lion.radius, 1);
     expect(apex.dropAllowed('engage', 0.3)).toBe(false);
@@ -168,7 +176,7 @@ describe('Navigator.steer on the Ocean Dome', () => {
     expect(NAV_AI[2].replanS).toBeGreaterThan(NAV_AI[4].replanS);
     expect(NAV_AI[1].margin).toBe(0);
     expect(NAV_AI[4].margin).toBeGreaterThan(0);
-    const t = pol(14, 36); // terrace
+    const t = pol(14, SPOKE_DEG); // terrace
     const costs = ([1, 2, 3, 4] as Difficulty[]).map((d) => new Navigator(O, 0.7, d).crossPenalty(0, t.x, t.z));
     expect(costs[0]).toBe(0);
     expect(costs[1]).toBeGreaterThan(0);
