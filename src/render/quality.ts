@@ -14,6 +14,10 @@
  * and drops ONE tier whenever average fps stays < 45 for 3 s. Auto never raises
  * again during the same page session.
  *
+ * v1.10.1: in an ONLINE match the same watchdog also runs for a player who picked a fixed tier (average frame time > 22 ms for
+ * 3 s): it lowers the effective tier by one level through a per-match ceiling (`lowerForSession`) that is never persisted and
+ * ends with the match.
+ *
  * Persistence: `localStorage['gk-quality']` = `'auto'|'low'|'medium'|'high'`.
  */
 
@@ -24,8 +28,14 @@ export const QUALITY_STORAGE_KEY = 'gk-quality';
 export const QUALITY_TIERS: readonly QualityTier[] = ['low', 'medium', 'high'];
 export const QUALITY_SETTINGS: readonly QualitySetting[] = ['auto', 'low', 'medium', 'high'];
 
-/** Listener: receives the effective tier and the user-facing setting. */
-export type QualityListener = (tier: QualityTier, setting: QualitySetting) => void;
+/**
+ * Why the effective tier changed: `'user'` = the player picked a setting; `'auto'` = the game lowered it by itself (the 'auto'
+ * setting's frame-rate watchdog, or the online-match watchdog; v1.10.1).
+ */
+export type QualityChangeReason = 'user' | 'auto';
+
+/** Listener: receives the effective tier, the user-facing setting and (v1.10.1) why it changed. */
+export type QualityListener = (tier: QualityTier, setting: QualitySetting, reason?: QualityChangeReason) => void;
 
 function isSetting(v: unknown): v is QualitySetting {
   return v === 'auto' || v === 'low' || v === 'medium' || v === 'high';
@@ -43,17 +53,30 @@ function readStored(): QualitySetting {
 let setting: QualitySetting = readStored();
 /** Session-scoped auto tier: starts high, only ever lowered. */
 let autoTier: QualityTier = 'high';
+/**
+ * v1.10.1: per-MATCH ceiling set by the online-match watchdog (`lowerForSession`) for a player whose setting is a fixed tier.
+ * It is never stored: it ends with the match (`clearSessionCap`) or as soon as the player picks a setting themselves.
+ */
+let sessionCap: QualityTier | null = null;
 let version = 0;
 const listeners = new Set<QualityListener>();
 
-function effective(): QualityTier {
-  return setting === 'auto' ? autoTier : setting;
+const TIER_RANK: Readonly<Record<QualityTier, number>> = { low: 0, medium: 1, high: 2 };
+
+/** The lower of two tiers. */
+export function minTier(a: QualityTier, b: QualityTier): QualityTier {
+  return TIER_RANK[a] <= TIER_RANK[b] ? a : b;
 }
 
-function notify(): void {
+function effective(): QualityTier {
+  const base = setting === 'auto' ? autoTier : setting;
+  return sessionCap === null ? base : minTier(base, sessionCap);
+}
+
+function notify(reason: QualityChangeReason = 'user'): void {
   version++;
   const t = effective();
-  for (const fn of listeners) fn(t, setting);
+  for (const fn of listeners) fn(t, setting, reason);
 }
 
 /** The user-facing setting (`'auto'` or a fixed tier). */
@@ -88,10 +111,11 @@ export function setQualitySetting(next: QualitySetting): void {
   } catch {
     /* storage blocked — setting still applies for this session */
   }
-  if (next === setting) return;
+  if (next === setting && sessionCap === null) return;
   const before = effective();
   setting = next;
-  if (effective() !== before) notify();
+  sessionCap = null; // the player has chosen: their choice wins over the online watchdog's ceiling
+  if (effective() !== before) notify('user');
   else version++;
 }
 
@@ -102,8 +126,35 @@ export function setQualitySetting(next: QualitySetting): void {
 export function autoDowngrade(): boolean {
   if (setting !== 'auto' || autoTier === 'low') return false;
   autoTier = autoTier === 'high' ? 'medium' : 'low';
-  notify();
+  notify('auto');
   return true;
+}
+
+/**
+ * v1.10.1: lower the EFFECTIVE tier by one level for the rest of the current match (online matches whose player picked a fixed
+ * tier; the 'auto' setting uses {@link autoDowngrade}). Nothing is persisted and the setting itself is untouched. Returns true if
+ * the tier changed (false when it is already 'low').
+ */
+export function lowerForSession(): boolean {
+  const now = effective();
+  if (now === 'low') return false;
+  sessionCap = now === 'high' ? 'medium' : 'low';
+  notify('auto');
+  return true;
+}
+
+/** Drop the per-match ceiling (the match is over). Notifies only if the effective tier actually changes. */
+export function clearSessionCap(): void {
+  if (sessionCap === null) return;
+  const before = effective();
+  sessionCap = null;
+  if (effective() !== before) notify('user');
+  else version++;
+}
+
+/** The per-match ceiling set by {@link lowerForSession}, or null. */
+export function getSessionCap(): QualityTier | null {
+  return sessionCap;
 }
 
 /** Subscribe to effective-tier changes. Returns an unsubscribe function. */

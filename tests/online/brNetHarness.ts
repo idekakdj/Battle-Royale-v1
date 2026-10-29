@@ -52,7 +52,7 @@ export interface SessionOptions {
   /** Called every sim tick with the truth, returns the intent for remote client `c` (0-based). */
   script?: (c: number, tick: number, truth: WorldSnapshot, slot: number, r: () => number) => FighterIntent;
   /** Called once after the machines exist, before the host/clients are built (e.g. to wrap channel.send). */
-  tamper?: (hostChannel: LinkChannel, clientChannels: LinkChannel[]) => void;
+  tamper?: (hostChannel: LinkChannel, clientChannels: LinkChannel[], net: LoopbackNetwork) => void;
   /** Called after every tick (host side) for custom injections. */
   onTick?: (tick: number, s: Session) => void;
 }
@@ -133,6 +133,7 @@ export async function runSession(opts: SessionOptions = {}): Promise<Session> {
   opts.tamper?.(
     hostMachine.channel,
     clientMachines.map((m) => m.channel),
+    net,
   );
 
   const animals = ANIMAL_IDS as AnimalId[];

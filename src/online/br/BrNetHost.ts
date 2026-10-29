@@ -25,6 +25,7 @@ import { MSG } from '../types';
 import { encodeEventBatches } from './eventCodec';
 import { RemoteIntent, decodeIntentPacket, type RemoteIntentStats } from './intentCodec';
 import { decodeSync, encodeResults, encodeSync, wrapSnapshot, type BrResults } from './miscCodec';
+import { PingEstimator } from './pingEstimator';
 import { STATS_EVERY, encodeSnapshot } from './snapshotCodec';
 
 export interface BrNetHostOptions {
@@ -47,8 +48,10 @@ export interface BrHostClientStats {
   peerId: string;
   name: string;
   connected: boolean;
-  /** Smoothed round-trip time (ms) from BR_SYNC ping/pong (0 until measured). */
+  /** Smoothed round-trip time (ms) from BR_SYNC ping/pong (0 until measured). Spike-resistant, see pingEstimator.ts. */
   rttMs: number;
+  /** Largest raw BR_SYNC round trip of the last 10 s (ms). */
+  rttPeakMs: number;
   bytesOut: number;
   bytesIn: number;
   /** Rolling outbound / inbound rate (kilobytes per second, ~1 s window). */
@@ -69,7 +72,7 @@ interface Client {
   name: string;
   connected: boolean;
   intent: RemoteIntent;
-  rttMs: number;
+  ping: PingEstimator;
   bytesOut: number;
   bytesIn: number;
   rateOutBytes: number;
@@ -91,8 +94,9 @@ export class BrNetHost {
   private readonly channel: GameChannel;
   private readonly start: OnlineStart;
   private readonly now: () => number;
-  private readonly tickEvery: number;
-  private readonly keyframeEvery: number;
+  private tickEvery: number;
+  private keyframeEvery: number;
+  private readonly keyframeIntervalMs: number;
   private readonly pingIntervalMs: number;
   private readonly bySlot = new Map<number, Client>();
   private readonly byPeer = new Map<string, Client>();
@@ -114,10 +118,10 @@ export class BrNetHost {
     this.channel = opts.channel;
     this.start = opts.start;
     this.now = opts.now ?? (() => performance.now());
-    const hz = Math.max(10, Math.min(60, opts.snapshotHz ?? 30));
-    this.tickEvery = Math.max(1, Math.round(1 / (hz * SIM_DT)));
-    const effHz = 1 / (this.tickEvery * SIM_DT);
-    this.keyframeEvery = Math.max(1, Math.round(((opts.keyframeIntervalMs ?? 2000) / 1000) * effHz));
+    this.keyframeIntervalMs = opts.keyframeIntervalMs ?? 2000;
+    this.tickEvery = 1;
+    this.keyframeEvery = 1;
+    this.setSnapshotHz(opts.snapshotHz ?? 30);
     this.pingIntervalMs = opts.pingIntervalMs ?? 500;
 
     const t0 = this.now();
@@ -131,6 +135,23 @@ export class BrNetHost {
     this.unsubs.push(this.channel.onPeerLeft((peer, reason) => this.onLeft(peer, reason)));
   }
 
+  /**
+   * Change the snapshot send rate while the match runs (v1.10.1 host load shedding: 30 -> 20 Hz when the host's frames are slow).
+   * Clamped to 10..60 Hz and rounded to a whole number of sim ticks, like the constructor option. Clients measure the spacing of the
+   * snapshots they receive, so nothing is announced.
+   */
+  setSnapshotHz(snapshotHz: number): void {
+    const hz = Math.max(10, Math.min(60, snapshotHz));
+    this.tickEvery = Math.max(1, Math.round(1 / (hz * SIM_DT)));
+    const effHz = 1 / (this.tickEvery * SIM_DT);
+    this.keyframeEvery = Math.max(1, Math.round((this.keyframeIntervalMs / 1000) * effHz));
+  }
+
+  /** The snapshot rate in force (Hz), after rounding to whole sim ticks. */
+  get snapshotHz(): number {
+    return 1 / (this.tickEvery * SIM_DT);
+  }
+
   private makeClient(s: OnlineSlotInfo, staleMs: number, t0: number): Client {
     return {
       slot: s.slot,
@@ -138,7 +159,7 @@ export class BrNetHost {
       name: s.name,
       connected: true,
       intent: new RemoteIntent(staleMs),
-      rttMs: 0,
+      ping: new PingEstimator(),
       bytesOut: 0,
       bytesIn: 0,
       rateOutBytes: 0,
@@ -254,7 +275,8 @@ export class BrNetHost {
       peerId: c.peerId,
       name: c.name,
       connected: c.connected,
-      rttMs: c.rttMs,
+      rttMs: c.ping.value,
+      rttPeakMs: c.ping.peakMs(this.now()),
       bytesOut: c.bytesOut,
       bytesIn: c.bytesIn,
       kBpsOut: c.kBpsOut,
@@ -365,8 +387,7 @@ export class BrNetHost {
       if (m.kind === 'ping') {
         this.sendTo(c, 'unreliable', MSG.BR_SYNC, encodeSync({ kind: 'pong', echoMs: m.sentMs, nowMs: now }));
       } else {
-        const rtt = now - m.echoMs;
-        if (rtt >= 0 && rtt < 30000) c.rttMs = c.rttMs === 0 ? rtt : c.rttMs * 0.7 + rtt * 0.3;
+        c.ping.add(now - m.echoMs, now);
       }
     }
   }

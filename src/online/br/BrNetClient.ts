@@ -12,6 +12,14 @@
  * newest snapshot the newest one is extrapolated along its velocities for at most `maxExtrapolationMs`, then held.
  * Teleporting fighters (a `blink` event in the interval, or a jump beyond a plausible stride) are never interpolated.
  *
+ * STALLS (v1.10.1). When the stream goes silent for >= STALL_GAP_MS and then resumes (Wi-Fi hiccup, a saturated uplink, a path
+ * change) the first arrivals can be a flood of OLD snapshots that were queued somewhere. They are never shown: while the flush
+ * window is open a snapshot whose transit time exceeds the pre-stall estimate by more than STALE_EXCESS_MS is dropped (`staleSnapshots`),
+ * the clock estimate is kept (silence does not age it) so the first fresh snapshot lands on the right render time without a hard
+ * resync, and the pre-stall buffer is discarded so nothing is ever interpolated across the gap. A flush is recognised by getting
+ * fresher with every snapshot; if the path itself is permanently slower (8 stale snapshots in a row that are NOT getting fresher, or
+ * 200 in total) the new delay is believed and the clock re-primed.
+ *
  * EVENTS arrive reliably with sequence ids (duplicates are dropped) and host sim timestamps; `sample().events` releases each one
  * when render time reaches its timestamp so hit sparks / sounds line up with the interpolated state.
  */
@@ -24,6 +32,7 @@ import { swapEventIds, swapIds } from './idSwap';
 import { IntentSender } from './intentCodec';
 import { detectTeleports, extrapolateSnapshot, lerpSnapshots, splitTeleports } from './interp';
 import { NO_ACK, decodeResults, decodeSync, encodeSync, unwrapSnapshot, type BrResults } from './miscCodec';
+import { PingEstimator } from './pingEstimator';
 import { SnapshotDecoder } from './snapshotCodec';
 
 export interface BrNetClientOptions {
@@ -97,6 +106,12 @@ export interface BrClientStats {
   keyframesReceived: number;
   /** ms since anything arrived from the host. */
   hostSilenceMs: number;
+  /** Largest raw BR_SYNC round trip of the last 10 s (ms); `pingMs` is the spike-resistant estimate. */
+  pingPeakMs: number;
+  /** Silences of >= 400 ms in the snapshot stream that ended with snapshots arriving again. */
+  stalls: number;
+  /** Old snapshots (queued behind a stall) that were dropped instead of replayed. */
+  staleSnapshots: number;
 }
 
 interface Buffered {
@@ -118,6 +133,18 @@ const BUFFER_KEEP_MS = 600;
 const BUFFER_MAX = 64;
 const SEEN_MAX = 256;
 const MAX_QUEUED_EVENTS = 4000;
+/** Silence in the snapshot stream (ms) after which the next snapshot starts a recovery. */
+export const STALL_GAP_MS = 400;
+/** After a stall, arrivals are checked for staleness for this long (ms). */
+const FLUSH_WINDOW_MS = 1500;
+/** A snapshot this much slower (ms) than the pre-stall transit estimate is history, not news. */
+export const STALE_EXCESS_MS = 250;
+/** Never skip more than this many stale snapshots in one recovery (~6.7 s of stream): beyond that the delay is the new normal. */
+const STALE_MAX_RUN = 200;
+/** A flood that is draining shows each stale snapshot at least this much (ms) fresher than the previous one. */
+const STALE_PROGRESS_MS = 10;
+/** This many stale snapshots in a row without progress (a steadily slower path, not a flush): believe the new delay. */
+const STALE_STUCK_RUN = 8;
 
 export class BrNetClient {
   private readonly channel: GameChannel;
@@ -149,6 +176,13 @@ export class BrNetClient {
   private lastArrival = 0;
   private lastSimMs = 0;
   private haveLast = false;
+  // stall recovery
+  private lastSnapAt = -1;
+  private flushUntil = 0;
+  private staleRun = 0;
+  private stuckRun = 0;
+  private lastStaleExcess = Infinity;
+  private purgeOnAccept = false;
 
   // events
   private nextEventSeq = 0;
@@ -156,7 +190,7 @@ export class BrNetClient {
   private blinkHist: Array<{ timeMs: number; id: number }> = [];
 
   // stats
-  private pingEma = 0;
+  private readonly ping = new PingEstimator();
   private ackRttEma = 0;
   private lastPingAt = -Infinity;
   private lastRecvAt = 0;
@@ -173,6 +207,8 @@ export class BrNetClient {
     eventGaps: 0,
     intentsSent: 0,
     keyframesReceived: 0,
+    stalls: 0,
+    staleSnapshots: 0,
   };
   private lastExtrapMs = 0;
   private sampleAt = 0;
@@ -257,7 +293,7 @@ export class BrNetClient {
       else if (m.kind === 'ping') this.channel.send(this.hostPeerId, 'unreliable', MSG.BR_SYNC, encodeSync({ kind: 'pong', echoMs: m.sentMs, nowMs: now }));
       else {
         const rtt = now - m.echoMs;
-        if (rtt >= 0 && rtt < 30000) this.pingEma = this.pingEma === 0 ? rtt : this.pingEma * 0.7 + rtt * 0.3;
+        this.ping.add(rtt, now);
       }
     }
   }
@@ -318,6 +354,40 @@ export class BrNetClient {
         this.counters.duplicateSnapshots++;
         return;
       }
+    }
+    // Stall recovery: silence, then a flood. Old snapshots are dropped, never replayed (see the header).
+    const gap = this.lastSnapAt < 0 ? 0 : now - this.lastSnapAt;
+    this.lastSnapAt = now;
+    if (this.haveLast && gap >= STALL_GAP_MS && simMs > this.lastSimMs) {
+      this.counters.stalls++;
+      this.flushUntil = now + FLUSH_WINDOW_MS;
+      this.staleRun = 0;
+      this.stuckRun = 0;
+      this.lastStaleExcess = Infinity;
+      this.purgeOnAccept = true;
+      // The silence did not age the transit-time samples: the pre-stall minimum is still the best estimate of the path.
+      for (const o of this.offsets) o.at += gap;
+    }
+    if (now < this.flushUntil && this.offsets.length > 0) {
+      const excess = now - simMs - this.minOffset();
+      if (excess > STALE_EXCESS_MS) {
+        this.staleRun++;
+        this.stuckRun = this.lastStaleExcess - excess >= STALE_PROGRESS_MS ? 0 : this.stuckRun + 1;
+        this.lastStaleExcess = excess;
+        if (this.staleRun <= STALE_MAX_RUN && this.stuckRun < STALE_STUCK_RUN) {
+          this.counters.staleSnapshots++;
+          return;
+        }
+        // Not a flush that is catching up: the path itself got this slow. Believe it and learn the transit time from scratch.
+        this.offsets.length = 0;
+        this.excessEma = 0;
+        this.flushUntil = 0;
+      }
+    }
+    if (this.purgeOnAccept) {
+      // Nothing before the stall may be interpolated against what comes after it.
+      this.purgeOnAccept = false;
+      this.buffer.length = 0;
     }
     // Clock bookkeeping (only for snapshots that are newest so far, so reordered old ones don't skew it).
     const last = this.buffer.length > 0 ? this.buffer[this.buffer.length - 1] : null;
@@ -545,7 +615,7 @@ export class BrNetClient {
     for (const s of this.sentLog) if (now - s.at <= 1000) bytesOut += s.bytes;
     const newest = this.buffer.length > 0 ? this.buffer[this.buffer.length - 1] : null;
     return {
-      pingMs: this.pingEma > 0 ? this.pingEma : this.ackRttEma,
+      pingMs: this.ping.value > 0 ? this.ping.value : this.ackRttEma,
       jitterMs: this.jitter,
       bufferDepthMs: newest === null || !Number.isFinite(this.lastR) ? 0 : newest.simMs - this.lastR,
       buffered: this.buffer.length,
@@ -565,6 +635,9 @@ export class BrNetClient {
       intentsSent: this.counters.intentsSent,
       keyframesReceived: this.counters.keyframesReceived,
       hostSilenceMs: now - this.lastRecvAt,
+      pingPeakMs: this.ping.peakMs(now),
+      stalls: this.counters.stalls,
+      staleSnapshots: this.counters.staleSnapshots,
     };
   }
 

@@ -60,6 +60,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "--port", "5802", "--strictPort"],
       "port": 5802
+    },
+    {
+      "name": "dev-wpl2",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5901", "--strictPort"],
+      "port": 5901
     }
   ]
 }

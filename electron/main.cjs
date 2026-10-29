@@ -11,7 +11,8 @@
  *   - single instance, no menu bar, F11 / Alt+Enter fullscreen, window
  *     size/position/fullscreen remembered in userData;
  *   - autoplay allowed so Web Audio starts without a gesture; pointer lock
- *     allowed; Esc is never intercepted so it always reaches the game (pause).
+ *     allowed; Esc is never intercepted so it always reaches the game (pause);
+ *   - background throttling OFF (v1.10.1): an alt-tabbed / covered online host keeps stepping, sending snapshots and answering pings.
  *
  * Flags / env:
  *   --smoke-test          load the app hidden with a throwaway profile, wait for
@@ -106,6 +107,19 @@ protocol.registerSchemesAsPrivileged([
 // Desktop games should start their audio immediately (the web build unlocks on
 // the first click; here the AudioContext is allowed to run from launch).
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
+// v1.10.1 (WP-L2): never let Chromium throttle the game when it is not the focused window. In an online Battle Royale the host
+// runs the sim, the bots, the snapshot sends and the pong replies inside its render loop; an alt-tabbed / covered / minimised host
+// used to get 1 fps animation frames and 1 Hz timers, which every client saw as multi-second ping spikes and a frozen match.
+//   disable-renderer-backgrounding            keep the renderer process at normal priority when it is not in the foreground
+//   disable-background-timer-throttling       no 1 Hz clamp on setTimeout/setInterval in background pages
+//   disable-backgrounding-occluded-windows    a window covered by another one is not treated as backgrounded
+//   disable-features=CalculateNativeWinOcclusion  Windows: stop Chromium guessing that a covered window is hidden (and pausing rAF)
+// (`backgroundThrottling: false` in the window's webPreferences below is the matching per-page switch.)
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 
 if (SMOKE) {
   // Isolated, fresh profile: never touches the player's data or instance lock.
@@ -384,6 +398,7 @@ function createWindow() {
       sandbox: true,
       webSecurity: true,
       spellcheck: false,
+      backgroundThrottling: false, // v1.10.1: keep stepping / answering pings when alt-tabbed (see the switches at the top)
       devTools: DEVTOOLS,
       additionalArguments: [`--gk-version=${app.getVersion()}`],
     },
@@ -507,6 +522,14 @@ function runSmokeTest(win) {
         return finish(false, `preload bridge missing or wrong (desktop=${probe.desktop}, version=${probe.bridgeVersion})`);
       }
 
+      // v1.10.1: the anti-throttling switches must be in force (an alt-tabbed online host has to keep stepping and answering pings).
+      const antiThrottle =
+        app.commandLine.hasSwitch('disable-renderer-backgrounding') &&
+        app.commandLine.hasSwitch('disable-background-timer-throttling') &&
+        app.commandLine.hasSwitch('disable-backgrounding-occluded-windows') &&
+        app.commandLine.getSwitchValue('disable-features').includes('CalculateNativeWinOcclusion');
+      if (!antiThrottle) return finish(false, 'background-throttling switches are not set (disable-renderer-backgrounding & co)');
+
       // Version History panel: open from the lobby, count entries, close with a real Esc key event.
       await js(`(() => { const b = document.querySelector('.gk-lobby__whatsnew'); if (b) b.click(); return !!b; })()`);
       await sleep(300);
@@ -612,7 +635,7 @@ function runSmokeTest(win) {
       clearTimeout(hardTimeout);
       finish(
         true,
-        `version=${version} origin=${probe.origin} desktopBridge=true changelogEntries=${entries} escReachesPage=true matchStarted=true navEntries=${navLabels} championsLeague=${cl} clMenuPath=ok online=mounted onlineChunks=ok peerCloud=${cloud} canvas=${canvas} loadMs=${Date.now() - started}`,
+        `version=${version} origin=${probe.origin} desktopBridge=true changelogEntries=${entries} escReachesPage=true matchStarted=true navEntries=${navLabels} championsLeague=${cl} clMenuPath=ok online=mounted onlineChunks=ok peerCloud=${cloud} antiThrottle=on canvas=${canvas} loadMs=${Date.now() - started}`,
       );
     } catch (err) {
       finish(false, `probe error: ${err && err.message ? err.message : String(err)}`);

@@ -39,12 +39,14 @@ import {
   autoDowngrade,
   getQualitySetting,
   getQualityTier,
+  lowerForSession,
   onQualityChange,
   setQualitySetting,
   tierProfile,
   type QualitySetting,
   type QualityTier,
 } from './quality';
+import { AUTO_SLOW_FRAME_MS, FrameBudgetMonitor, ONLINE_SLOW_FRAME_MS } from './frameBudget';
 
 /** Layer drawn after post-processing, untonemapped (damage numbers). */
 export const OVERLAY_LAYER = 2;
@@ -162,10 +164,6 @@ export const OCEAN_LOOK: ArenaLook = {
 };
 
 const ARENA_LOOKS: Readonly<Record<string, ArenaLook>> = { colosseum: COLOSSEUM_LOOK, jungle: JUNGLE_LOOK, ocean: OCEAN_LOOK };
-
-const AUTO_FPS_MIN = 45;
-const AUTO_SLOW_SECONDS = 3;
-const AUTO_WARMUP = 2.5;
 
 const SKY_VERTEX = /* glsl */ `
 varying vec3 vWorld;
@@ -306,14 +304,12 @@ export class SceneManager {
   private gradePass: ShaderPass | null = null;
   private readonly unsubscribe: () => void;
 
-  // Frame timing / auto quality.
+  // Frame timing / auto quality (the watchdog logic lives in frameBudget.ts).
   private lastNow = -1;
   private time = 0;
-  private warmup = AUTO_WARMUP;
-  private bucketT = 0;
-  private bucketFrames = 0;
-  private slowBuckets = 0;
-  private fps = 60;
+  private readonly monitor = new FrameBudgetMonitor({ slowFrameMs: AUTO_SLOW_FRAME_MS });
+  /** v1.10.1: online match - the watchdog also runs for a fixed quality setting (lowering is per match, never stored). */
+  private onlineGuard = false;
   private disposed = false;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -474,7 +470,17 @@ export class SceneManager {
 
   /** Smoothed frames per second measured over the last full second. */
   getFps(): number {
-    return this.fps;
+    return this.monitor.fps;
+  }
+
+  /**
+   * v1.10.1: arm the frame-time watchdog for an online match. With it on, an average frame time above ~22 ms for 3 s lowers the
+   * quality tier by one level EVEN when the player picked a fixed tier (the 'auto' setting always had this, at 45 fps). Lowering
+   * goes through the per-match ceiling in `quality.ts`: nothing is stored and it ends with the match.
+   */
+  setOnlineGuard(on: boolean): void {
+    this.onlineGuard = on;
+    this.monitor.slowFrameMs = on ? ONLINE_SLOW_FRAME_MS : AUTO_SLOW_FRAME_MS;
   }
 
   // ── Frame ──────────────────────────────────────────────────────────────────
@@ -530,7 +536,7 @@ export class SceneManager {
   /** Last-frame renderer stats (valid after `render()`), for budget checks. */
   getStats(): { drawCalls: number; triangles: number; fps: number; tier: QualityTier } {
     const i = this.renderer.info.render;
-    return { drawCalls: i.calls, triangles: i.triangles, fps: this.fps, tier: this.tier };
+    return { drawCalls: i.calls, triangles: i.triangles, fps: this.monitor.fps, tier: this.tier };
   }
 
   dispose(): void {
@@ -549,27 +555,10 @@ export class SceneManager {
   // ── Internals ──────────────────────────────────────────────────────────────
 
   private sampleFrame(dt: number): void {
-    this.bucketT += dt;
-    this.bucketFrames++;
-    if (this.bucketT < 1) return;
-    this.fps = this.bucketFrames / this.bucketT;
-    this.bucketT = 0;
-    this.bucketFrames = 0;
-    if (this.warmup > 0) {
-      this.warmup -= 1;
-      this.slowBuckets = 0;
-      return;
-    }
-    if (getQualitySetting() !== 'auto') {
-      this.slowBuckets = 0;
-      return;
-    }
-    this.slowBuckets = this.fps < AUTO_FPS_MIN ? this.slowBuckets + 1 : 0;
-    if (this.slowBuckets >= AUTO_SLOW_SECONDS) {
-      this.slowBuckets = 0;
-      this.warmup = AUTO_WARMUP; // let the new tier settle before judging again
-      autoDowngrade();
-    }
+    const auto = getQualitySetting() === 'auto';
+    if (!this.monitor.sample(dt, auto || this.onlineGuard)) return;
+    if (auto) autoDowngrade();
+    else lowerForSession();
   }
 
   private applyTier(tier: QualityTier, initial: boolean): void {
@@ -589,7 +578,7 @@ export class SceneManager {
     this.disposeComposer();
     if (prof.composer) this.buildComposer(prof.msaaSamples, prof.bloom);
     if (!initial) this.resize();
-    this.warmup = AUTO_WARMUP;
+    this.monitor.restartWarmup();
   }
 
   private buildComposer(samples: number, bloom: boolean): void {

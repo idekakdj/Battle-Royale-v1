@@ -67,6 +67,8 @@ import type {
 } from '../core/types';
 import { ANIMALS } from '../config/animals';
 import { SceneManager } from '../render/SceneManager';
+import { warmUpRenderer, type WarmUpReport } from '../render/warmup';
+import { clearSessionCap, onQualityChange } from '../render/quality';
 import { createArenaScene, type ArenaScene } from '../render/arenaScene';
 import { getArena } from '../config/arenas';
 import { terrainTagText } from '../ui/terrainTag';
@@ -104,6 +106,9 @@ import {
   type AimTarget,
 } from './aimAssist';
 import { CombatOverlay, isHidden } from './CombatOverlay';
+import { HostLoadShedder } from './loadShed';
+import { NavWarmer, navWarmKeys } from './navWarm';
+import { showMatchNotice, type NoticeHandle } from './notice';
 
 /** Camera pivot height above the fighter's feet, per animal (§11.5 ~1.2–2.6). */
 const HEAD_HEIGHT: Record<AnimalId, number> = {
@@ -126,6 +131,11 @@ const HEAD_HEIGHT: Record<AnimalId, number> = {
 const RANGE_INDICATOR_NEAR = 1.6;
 /** Above this altitude melee can't reach the ground; hide the indicator. */
 const RANGE_INDICATOR_MAX_Y = 2.6;
+
+/** v1.10.1: build one bot nav grid every this many frames while the countdown is frozen (see navWarm.ts). */
+const NAV_WARM_EVERY_FRAMES = 4;
+/** v1.10.1: any nav grids still missing this close to "FIGHT!" (sim seconds) are built at once, before the first live tick. */
+const NAV_WARM_FLUSH_AT_S = -0.3;
 
 const RESULTS_DELAY_MS = 2500;
 const EXCITEMENT_BASE = 0.2;
@@ -228,6 +238,17 @@ export class MatchController implements Screen {
   private overlay!: CombatOverlay;
   private loop!: GameLoop;
   private root: HTMLElement | null = null;
+  /** v1.10.1: result of the pre-match shader warm-up (QA / diagnostics). */
+  warmUp: WarmUpReport | null = null;
+  /** v1.10.1 QA (dev build or `?qa=1`): wall-clock ms between the first drawn frames of the real loop (hitch hunting). */
+  readonly frameLog: number[] = [];
+  /** v1.10.1: host only - drops the snapshot rate to 20 Hz while the host's own frames are slow. */
+  private readonly loadShed = new HostLoadShedder();
+  private unsubQuality: (() => void) | null = null;
+  private notice: NoticeHandle | null = null;
+  /** v1.10.1: Ocean Dome only (host / offline): the bots' nav grids, built during the countdown instead of on the first live tick. */
+  private navWarm: NavWarmer | null = null;
+  private navWarmFrame = 0;
 
   private snap!: WorldSnapshot;
   private rosterAnimals: AnimalId[] = [];
@@ -306,12 +327,31 @@ export class MatchController implements Screen {
     this.names = this.sim.names;
     this.bus = this.sim.bus;
     audio.attachBus(this.bus);
+    // v1.10.1: whoever runs the bots (offline, online host) pre-builds their nav grids; clients have no bots. Flat arenas: nothing.
+    this.navWarm = null;
+    this.navWarmFrame = 0;
+    if (this.sim.stepsSim) {
+      const arenaDef = getArena(this.arenaId);
+      const keys = navWarmKeys(arenaDef, this.rosterAnimals, this.opts.difficulty);
+      if (keys.length > 0) this.navWarm = new NavWarmer(arenaDef, keys);
+    }
 
     // Render stack.
     const settings = loadSettings();
     this.rigSensitivity = settings.sensitivity;
     this.sensitivity = settings.sensitivity;
     this.sceneManager = new SceneManager(canvas);
+    // v1.10.1: online matches lower the graphics tier by themselves when frames stay slow (even for a fixed setting), say so, and
+    // forget it when the match ends. Offline matches keep the old behaviour (only the 'auto' setting ever lowers).
+    if (!this.sim.pausable) {
+      this.sceneManager.setOnlineGuard(true);
+      this.unsubQuality = onQualityChange((_tier, _setting, reason) => {
+        if (reason === 'auto' && this.hud.layer !== null) {
+          this.notice?.dismiss();
+          this.notice = showMatchNotice(this.hud.layer, 'Lowered graphics to keep the game smooth');
+        }
+      });
+    }
     // v1.8: styles the light rig / fog / sky for the arena, builds its scenery (colosseum = the unchanged Stadium) and adds it.
     this.stadium = createArenaScene(this.sceneManager, getArena(this.arenaId));
     const fxBefore = new Set(this.sceneManager.scene.children); // v1.3 WP-Q
@@ -429,9 +469,21 @@ export class MatchController implements Screen {
     audio.startCrowd();
     audio.setExcitement(EXCITEMENT_BASE);
 
+    // v1.10.1: compile every shader of this map (hidden serpent / fall / water FX, rigs, post passes) NOW, not in the first
+    // frames of the match - a 100-300 ms first-frame stall on the host delays snapshots and pongs for everybody.
+    // (QA only: `?qa=1&warmup=0` skips it, to measure what the first frames cost without it.)
+    if (!this.qaSkipsWarmup()) this.warmUp = warmUpRenderer(this.sceneManager, { effects: this.effects, water: this.arenaId !== 'colosseum' });
+
     this.loop = new GameLoop({
       step: (dt) => this.step(dt),
-      render: (alpha, dtRender) => this.render(alpha, dtRender),
+      render: (alpha, dtRender, draw = true) => {
+        this.render(alpha, dtRender, draw);
+        if (draw) this.onFrameDrawn(dtRender);
+        this.navWarmSlice();
+      },
+      // v1.10.1: online matches have no pause, and the host's sim + snapshots + pongs run in this loop - keep stepping (from a
+      // Worker timer, without drawing) when the page is hidden. Offline matches still freeze with the page.
+      keepAliveWhenHidden: () => !this.sim.pausable,
     });
     this.loop.start();
     this.installQaHook();
@@ -440,6 +492,12 @@ export class MatchController implements Screen {
   unmount(): void {
     this.removeQaHook();
     this.loop.stop();
+    this.unsubQuality?.();
+    this.unsubQuality = null;
+    this.notice?.dismiss();
+    this.notice = null;
+    clearSessionCap(); // v1.10.1: the online graphics lowering ends with the match
+    this.navWarm = null;
     this.input.disable();
     this.input.detach();
     this.opts.audio.detachBus();
@@ -475,6 +533,11 @@ export class MatchController implements Screen {
   // ── Fixed-timestep sim step ─────────────────────────────────────────────────
 
   private step(dt: number): void {
+    // v1.10.1: the fight is about to start - whatever nav grids the countdown slices have not built yet are built NOW (never on the live tick).
+    if (this.navWarm !== null && this.snap.time >= NAV_WARM_FLUSH_AT_S) {
+      this.navWarm.flush();
+      this.navWarm = null;
+    }
     // Player intent (camera-relative). While dead, the consumed attack edge
     // (or Tab) cycles the spectate target instead of driving the corpse.
     const intent = this.input.getIntent(this.cameraRig.yaw);
@@ -706,7 +769,7 @@ export class MatchController implements Screen {
 
   // ── Render frame ────────────────────────────────────────────────────────────
 
-  private render(loopAlpha: number, dtRender: number): void {
+  private render(loopAlpha: number, dtRender: number, draw = true): void {
     // v1.5 online client: the view is already interpolated, so render at alpha = 1 after pulling the freshest state.
     let alpha = loopAlpha;
     if (!this.sim.stepsSim) {
@@ -772,7 +835,7 @@ export class MatchController implements Screen {
       const cp = this.sceneManager.camera.position;
       this.rigs[0].fpxAnchorPass(cp.x, cp.y, cp.z, this.cameraRig.yaw, this.cameraRig.fpPitch, this.cameraRig.fpAmount);
     }
-    this.sceneManager.render();
+    if (draw) this.sceneManager.render(); // v1.10.1: a hidden, kept-alive page does everything but draw
 
     this.sceneManager.renderer.getSize(_size);
     this.overlay.update(
@@ -1375,6 +1438,56 @@ export class MatchController implements Screen {
   /** QA: draw one frame at interpolation `alpha` (default 1 = the latest sim state). */
   renderFrame(alpha = 1, dtRender: number = FIXED_DT): void {
     this.render(alpha, dtRender);
+  }
+
+  /**
+   * v1.10.1: per drawn frame of the real loop - host load shedding. A host whose frames stay slow sends 20 Hz snapshots instead of
+   * 30 Hz (clients measure the spacing); it goes back to 30 Hz after a stretch of fast frames. QA's manual `renderFrame` never
+   * reaches this (only the loop's own frames do), and hidden frames (`draw = false`) are not load.
+   */
+  private onFrameDrawn(dtRender: number): void {
+    if (this.frameLog.length < 240 && (import.meta.env.DEV || this.opts.qa === true)) this.frameLog.push(Math.round(dtRender * 10000) / 10);
+    if (this.sim.kind !== 'host') return;
+    const hz = this.loadShed.sample(dtRender);
+    if (hz !== null) this.applySnapshotRate(hz);
+  }
+
+  /** v1.10.1: one nav grid every few frames during the frozen countdown (cheap frames in between keep pongs and the HUD moving). */
+  private navWarmSlice(): void {
+    const w = this.navWarm;
+    if (w === null || this.paused) return;
+    if (w.pending === 0) {
+      this.navWarm = null;
+      return;
+    }
+    if (++this.navWarmFrame % NAV_WARM_EVERY_FRAMES === 0) w.stepOne();
+  }
+
+  /** QA only (dev build or `?qa=1`): `warmup=0` in the URL turns the shader warm-up off. */
+  private qaSkipsWarmup(): boolean {
+    if (!(import.meta.env.DEV || this.opts.qa === true) || typeof window === 'undefined') return false;
+    try {
+      return new URLSearchParams(window.location.search).get('warmup') === '0';
+    } catch {
+      return false;
+    }
+  }
+
+  /** Forward a new snapshot send rate to the online host's network layer (`HostSimDriver.net`, an optional capability). */
+  private applySnapshotRate(hz: number): void {
+    const net = (this.sim as unknown as { net?: { setSnapshotHz?: (hz: number) => void } }).net;
+    net?.setSnapshotHz?.(hz);
+  }
+
+  /** QA / diagnostics: how the loop is currently driven and the load-shedding state. */
+  get loopInfo(): { running: boolean; workerDriven: boolean; ticker: string; snapshotHz: number; shedding: boolean } {
+    return {
+      running: this.loop.isRunning,
+      workerDriven: this.loop.isWorkerDriven,
+      ticker: this.loop.tickerKind,
+      snapshotHz: this.loadShed.hz,
+      shedding: this.loadShed.shedding,
+    };
   }
 
   /** The latest simulation snapshot (QA / tests). */

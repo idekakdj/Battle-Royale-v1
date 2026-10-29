@@ -12,9 +12,11 @@ const MAX_TOASTS = 4;
 export class NetHud {
   private root: HTMLElement | null = null;
   private chip!: HTMLElement;
+  private diag!: HTMLElement;
   private banner!: HTMLElement;
   private toasts!: HTMLElement;
   private text = '';
+  private detail = '';
   private quality = '';
   private bannerText: string | null = null;
   private readonly timers = new Set<number>();
@@ -23,6 +25,8 @@ export class NetHud {
     if (this.root !== null) return;
     this.chip = document.createElement('div');
     this.chip.className = 'gk-nethud__chip';
+    this.diag = document.createElement('div');
+    this.diag.className = 'gk-nethud__diag';
     this.banner = document.createElement('div');
     this.banner.className = 'gk-nethud__banner gk-display';
     this.banner.hidden = true;
@@ -31,7 +35,7 @@ export class NetHud {
     const root = document.createElement('div');
     root.className = 'gk-nethud';
     root.setAttribute('aria-live', 'polite');
-    root.append(this.chip, this.banner, this.toasts);
+    root.append(this.chip, this.diag, this.banner, this.toasts);
     host.appendChild(root);
     this.root = root;
   }
@@ -45,6 +49,12 @@ export class NetHud {
     if (state.quality !== this.quality) {
       this.quality = state.quality;
       this.chip.dataset.quality = state.quality;
+      this.diag.dataset.quality = state.quality;
+    }
+    const detail = state.detail ?? '';
+    if (detail !== this.detail) {
+      this.detail = detail;
+      this.diag.textContent = detail;
     }
     if (state.banner !== this.bannerText) {
       this.bannerText = state.banner;

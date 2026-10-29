@@ -6,15 +6,28 @@
  *   - `reliable: true`   ordered + retransmitted      → Channel 'reliable'
  *   - `reliable: false`  UNORDERED (no head-of-line blocking; own SCTP association)  → Channel 'unreliable'
  * The link opens only when BOTH are open (12 s timeout). The two halves of an incoming link are paired through the
- * `metadata.linkId` the dialler attached. NOTE: PeerJS 1.5 opens its unordered channel without `maxRetransmits`, so
- * "unreliable" packets are late-but-delivered rather than dropped — the game layers de-duplicate/ignore stale input anyway.
+ * `metadata.linkId` the dialler attached.
  *
- * Compile-checked + driven by the manual two-tab recipe only (WebRTC does not exist in the test environment).
+ * v1.10.1 — TRULY unreliable channel. PeerJS 1.5 opens its unordered channel WITHOUT `maxRetransmits`, so SCTP still retransmits
+ * lost packets and, after a timeout, collapses its congestion window: snapshots, inputs and pings queued behind the retransmits and
+ * arrived seconds late (the 100-5500 ms ping spikes). Each link therefore also negotiates a `gk-fast` data channel
+ * (`maxRetransmits: 0`, unordered) on the RTCPeerConnection of the 'unreliable' half; once BOTH ends confirmed theirs is open (READY
+ * over the reliable channel) all 'unreliable' traffic uses it, and the old half stays as the fallback (v1.10.0 peers, READY timeout,
+ * channel error/close). Unreliable sends are dropped, not queued, when more than {@link MAX_UNRELIABLE_BACKLOG} bytes are waiting.
+ * Details and rationale: `fastChannel.ts`; numbers shown to the player: `netDiag.ts`.
+ *
+ * Compile-checked + unit-tested with fake data channels (`tests/online/fastChannel.test.ts`); the real WebRTC behaviour is driven by
+ * the manual two-tab recipe only (docs/ONLINE-NOTES.md — WebRTC does not exist in the test environment).
  */
 
 import { Peer, type DataConnection, type PeerOptions } from 'peerjs';
 import type { Channel, Link, Transport, TransportHandlers } from '../types';
+import { netDiag } from '../netDiag';
+import type { LinkDiagInfo } from '../netDiagModel';
+import { FAST_READY_PACKET, FastPath, isFastReady, unreliableBlock } from './fastChannel';
 import { resolveIceServers, type IceServerSpec, type SignalServer } from './iceConfig';
+
+export { MAX_UNRELIABLE_BACKLOG } from './fastChannel';
 
 export interface PeerJsTransportOptions {
   /** Custom signalling server; omit for the PeerJS cloud. */
@@ -41,10 +54,8 @@ function toBytes(data: unknown): Uint8Array | null {
   return null;
 }
 
-/** Unreliable packets are dropped instead of queued once the data channel backs up past this many bytes. */
-const MAX_UNRELIABLE_BACKLOG = 64 * 1024;
-
-class PeerJsLink implements Link {
+/** @internal exported for the unit tests (fake DataConnections); production code only reaches it through {@link PeerJsTransport}. */
+export class PeerJsLink implements Link {
   readonly linkId: string;
   private rel: DataConnection | null = null;
   private unr: DataConnection | null = null;
@@ -52,6 +63,13 @@ class PeerJsLink implements Link {
   private closed = false;
   private rtt = 0;
   private buffer: { ch: Channel; data: Uint8Array }[] = [];
+  /** v1.10.1: the negotiated `maxRetransmits: 0` channel next to the PeerJS 'unreliable' half (null: not creatable). */
+  private fast: FastPath | null = null;
+  private peerReadyEarly = false;
+  private stopDiag: (() => void) | null = null;
+  private droppedUnreliable = 0;
+  private sentUnreliable = 0;
+  private receivedUnreliable = 0;
   /** Called once when both halves are open. */
   onReady: ((link: PeerJsLink) => void) | null = null;
   /** Called when a half fails/closes before or after the link was ready. */
@@ -61,6 +79,7 @@ class PeerJsLink implements Link {
     readonly peerId: string,
     linkId: string,
     private readonly deliver: (link: PeerJsLink, ch: Channel, data: Uint8Array) => void,
+    private readonly log: ((msg: string) => void) | null = null,
   ) {
     this.linkId = linkId;
   }
@@ -84,13 +103,50 @@ class PeerJsLink implements Link {
     dc.on('data', (d) => {
       const bytes = toBytes(d);
       if (bytes === null || this.closed) return;
-      if (this.opened) this.deliver(this, ch, bytes);
-      else if (this.buffer.length < 256) this.buffer.push({ ch, data: bytes });
+      if (ch === 'reliable' && isFastReady(bytes)) {
+        // Transport-internal handshake: never reaches the game layers.
+        if (this.fast !== null) this.fast.peerReady();
+        else this.peerReadyEarly = true;
+        return;
+      }
+      this.receive(ch, bytes);
     });
     dc.on('open', () => this.check());
     dc.on('close', () => this.fail('remote-closed'));
     dc.on('error', (e: Error) => this.fail(`error:${e.message}`));
+    if (ch === 'unreliable') this.initFast(dc);
     if (dc.open) this.check();
+  }
+
+  private receive(ch: Channel, bytes: Uint8Array): void {
+    if (ch === 'unreliable') this.receivedUnreliable++;
+    if (this.opened) this.deliver(this, ch, bytes);
+    else if (this.buffer.length < 256) this.buffer.push({ ch, data: bytes });
+  }
+
+  /** Create our end of the `gk-fast` channel on the RTCPeerConnection of the 'unreliable' half. */
+  private initFast(dc: DataConnection): void {
+    const pc = (dc as { peerConnection?: RTCPeerConnection | null }).peerConnection;
+    if (pc === null || pc === undefined || typeof pc.createDataChannel !== 'function') return;
+    this.fast = new FastPath(pc, {
+      sendReady: () => this.sendReady(),
+      onData: (bytes) => {
+        if (!this.closed) this.receive('unreliable', bytes);
+      },
+      onState: (state, reason) => this.log?.(`fast channel to ${this.peerId}: ${state}${reason !== '' ? ` (${reason})` : ''}`),
+    });
+    if (this.peerReadyEarly) this.fast.peerReady();
+  }
+
+  private sendReady(): boolean {
+    const rel = this.rel;
+    if (rel === null || !rel.open) return false;
+    try {
+      void rel.send(FAST_READY_PACKET.slice());
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Both halves open → ready. */
@@ -98,6 +154,7 @@ class PeerJsLink implements Link {
     if (this.opened || this.closed) return;
     if (this.rel?.open !== true || this.unr?.open !== true) return;
     this.opened = true;
+    this.fast?.linkOpened();
     this.onReady?.(this);
   }
 
@@ -113,17 +170,79 @@ class PeerJsLink implements Link {
 
   send(channel: Channel, data: Uint8Array): void {
     if (!this.open) return;
-    const dc = channel === 'reliable' ? this.rel : this.unr;
+    if (channel === 'unreliable') {
+      this.sendUnreliable(data);
+      return;
+    }
+    const dc = this.rel;
     if (dc === null || !dc.open) return;
     try {
-      if (channel === 'unreliable') {
-        const dch = dc.dataChannel as RTCDataChannel | null;
-        if (dch !== null && dch !== undefined && dch.bufferedAmount > MAX_UNRELIABLE_BACKLOG) return;
-      }
       void dc.send(data.slice());
     } catch {
       /* a failed send surfaces as the connection closing */
     }
+  }
+
+  /**
+   * 'unreliable' traffic: the fast channel once it is confirmed on both ends, else the PeerJS half. Either way a packet is
+   * DROPPED (and counted) rather than queued when the channel is backed up or closing — late is worse than lost.
+   */
+  private sendUnreliable(data: Uint8Array): void {
+    const fast = this.fast;
+    if (fast !== null && fast.active) {
+      const r = fast.send(data);
+      if (r === 'sent') {
+        this.sentUnreliable++;
+        return;
+      }
+      if (r === 'dropped') {
+        this.droppedUnreliable++;
+        return;
+      }
+      // 'off': the fast channel just died — fall through to the PeerJS half.
+    }
+    const dc = this.unr;
+    if (dc === null || !dc.open) return;
+    try {
+      const dch = dc.dataChannel as RTCDataChannel | null | undefined;
+      if (dch !== null && dch !== undefined && unreliableBlock(dch) !== null) {
+        this.droppedUnreliable++;
+        return;
+      }
+      void dc.send(data.slice());
+      this.sentUnreliable++;
+    } catch {
+      /* a failed send surfaces as the connection closing */
+    }
+  }
+
+  /** Diagnostics: this link's own counters (see `netDiag.ts`). */
+  diagInfo(): LinkDiagInfo {
+    const fast = this.fast;
+    const dch = this.unr?.dataChannel as RTCDataChannel | null | undefined;
+    const buffered = fast !== null && fast.active ? fast.bufferedAmount : (dch?.bufferedAmount ?? 0);
+    return {
+      open: this.open,
+      fast: fast === null ? 'off' : fast.state,
+      fastReason: fast === null ? 'unsupported' : fast.info().reason,
+      dropped: this.droppedUnreliable,
+      buffered,
+      sentUnreliable: this.sentUnreliable,
+      receivedUnreliable: this.receivedUnreliable,
+    };
+  }
+
+  /** `getStats()` of the RTCPeerConnection that carries the fast channel (null when there is none). */
+  diagStats(): Promise<unknown> | null {
+    const pc = this.unr?.peerConnection as RTCPeerConnection | null | undefined;
+    if (pc === null || pc === undefined || typeof pc.getStats !== 'function') return null;
+    return pc.getStats();
+  }
+
+  /** Start publishing this link to the network diagnostics (HUD line, `window.__gkNetDiag()`). */
+  startDiag(): void {
+    if (this.stopDiag !== null || this.closed) return;
+    this.stopDiag = netDiag.register({ peerId: this.peerId, linkId: this.linkId, getStats: () => this.diagStats(), info: () => this.diagInfo() });
   }
 
   close(): void {
@@ -141,6 +260,9 @@ class PeerJsLink implements Link {
     if (this.closed) return;
     this.closed = true;
     this.buffer = [];
+    this.stopDiag?.();
+    this.stopDiag = null;
+    this.fast?.close();
     for (const dc of [this.rel, this.unr]) {
       try {
         dc?.close();
@@ -279,7 +401,7 @@ export class PeerJsTransport implements Transport {
     const existing = this.links.get(peerId);
     if (existing !== undefined && existing.open) return existing;
     const linkId = token();
-    const link = new PeerJsLink(peerId, linkId, (l, ch, d) => this.handlers?.onData(l, ch, d));
+    const link = new PeerJsLink(peerId, linkId, (l, ch, d) => this.handlers?.onData(l, ch, d), this.linkLog());
     const meta = (ch: Channel): object => ({ gk: 1, linkId, ch });
     const rel = peer.connect(peerId, { reliable: true, serialization: 'raw', label: 'gk-r', metadata: meta('reliable') });
     const unr = peer.connect(peerId, { reliable: false, serialization: 'raw', label: 'gk-u', metadata: meta('unreliable') });
@@ -318,6 +440,7 @@ export class PeerJsTransport implements Transport {
       old.close();
     }
     this.links.set(link.peerId, link);
+    link.startDiag();
     link.onReady = null;
     link.onDead = (l, reason) => {
       if (this.links.get(l.peerId) === l) this.links.delete(l.peerId);
@@ -340,7 +463,7 @@ export class PeerJsTransport implements Transport {
     const key = `${dc.peer}|${md.linkId}`;
     let entry = this.incoming.get(key);
     if (entry === undefined) {
-      const link = new PeerJsLink(dc.peer, md.linkId, (l, ch, d) => this.handlers?.onData(l, ch, d));
+      const link = new PeerJsLink(dc.peer, md.linkId, (l, ch, d) => this.handlers?.onData(l, ch, d), this.linkLog());
       const timer = setTimeout(() => {
         const e = this.incoming.get(key);
         if (e === undefined) return;
@@ -361,6 +484,10 @@ export class PeerJsTransport implements Transport {
       this.incoming.set(key, entry);
     }
     entry.link.attach(md.ch, dc);
+  }
+
+  private linkLog(): ((msg: string) => void) | null {
+    return this.debug > 0 ? (msg) => console.info(`[online] ${msg}`) : null;
   }
 
   dispose(): void {

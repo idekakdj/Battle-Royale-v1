@@ -17,6 +17,22 @@ newest version first.
   and start a fresh empty `## [Unreleased]` block above it (docs/RELEASING.md).
 -->
 
+## [1.10.1] - 2026-10-29
+
+### Fixed
+- **Big online lag spikes (100 ms up to several seconds).** Several causes were found and fixed:
+  - **A freeze at the start of every Ocean Dome fight.** The moment "FIGHT!" began, every bot worked out its walking routes for the three-level map at once, which froze the host for 3-4 seconds (and with it everyone's game). The routes are now prepared during the 3-2-1 countdown instead. On a slow computer the countdown itself can look a little choppy while this happens.
+  - **Old network packets arriving late.** The game's "fast" connection was quietly re-sending lost packets, so a single dropped packet could make seconds of old positions queue up and arrive late. Online matches now use a true fast channel that simply drops stale packets (friends still on 1.10.0 keep using the old channel until they update), and after any stall the game skips the old snapshots and catches up in a moment instead of replaying them. Spikes in the ping readout are also no longer inflated by queued packets.
+  - **The game slowing down while the window is in the background.** Alt-tabbing away (or covering the window) used to throttle the Windows app and could pause an online host's game. It now keeps running at full speed; browser tabs keep an online match going too.
+  - **Hitches when a match starts.** The graphics are warmed up before the fight, so the first seconds don't stutter.
+- Online matches now lower the graphics by one step (with a short notice) if the game keeps running slowly, and a struggling host sends fewer network updates per second (20 instead of 30) so it doesn't drag everyone down; it goes back to 30 once it recovers.
+
+### Added
+- **Connection info in the online screen:** a small line shows how you are connected (direct or relayed), your ping, outgoing speed, packets dropped and whether the fast channel is on, and the ping readout shows a "SPIKE" tag when a single ping jumps. If lag happens, open the developer console (Ctrl+Shift+I) and run `__gkNetDiag()` to copy the numbers.
+
+### Changed
+- Online: 1.10.0 and 1.10.1 can still play together, but the lag fixes only take full effect when everyone is on 1.10.1.
+
 ## [1.10.0] - 2026-10-19
 
 ### Added
@@ -246,7 +262,8 @@ newest version first.
 - Deterministic 60 Hz simulation with seeded RNG, and a shared intent interface that drives players and bots alike.
 - Browser build deployed automatically to GitHub Pages on every push to `main`.
 
-[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.10.1...HEAD
+[1.10.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/idekakdj/Battle-Royale-v1/compare/v1.8.0...v1.9.0

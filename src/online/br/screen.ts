@@ -26,6 +26,7 @@ import type { OnlineMatchFactory, OnlineMatchOptions, OnlineMatchResult } from '
 import { ClientSimDriver } from './clientDriver';
 import { HostSimDriver } from './hostDriver';
 import { NetHud } from './netHud';
+import { netDiag } from '../netDiag';
 import { describeLink, hostTimedOut } from './netHudModel';
 import { brResultsToMatchResults, orderedSlots } from './netRoster';
 
@@ -133,9 +134,23 @@ export class NetBattleRoyaleScreen implements Screen {
     if (driver === null || this.results !== null) return;
     if (driver instanceof HostSimDriver) {
       let worst = 0;
-      for (const c of driver.clientStats()) if (c.connected && c.rttMs > worst) worst = c.rttMs;
+      let peak = 0;
+      for (const c of driver.clientStats()) {
+        if (!c.connected) continue;
+        if (c.rttMs > worst) worst = c.rttMs;
+        if (c.rttPeakMs > peak) peak = c.rttPeakMs;
+      }
       this.hud.update(
-        describeLink({ role: 'host', pingMs: worst, loss: 0, hostSilenceMs: 0, haveSnapshot: true, waitingFor: driver.waiting ? driver.waitingFor() : [] }),
+        describeLink({
+          role: 'host',
+          pingMs: worst,
+          loss: 0,
+          hostSilenceMs: 0,
+          haveSnapshot: true,
+          waitingFor: driver.waiting ? driver.waitingFor() : [],
+          pingPeakMs: peak,
+          diagLine: netDiag.summaryLine(),
+        }),
       );
       return;
     }
@@ -144,7 +159,16 @@ export class NetBattleRoyaleScreen implements Screen {
     const over = driver.matchOver;
     const silence = over ? 0 : s.hostSilenceMs;
     this.hud.update(
-      describeLink({ role: 'client', pingMs: s.pingMs, loss: s.loss, hostSilenceMs: silence, haveSnapshot: driver.connected, waitingFor: [] }),
+      describeLink({
+        role: 'client',
+        pingMs: s.pingMs,
+        loss: s.loss,
+        hostSilenceMs: silence,
+        haveSnapshot: driver.connected,
+        waitingFor: [],
+        pingPeakMs: s.pingPeakMs,
+        diagLine: netDiag.summaryLine(),
+      }),
     );
     if (!over && hostTimedOut(driver.connected, silence, performance.now() - this.startedAt)) {
       this.finish({ reason: 'timeout', message: 'Lost connection to the host.' });
